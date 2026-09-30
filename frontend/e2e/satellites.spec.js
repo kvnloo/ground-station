@@ -289,16 +289,16 @@ test.describe('Satellite Groups CRUD', () => {
 
     await page.getByRole('button', { name: /^add$/i }).click();
 
-    const formDialog = page.getByRole('dialog').filter({ hasText: /add a new satellite group/i }).first();
+    const formDialog = page.getByRole('dialog', { name: /^add group$/i });
     await formDialog.getByRole('textbox', { name: /^name$/i }).fill(groupName);
-    await formDialog.getByRole('button', { name: /submit/i }).click();
+    await formDialog.getByRole('button', { name: /^submit$/i }).click();
     await expect(formDialog).toBeHidden();
 
     const row = page.locator('.MuiDataGrid-row').filter({ hasText: groupName });
     await expect(row).toBeVisible();
     await row.getByRole('checkbox').check({ force: true });
 
-    await page.getByRole('button', { name: /^delete$/i }).click();
+    await page.getByRole('button', { name: /^delete selected$/i }).click();
     const deleteDialog = page.getByRole('dialog');
     await deleteDialog.getByRole('button', { name: /^delete$/i }).click();
     await expect(page.locator('.MuiDataGrid-row').filter({ hasText: groupName })).toHaveCount(0);
