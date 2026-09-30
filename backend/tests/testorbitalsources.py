@@ -13,10 +13,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import asyncio
 import logging
+from datetime import datetime, timezone
 
 import pytest
 
+from db.models import OrbitalSources
 from handlers.entities import orbitalsources
 from tlesync.state import sync_state_manager
 
@@ -106,3 +109,40 @@ async def test_submit_orbital_source_returns_crud_validation_error(monkeypatch):
 
     assert response["success"] is False
     assert response["error"] == "CelesTrak sources must use https://celestrak.org"
+
+
+@pytest.mark.asyncio
+async def test_orbital_source_timestamps_are_evaluated_per_record_and_update(db_session):
+    """Source timestamps must be generated when rows are inserted or changed."""
+    first = OrbitalSources(
+        name="First source",
+        identifier="first-source",
+        url="https://example.test/first.txt",
+    )
+    db_session.add(first)
+    await db_session.commit()
+    first_added = first.added
+    first_updated = first.updated
+
+    await asyncio.sleep(0.01)
+
+    second = OrbitalSources(
+        name="Second source",
+        identifier="second-source",
+        url="https://example.test/second.txt",
+    )
+    db_session.add(second)
+    await db_session.commit()
+
+    assert first_added.tzinfo == timezone.utc
+    assert first_updated.tzinfo == timezone.utc
+    assert second.added > first_added
+    assert second.updated > first_updated
+
+    await asyncio.sleep(0.01)
+    first.name = "Updated source"
+    await db_session.commit()
+    await db_session.refresh(first)
+
+    assert first.updated > first_updated
+    assert first.updated <= datetime.now(timezone.utc)

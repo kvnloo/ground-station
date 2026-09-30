@@ -279,12 +279,12 @@ class Transmitters(Base):
     itu_notification = Column(JSON, nullable=True)
     frequency_violation = Column(Boolean, nullable=True, default=False)
     unconfirmed = Column(Boolean, nullable=True, default=False)
-    added = Column(AwareDateTime, nullable=True, default=datetime.now(timezone.utc))
+    added = Column(AwareDateTime, nullable=True, default=lambda: datetime.now(timezone.utc))
     updated = Column(
         AwareDateTime,
         nullable=True,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
     __table_args__ = (
@@ -309,12 +309,12 @@ class Rigs(Base):
     tx_control_mode = Column(String, nullable=False, default="auto", server_default="auto")
     retune_interval_ms = Column(Integer, nullable=False, default=2000, server_default="2000")
     follow_downlink_tuning = Column(Boolean, nullable=False, default=False, server_default="0")
-    added = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    added = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated = Column(
         AwareDateTime,
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 
@@ -330,12 +330,12 @@ class SDRs(Base):
     antenna_labels = Column(JsonField, nullable=True)
     frequency_min = Column(Integer, nullable=True)
     frequency_max = Column(Integer, nullable=True)
-    added = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    added = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated = Column(
         AwareDateTime,
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 
@@ -355,12 +355,12 @@ class Rotators(Base):
     aztolerance = Column(Float, nullable=False, default=2.0)
     eltolerance = Column(Float, nullable=False, default=2.0)
     tracking_lead_seconds = Column(Float, nullable=False, default=2.0)
-    added = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    added = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated = Column(
         AwareDateTime,
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 
@@ -374,12 +374,12 @@ class Locations(Base):
     lat = Column(Float, nullable=False)
     lon = Column(Float, nullable=False)
     alt = Column(Integer, nullable=False)
-    added = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    added = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated = Column(
         AwareDateTime,
         nullable=True,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 
@@ -395,12 +395,12 @@ class Preferences(Base):
     )
     name = Column(String, nullable=False)
     value = Column(String, nullable=False)
-    added = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    added = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated = Column(
         AwareDateTime,
         nullable=True,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
     __table_args__ = (
@@ -460,12 +460,16 @@ class OrbitalSources(Base):
     username = Column(String, nullable=True)
     password = Column(String, nullable=True)
     config = Column(JSON, nullable=True)
-    added = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    added = Column(
+        AwareDateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
     updated = Column(
         AwareDateTime,
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
     __table_args__ = (
@@ -503,8 +507,8 @@ class OrbitalSourceSyncState(Base):
     updated = Column(
         AwareDateTime,
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 
@@ -519,12 +523,12 @@ class Groups(Base):
     identifier = Column(String, nullable=True)
     type = Column(Enum(SatelliteGroupType), nullable=False, default=SatelliteGroupType.USER)
     satellite_ids = Column(JsonField, nullable=True)
-    added = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    added = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated = Column(
         AwareDateTime,
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 
@@ -533,12 +537,12 @@ class TrackingState(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
     name = Column(String, index=True, unique=True)
     value = Column(JSON, index=True)
-    added = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    added = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated = Column(
         AwareDateTime,
         nullable=True,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 
@@ -549,12 +553,12 @@ class Cameras(Base):
     url = Column(String, nullable=True)
     type = Column(Enum(CameraType), nullable=False)
     status = Column(Enum("active", "inactive"), nullable=False, default="active")
-    added = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    added = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated = Column(
         AwareDateTime,
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 
@@ -584,12 +588,12 @@ class MonitoredCelestial(Base):
     projection_step_minutes = Column(Integer, nullable=False, default=60, server_default="60")
     last_refresh_at = Column(AwareDateTime, nullable=True)
     last_error = Column(String, nullable=True)
-    created_at = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    created_at = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         AwareDateTime,
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 
@@ -607,12 +611,12 @@ class CelestialTargets(Base):
     parent_body_id = Column(String, nullable=True, index=True)
     always_in_scene = Column(Boolean, nullable=False, default=False, index=True)
     enabled = Column(Boolean, nullable=False, default=True, index=True)
-    created_at = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    created_at = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         AwareDateTime,
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
     __table_args__ = (
@@ -654,14 +658,14 @@ class CelestialVectorSnapshots(Base):
     horizons_signature = Column(JsonField, nullable=True)
     source = Column(String, nullable=False, default="horizons", server_default="horizons")
     error = Column(String, nullable=True)
-    fetched_at = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    fetched_at = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     expires_at = Column(AwareDateTime, nullable=False, index=True)
-    created_at = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    created_at = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         AwareDateTime,
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
     __table_args__ = (
@@ -723,12 +727,12 @@ class MonitoredSatellites(Base):
     )  # [{"sdr": {...}, "tasks": [{"type": "iq_recording", "config": {}}]}]
 
     # Metadata
-    created_at = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    created_at = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         AwareDateTime,
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 
@@ -797,12 +801,12 @@ class ScheduledObservations(Base):
     execution_log = Column(JSON, nullable=True)  # Array of timestamped events/errors
 
     # Metadata
-    created_at = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    created_at = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         AwareDateTime,
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 
@@ -826,12 +830,12 @@ class Users(Base):
     updated_by_user_id = Column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
-    created_at = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    created_at = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         AwareDateTime,
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
     __table_args__ = (
@@ -856,10 +860,10 @@ class AuthSessions(Base):
     last_seen_at = Column(AwareDateTime, nullable=True)
     created_ip = Column(String, nullable=True)
     created_user_agent = Column(String, nullable=True)
-    created_at = Column(AwareDateTime, nullable=False, default=datetime.now(timezone.utc))
+    created_at = Column(AwareDateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         AwareDateTime,
         nullable=False,
-        default=datetime.now(timezone.utc),
-        onupdate=datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
