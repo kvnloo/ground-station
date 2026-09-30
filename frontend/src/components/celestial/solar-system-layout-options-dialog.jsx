@@ -115,6 +115,11 @@ const SOLAR_SYSTEM_SECTION_DEFS = [
                 labelKey: 'layout_options.options.show_tracked_labels.label',
                 descriptionKey: 'layout_options.options.show_tracked_labels.description',
             },
+            {
+                key: 'showUnfocusedLabels',
+                labelKey: 'layout_options.options.show_unfocused_labels.label',
+                descriptionKey: 'layout_options.options.show_unfocused_labels.description',
+            },
         ],
     },
     {

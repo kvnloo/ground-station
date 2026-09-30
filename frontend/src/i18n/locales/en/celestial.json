@@ -159,6 +159,10 @@
         "label": "Show tracked labels",
         "description": "Show labels and telemetry context for tracked targets."
       },
+      "show_unfocused_labels": {
+        "label": "Show unfocused labels",
+        "description": "Show labels for tracked targets that are not selected."
+      },
       "show_bright_star_field": {
         "label": "Show bright-star field",
         "description": "Render a vector ecliptic projection from the Bright Star Catalogue."

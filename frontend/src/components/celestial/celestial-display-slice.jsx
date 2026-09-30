@@ -8,6 +8,7 @@ export const DEFAULT_SOLAR_SYSTEM_DISPLAY_OPTIONS = {
     showTrackedObjects: true,
     showTrackedOrbits: true,
     showTrackedLabels: true,
+    showUnfocusedLabels: false,
     showStarfieldBackground: true,
     showAsteroidZones: true,
     showZoneLabels: true,

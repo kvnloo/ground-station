@@ -84,6 +84,7 @@ const DEFAULT_DISPLAY_OPTIONS = {
     showTrackedObjects: true,
     showTrackedOrbits: true,
     showTrackedLabels: true,
+    showUnfocusedLabels: false,
     showStarfieldBackground: true,
     showAsteroidZones: true,
     showZoneLabels: true,
@@ -92,6 +93,14 @@ const DEFAULT_DISPLAY_OPTIONS = {
     showScaleIndicator: true,
     showGestureHint: true,
 };
+export const shouldShowTrackedLabel = ({
+    isSelected,
+    isDimmed,
+    showTrackedLabels,
+    showUnfocusedLabels,
+}) => Boolean(
+    showTrackedLabels && (isSelected || !isDimmed || showUnfocusedLabels),
+);
 const normalizeViewport = (viewport) => ({
     zoom: clamp(Number(viewport?.zoom ?? DEFAULT_VIEWPORT.zoom), MIN_ZOOM, MAX_ZOOM),
     panX: Number(viewport?.panX ?? DEFAULT_VIEWPORT.panX) || 0,
@@ -1903,7 +1912,12 @@ const SolarSystemCanvas = ({
                     placedLabelBoxes.push(labelBox);
                 }
 
-                if (effectiveDisplayOptions.showTrackedLabels) {
+                if (shouldShowTrackedLabel({
+                    isSelected,
+                    isDimmed,
+                    showTrackedLabels: effectiveDisplayOptions.showTrackedLabels,
+                    showUnfocusedLabels: effectiveDisplayOptions.showUnfocusedLabels,
+                })) {
                     // Target-slot names are rendered together with their badge below.
                     if (hasTargetSlotNumber) return;
                     // Selected marker names are rendered as an attached label below.

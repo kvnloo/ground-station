@@ -6,6 +6,7 @@ import {
   collectLiveTrackedTargetKeys,
   doesPolylineIntersectBox,
   shouldSuppressStaticSolarBody,
+  shouldShowTrackedLabel,
   splitOrbitSamplesAtTime,
 } from '../solarsystem-canvas.jsx';
 
@@ -24,6 +25,14 @@ describe('solar system path endpoint markers', () => {
 
     expect(doesPolylineIntersectBox([[0, 15], [40, 15]], labelBox, 2)).toBe(true);
     expect(doesPolylineIntersectBox([[0, 5], [40, 5]], labelBox, 2)).toBe(false);
+  });
+});
+
+describe('solar system tracked labels', () => {
+  it('only shows unfocused labels when explicitly enabled', () => {
+    expect(shouldShowTrackedLabel({ isSelected: true, isDimmed: false, showTrackedLabels: true, showUnfocusedLabels: false })).toBe(true);
+    expect(shouldShowTrackedLabel({ isSelected: false, isDimmed: true, showTrackedLabels: true, showUnfocusedLabels: false })).toBe(false);
+    expect(shouldShowTrackedLabel({ isSelected: false, isDimmed: true, showTrackedLabels: true, showUnfocusedLabels: true })).toBe(true);
   });
 });
 
