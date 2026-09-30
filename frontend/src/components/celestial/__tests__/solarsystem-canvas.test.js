@@ -6,7 +6,7 @@ import {
   collectLiveTrackedTargetKeys,
   doesPolylineIntersectBox,
   shouldSuppressStaticSolarBody,
-  shouldShowTrackedLabel,
+  shouldShowObjectLabel,
   splitOrbitSamplesAtTime,
 } from '../solarsystem-canvas.jsx';
 
@@ -28,11 +28,12 @@ describe('solar system path endpoint markers', () => {
   });
 });
 
-describe('solar system tracked labels', () => {
+describe('solar system object labels', () => {
   it('only shows unfocused labels when explicitly enabled', () => {
-    expect(shouldShowTrackedLabel({ isSelected: true, isDimmed: false, showTrackedLabels: true, showUnfocusedLabels: false })).toBe(true);
-    expect(shouldShowTrackedLabel({ isSelected: false, isDimmed: true, showTrackedLabels: true, showUnfocusedLabels: false })).toBe(false);
-    expect(shouldShowTrackedLabel({ isSelected: false, isDimmed: true, showTrackedLabels: true, showUnfocusedLabels: true })).toBe(true);
+    expect(shouldShowObjectLabel({ isSelected: true, hasSelection: true, labelsEnabled: true, showUnfocusedLabels: false })).toBe(true);
+    expect(shouldShowObjectLabel({ isSelected: false, hasSelection: true, labelsEnabled: true, showUnfocusedLabels: false })).toBe(false);
+    expect(shouldShowObjectLabel({ isSelected: false, hasSelection: true, labelsEnabled: true, showUnfocusedLabels: true })).toBe(true);
+    expect(shouldShowObjectLabel({ isSelected: false, hasSelection: false, labelsEnabled: true, showUnfocusedLabels: false })).toBe(true);
   });
 });
 

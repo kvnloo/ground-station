@@ -93,13 +93,13 @@ const DEFAULT_DISPLAY_OPTIONS = {
     showScaleIndicator: true,
     showGestureHint: true,
 };
-export const shouldShowTrackedLabel = ({
+export const shouldShowObjectLabel = ({
     isSelected,
-    isDimmed,
-    showTrackedLabels,
+    hasSelection,
+    labelsEnabled,
     showUnfocusedLabels,
 }) => Boolean(
-    showTrackedLabels && (isSelected || !isDimmed || showUnfocusedLabels),
+    labelsEnabled && (!hasSelection || isSelected || showUnfocusedLabels),
 );
 const normalizeViewport = (viewport) => ({
     zoom: clamp(Number(viewport?.zoom ?? DEFAULT_VIEWPORT.zoom), MIN_ZOOM, MAX_ZOOM),
@@ -1148,11 +1148,6 @@ const SolarSystemCanvas = ({
             return [x, y];
         };
         const sceneTimestampUtc = scene?.timestamp_utc || '';
-        const solarBodyIds = new Set(
-            (Array.isArray(renderablePlanets) ? renderablePlanets : [])
-                .map((body) => String(body?.id || '').trim().toLowerCase())
-                .filter(Boolean),
-        );
         const resolveTargetSlotNumber = (targetKey) => {
             const directSlotNumber = Number(targetNumberByTargetKey?.[targetKey]);
             if (Number.isFinite(directSlotNumber) && directSlotNumber > 0) return directSlotNumber;
@@ -1164,14 +1159,12 @@ const SolarSystemCanvas = ({
                 .map((body) => resolveTargetKey(body))
                 .filter((targetKey) => Number.isFinite(resolveTargetSlotNumber(targetKey))),
         );
-        const shouldHideTrackedLabelAsDuplicate = (body) => {
-            const bodyId = String(body?.body_id || '').trim().toLowerCase();
-            if (bodyId && solarBodyIds.has(bodyId)) return true;
-            const command = String(body?.command || '').trim().toLowerCase();
-            if (command && solarBodyIds.has(command)) return true;
-            const name = String(body?.name || '').trim().toLowerCase();
-            if (name && solarBodyIds.has(name)) return true;
-            return false;
+        const getTargetSelectionState = (targetKey) => {
+            const isSelected = hasTrackedSelection && selectedTargetKeySet.has(targetKey);
+            return {
+                isSelected,
+                isDimmed: hasTrackedSelection && !isSelected,
+            };
         };
 
         const placedLabelBoxes = [];
@@ -1674,6 +1667,7 @@ const SolarSystemCanvas = ({
 
                 if (shouldShowBodyLabels) {
                     const isMoon = normalizeBodyId(planet?.body_type) === 'moon';
+                    const { isSelected } = getTargetSelectionState(bodyTargetKey);
                     // Keep moon labels readable by only drawing them once each grid square
                     // represents 1 AU or less (higher zoom levels).
                     if (isMoon && gridStepAu > 1) return;
@@ -1688,6 +1682,14 @@ const SolarSystemCanvas = ({
                         && hasBodyTargetSlotNumber
                         && trackedTargetSlotKeySet.has(bodyTargetKey)
                     ) return;
+                    // Static planets are still scene objects. When another target is
+                    // focused, the unfocused-label toggle governs their names too.
+                    if (!shouldShowObjectLabel({
+                        isSelected,
+                        hasSelection: hasTrackedSelection,
+                        labelsEnabled: shouldShowBodyLabels,
+                        showUnfocusedLabels: effectiveDisplayOptions.showUnfocusedLabels,
+                    })) return;
                     drawLabelWithAutoOffset(
                         planet.name || id,
                         labelAnchorX,
@@ -1704,8 +1706,7 @@ const SolarSystemCanvas = ({
             const samples = body.orbit_samples_xyz_au || [];
             if (!samples.length || !effectiveDisplayOptions.showTrackedOrbits) return;
             const targetKey = resolveTargetKey(body);
-            const isSelected = hasTrackedSelection && selectedTargetKeySet.has(targetKey);
-            const isDimmed = hasTrackedSelection && !isSelected;
+            const { isSelected, isDimmed } = getTargetSelectionState(targetKey);
 
             const trackedHexColor = resolveTrackedColor(body, body.stale ? '#EF476F' : '#06D6A0');
             const trackedStrokeColor = isSelected
@@ -1768,13 +1769,18 @@ const SolarSystemCanvas = ({
                 if (!hasFiniteXYZ(body.position_xyz_au)) return;
                 const [sx, sy] = toScreen(body.position_xyz_au);
                 const targetKey = resolveTargetKey(body);
-                const isSelected = hasTrackedSelection && selectedTargetKeySet.has(targetKey);
-                const isDimmed = hasTrackedSelection && !isSelected;
+                const { isSelected, isDimmed } = getTargetSelectionState(targetKey);
                 const trackedHexColor = resolveTrackedColor(body, body.stale ? '#EF476F' : '#06D6A0');
                 const targetSlotNumber = resolveTargetSlotNumber(targetKey);
                 const hasTargetSlotNumber = Number.isFinite(targetSlotNumber) && targetSlotNumber > 0;
                 const targetSlotLabel = hasTargetSlotNumber ? `T${Math.round(targetSlotNumber)}` : '';
                 const targetSlotBadgePalette = theme.palette.badge?.targetSlot || {};
+                const shouldShowObjectName = shouldShowObjectLabel({
+                    isSelected,
+                    hasSelection: hasTrackedSelection,
+                    labelsEnabled: effectiveDisplayOptions.showTrackedLabels,
+                    showUnfocusedLabels: effectiveDisplayOptions.showUnfocusedLabels,
+                });
 
                 ctx.fillStyle = isDimmed ? hexToRgba(trackedHexColor, 0.28) : trackedHexColor;
                 let markerSize = isSelected ? 8 : 6;
@@ -1823,6 +1829,7 @@ const SolarSystemCanvas = ({
                         targetSlotLabel,
                         targetSlotBadgePalette,
                         isDimmed,
+                        showName: shouldShowObjectName,
                         targetLabelRenderFontSize,
                         targetLabelFontFamily,
                         nameLabel,
@@ -1854,14 +1861,16 @@ const SolarSystemCanvas = ({
                 }
                 if (targetSlotBadgeSpec) {
                     pendingTargetSlotBadges.push(targetSlotBadgeSpec);
-                    // Badge names render in a later pass. Reserve their complete
-                    // footprint now so endpoint callouts can avoid them.
+                    // Reserve only the visible part of the badge so hidden
+                    // unfocused names do not displace endpoint callouts.
                     placedLabelBoxes.push({
                         x: targetSlotBadgeSpec.badgeLeft,
                         y: Math.min(targetSlotBadgeSpec.badgeTop, targetSlotBadgeSpec.nameTop),
-                        w: targetSlotBadgeSpec.badgeWidth
-                            + targetSlotBadgeSpec.nameGap
-                            + targetSlotBadgeSpec.nameWidth,
+                        w: targetSlotBadgeSpec.showName
+                            ? targetSlotBadgeSpec.badgeWidth
+                                + targetSlotBadgeSpec.nameGap
+                                + targetSlotBadgeSpec.nameWidth
+                            : targetSlotBadgeSpec.badgeWidth,
                         h: Math.max(targetSlotBadgeSpec.targetBadgeHeight, targetSlotBadgeSpec.nameHeight),
                     });
                 }
@@ -1912,17 +1921,11 @@ const SolarSystemCanvas = ({
                     placedLabelBoxes.push(labelBox);
                 }
 
-                if (shouldShowTrackedLabel({
-                    isSelected,
-                    isDimmed,
-                    showTrackedLabels: effectiveDisplayOptions.showTrackedLabels,
-                    showUnfocusedLabels: effectiveDisplayOptions.showUnfocusedLabels,
-                })) {
+                if (shouldShowObjectName) {
                     // Target-slot names are rendered together with their badge below.
                     if (hasTargetSlotNumber) return;
                     // Selected marker names are rendered as an attached label below.
                     if (isSelected) return;
-                    if (shouldHideTrackedLabelAsDuplicate(body)) return;
                     const labelColor = isSelected
                         ? theme.palette.text.primary
                         : isDimmed
@@ -2203,22 +2206,24 @@ const SolarSystemCanvas = ({
             ctx.globalAlpha = badge.isDimmed ? 0.9 : 1.0;
             ctx.fillText(badge.targetSlotLabel, badge.sx, badge.sy + 0.35);
 
-            ctx.font = LABEL_FONT;
-            ctx.beginPath();
-            ctx.roundRect(badge.nameLeft, badge.nameTop, badge.nameWidth, badge.nameHeight, 3);
-            ctx.globalAlpha = badge.isDimmed ? 0.55 : 0.86;
-            ctx.fillStyle = theme.palette.background.paper;
-            ctx.fill();
-            ctx.globalAlpha = badge.isDimmed ? 0.35 : 0.62;
-            ctx.strokeStyle = theme.palette.divider;
-            ctx.lineWidth = 1;
-            ctx.stroke();
+            if (badge.showName) {
+                ctx.font = LABEL_FONT;
+                ctx.beginPath();
+                ctx.roundRect(badge.nameLeft, badge.nameTop, badge.nameWidth, badge.nameHeight, 3);
+                ctx.globalAlpha = badge.isDimmed ? 0.55 : 0.86;
+                ctx.fillStyle = theme.palette.background.paper;
+                ctx.fill();
+                ctx.globalAlpha = badge.isDimmed ? 0.35 : 0.62;
+                ctx.strokeStyle = theme.palette.divider;
+                ctx.lineWidth = 1;
+                ctx.stroke();
 
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'middle';
-            ctx.globalAlpha = badge.isDimmed ? 0.55 : 0.96;
-            ctx.fillStyle = badge.nameColor;
-            ctx.fillText(badge.nameLabel, badge.nameLeft + badge.namePaddingX, badge.sy + 0.35);
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+                ctx.globalAlpha = badge.isDimmed ? 0.55 : 0.96;
+                ctx.fillStyle = badge.nameColor;
+                ctx.fillText(badge.nameLabel, badge.nameLeft + badge.namePaddingX, badge.sy + 0.35);
+            }
             ctx.restore();
         });
     }, [

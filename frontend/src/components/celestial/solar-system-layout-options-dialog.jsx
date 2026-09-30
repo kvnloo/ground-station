@@ -90,6 +90,11 @@ const SOLAR_SYSTEM_SECTION_DEFS = [
                 descriptionKey: 'layout_options.options.show_planet_labels.description',
             },
             {
+                key: 'showUnfocusedLabels',
+                labelKey: 'layout_options.options.show_unfocused_labels.label',
+                descriptionKey: 'layout_options.options.show_unfocused_labels.description',
+            },
+            {
                 key: 'showPlanetOrbits',
                 labelKey: 'layout_options.options.show_planet_orbits.label',
                 descriptionKey: 'layout_options.options.show_planet_orbits.description',
@@ -114,11 +119,6 @@ const SOLAR_SYSTEM_SECTION_DEFS = [
                 key: 'showTrackedLabels',
                 labelKey: 'layout_options.options.show_tracked_labels.label',
                 descriptionKey: 'layout_options.options.show_tracked_labels.description',
-            },
-            {
-                key: 'showUnfocusedLabels',
-                labelKey: 'layout_options.options.show_unfocused_labels.label',
-                descriptionKey: 'layout_options.options.show_unfocused_labels.description',
             },
         ],
     },

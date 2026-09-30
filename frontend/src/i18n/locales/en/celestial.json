@@ -161,7 +161,7 @@
       },
       "show_unfocused_labels": {
         "label": "Show unfocused labels",
-        "description": "Show labels for tracked targets that are not selected."
+        "description": "Show labels for objects that are not selected."
       },
       "show_bright_star_field": {
         "label": "Show bright-star field",

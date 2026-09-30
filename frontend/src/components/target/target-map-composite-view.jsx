@@ -540,6 +540,8 @@ const TargetMapCompositeView = ({}) => {
     const satellitePaths = useSelector(satellitePathsSelector);
     const satelliteTransmitters = useSelector(satelliteTransmittersSelector);
     const celestialState = useSelector((state) => state.celestial || {});
+    // Share the dashboard's display options with the reused Solar System canvas.
+    const solarSystemDisplayOptions = useSelector((state) => state.celestialDisplay?.solarSystem);
     const monitoredRows = useSelector((state) => state.celestialMonitored?.monitored || []);
     const {location} = useSelector(state => state.location);
     const scopedTrackerView = useMemo(
@@ -1196,6 +1198,7 @@ const TargetMapCompositeView = ({}) => {
                                     initialViewport={celestialState?.mapSettings?.solarSystemViewport || null}
                                     enableMapDragging={targetViewEnableDragging}
                                     enableMapZooming={targetViewEnableZooming}
+                                    displayOptions={solarSystemDisplayOptions}
                                 />
                             )}
                             {targetSceneLoading ? (
