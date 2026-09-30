@@ -228,18 +228,21 @@ test.describe('Setup Wizard', () => {
     const userMenuButton = page.getByRole('button', { name: new RegExp(`open user menu for ${wizardUsername}`, 'i') });
     await expect(userMenuButton).toBeVisible({ timeout: 120000 });
 
-    // Logout is idempotent, so retry a dropped CI container connection while
+    // Logout is idempotent, so retry transient transport/SQLite-lock delays while
     // still requiring the endpoint itself to return a successful response.
     await expect.poll(async () => {
       try {
-        const logoutReply = await page.request.post('/api/auth/logout');
+        const logoutReply = await page.request.post('/api/auth/logout', {
+          // Keep one blocked request from consuming the whole poll window.
+          timeout: 5000,
+        });
         return logoutReply.status();
       } catch {
         return null;
       }
     }, {
-      timeout: 15000,
-      intervals: [250, 500, 1000, 2000],
+      timeout: 60000,
+      intervals: [250, 500, 1000, 2000, 5000],
     }).toBe(200);
 
     await expect.poll(async () => {
