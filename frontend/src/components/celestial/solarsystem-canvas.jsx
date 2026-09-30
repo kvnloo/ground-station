@@ -1702,8 +1702,8 @@ const SolarSystemCanvas = ({
             const trackedStrokeColor = isSelected
                 ? hexToRgba(trackedHexColor, 0.95)
                 : isDimmed
-                    ? hexToRgba(trackedHexColor, 0.16)
-                    : hexToRgba(trackedHexColor, body.stale ? 0.35 : 0.45);
+                ? hexToRgba(trackedHexColor, 0.32)
+                : hexToRgba(trackedHexColor, body.stale ? 0.35 : 0.45);
             ctx.strokeStyle = trackedStrokeColor;
             ctx.lineWidth = isSelected ? 2.2 : 1;
             const sampleTimesUtc = body.orbit_sample_times_utc || [];
