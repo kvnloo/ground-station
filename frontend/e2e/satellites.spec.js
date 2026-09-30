@@ -4,27 +4,10 @@
 
 import { test, expect } from '@playwright/test';
 
-async function ensureSourcesSubTabSelected(page) {
+async function ensureSourcesPageReady(page) {
   const addButton = page.getByRole('button', { name: /^add$/i }).first();
-  if (await addButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-    return;
-  }
-
-  // Target the inner orbital-data tab group (Sync Now / Sources), not the top satellites tabs.
-  const orbitalSourceTablist = page.getByRole('tablist').filter({
-    has: page.getByRole('tab', { name: /^sync now$/i }),
-  }).first();
-  await expect(orbitalSourceTablist).toBeVisible({ timeout: 15000 });
-
-  const sourcesTab = orbitalSourceTablist.getByRole('tab', { name: /^sources$/i });
-  await expect(sourcesTab).toBeVisible({ timeout: 15000 });
-
-  const isSelected = await sourcesTab.getAttribute('aria-selected');
-  if (isSelected !== 'true') {
-    await sourcesTab.click();
-    await expect(sourcesTab).toHaveAttribute('aria-selected', 'true');
-  }
-
+  // /admin/satellites/sources now renders the Sources page directly. The old
+  // nested Sync Now / Sources tablist is no longer part of this route.
   await expect(addButton).toBeVisible({ timeout: 15000 });
 }
 
@@ -32,7 +15,7 @@ test.describe('TLE Sources', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/admin/satellites/sources');
     await page.waitForLoadState('domcontentloaded');
-    await ensureSourcesSubTabSelected(page);
+    await ensureSourcesPageReady(page);
   });
 
   test('should display TLE sources page', async ({ page }) => {
@@ -260,7 +243,7 @@ test.describe('TLE Sources CRUD', () => {
   test('should allow adding, editing, and deleting a TLE source', async ({ page }) => {
     await page.goto('/admin/satellites/sources');
     await page.waitForLoadState('domcontentloaded');
-    await ensureSourcesSubTabSelected(page);
+    await ensureSourcesPageReady(page);
 
     const sourceName = `E2E Source ${Date.now()}`;
     const updatedName = `${sourceName} Updated`;
