@@ -27,6 +27,7 @@ import {
     AdminCelestialEphemerisPage,
     AdminSatellitesCatalogPage,
     AdminSatellitesGroupsPage,
+    AdminSatellitesOrbitalDataPage,
     AdminSatellitesSourcesPage,
     AdminSystemAboutPage,
     AdminSystemGeneralPage,
@@ -160,7 +161,11 @@ const router = createBrowserRouter([
                                 children: [
                                     {
                                         index: true,
-                                        element: <Navigate to="/admin/satellites/catalog" replace />,
+                                        element: <Navigate to="/admin/satellites/orbital-data" replace />,
+                                    },
+                                    {
+                                        path: "orbital-data",
+                                        Component: AdminSatellitesOrbitalDataPage,
                                     },
                                     {
                                         path: "sources",

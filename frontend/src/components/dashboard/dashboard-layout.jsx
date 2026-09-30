@@ -1240,7 +1240,7 @@ export default function Layout() {
                                                         handleNavigationGroupToggle(item.segment);
                                                         return;
                                                     }
-                                                    handleNavigation(item.segment);
+                                                    handleNavigation(!isExpanded && item.collapsedSegment ? item.collapsedSegment : item.segment);
                                                 }}
                                                 selected={isActive}
                                                 aria-expanded={hasChildren && isExpanded ? isGroupExpanded : undefined}

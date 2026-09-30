@@ -20,7 +20,7 @@
 import PublicIcon from '@mui/icons-material/Public';
 import GpsFixedIcon from '@mui/icons-material/GpsFixed';
 import EngineeringIcon from '@mui/icons-material/Engineering';
-import {Satellite03Icon} from "hugeicons-react";
+import {Satellite03Icon, Saturn01Icon} from "hugeicons-react";
 import MemoryIcon from '@mui/icons-material/Memory';
 import InfoIcon from '@mui/icons-material/Info';
 import GroupWorkIcon from '@mui/icons-material/GroupWork';
@@ -279,14 +279,15 @@ export const getCelestialDataIconStatus = (celestialState = {}) => {
 // Keep ephemeris synchronization state on the Celestial Data parent, matching
 // the working/error overlays used by the Satellite Data parent.
 const CelestialDataIconWithStatus = () => {
-    const presentation = useSelector((state) => getCelestialDataIconStatus(state.celestial));
+    const showOverlay = useSelector((state) => getCelestialDataIconStatus(state.celestial).showOverlay);
+    const overlayType = useSelector((state) => getCelestialDataIconStatus(state.celestial).overlayType);
 
     return (
         <IconWithOverlay
-            showOverlay={presentation.showOverlay}
-            overlayType={presentation.overlayType}
+            showOverlay={showOverlay}
+            overlayType={overlayType}
         >
-            <CelestialSolarIcon />
+            <Saturn01Icon size={20} />
         </IconWithOverlay>
     );
 };
@@ -391,8 +392,13 @@ export const getNavigation = ({ isAdmin = false } = {}) => {
             icon: <SatelliteDataIconWithStatus />,
             children: [
                 {
+                    segment: 'orbital-data',
+                    title: i18n.t('orbital_data', { ns: 'navigation', defaultValue: 'Orbital Data' }),
+                    icon: <Satellite03Icon />,
+                },
+                {
                     segment: 'sources',
-                    title: i18n.t('sources_sync', { ns: 'navigation', defaultValue: 'Sources & Sync' }),
+                    title: i18n.t('sources', { ns: 'navigation', defaultValue: 'Sources' }),
                     icon: <TleIcon />,
                 },
                 {
@@ -409,6 +415,7 @@ export const getNavigation = ({ isAdmin = false } = {}) => {
         },
         {
             segment: 'admin/celestial',
+            collapsedSegment: 'admin/celestial/ephemeris',
             title: i18n.t('celestial_data', { ns: 'navigation', defaultValue: 'Celestial Data' }),
             icon: <CelestialDataIconWithStatus />,
             children: [
@@ -420,7 +427,7 @@ export const getNavigation = ({ isAdmin = false } = {}) => {
                 {
                     segment: 'catalog',
                     title: i18n.t('catalog', { ns: 'navigation', defaultValue: 'Catalog' }),
-                    icon: <CelestialSolarIcon />,
+                    icon: <Saturn01Icon size={20} />,
                 },
             ],
         },

@@ -36,6 +36,7 @@ import AntennaRotatorTable from "../hardware/rotator-table.jsx";
 import RigTable from "../hardware/rig-table.jsx";
 import {styled} from "@mui/material/styles";
 import SourcesTable from "../satellites/sources-table.jsx";
+import SynchronizeOrbitalDataCard from "../satellites/synchronize-orbital-data-card.jsx";
 import SatelliteTable from "../satellites/satellite-table.jsx";
 import AboutPage from "./about.jsx";
 import SatelliteGroupsTable from "../satellites/groups-table.jsx";
@@ -130,7 +131,17 @@ export function SettingsTabAbout () {
 export function AdminSatellitesSourcesPage() {
     return (
         <AdminSatellitesPageLayout activeTab="sources">
-            <OrbitalSourcesForm />
+            <OrbitalSourcesForm showTabs={false} />
+        </AdminSatellitesPageLayout>
+    );
+}
+
+export function AdminSatellitesOrbitalDataPage() {
+    return (
+        <AdminSatellitesPageLayout activeTab="orbital-data">
+            <Box sx={{ pt: 2, px: 2 }}>
+                <SynchronizeOrbitalDataCard />
+            </Box>
         </AdminSatellitesPageLayout>
     );
 }
@@ -241,7 +252,8 @@ const ADMIN_SYSTEM_TABS = [
 ];
 
 const ADMIN_SATELLITES_TABS = [
-    { key: "sources", labelKey: "tabs.orbital_sources", defaultLabel: "Orbital Data", path: "/admin/satellites/sources" },
+    { key: "orbital-data", labelKey: "tabs.orbital_data", defaultLabel: "Orbital Data", path: "/admin/satellites/orbital-data" },
+    { key: "sources", labelKey: "tabs.sources", defaultLabel: "Sources", path: "/admin/satellites/sources" },
     { key: "catalog", labelKey: "tabs.catalog", defaultLabel: "Catalog", path: "/admin/satellites/catalog" },
     { key: "groups", labelKey: "tabs.groups", defaultLabel: "Groups", path: "/admin/satellites/groups" },
 ];
@@ -598,11 +610,11 @@ const SatelliteGroupsForm = () => {
         </Paper>);
 };
 
-const OrbitalSourcesForm = () => {
+const OrbitalSourcesForm = ({ showTabs = true }) => {
 
     return (
         <Paper elevation={3} sx={{ pb: 2, pt: 0, marginTop: 0, borderRadius: 0}} variant="elevation">
-            <SourcesTable/>
+            <SourcesTable showTabs={showTabs}/>
         </Paper>);
 };
 

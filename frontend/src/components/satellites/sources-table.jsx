@@ -483,13 +483,13 @@ export function validateSourceForm(formValues, t) {
     };
 }
 
-export default function SourcesTable() {
+export default function SourcesTable({ showTabs = true }) {
     const dispatch = useDispatch();
     const {socket} = useSocket();
     const { t } = useTranslation('satellites');
     const {tleSources, loading, formValues, openDeleteConfirm, openAddDialog, pageSize, selected} = useSelector((state) => state.tleSources);
     const rowSelectionModel = useMemo(() => toRowSelectionModel(selected), [selected]);
-    const [activeTab, setActiveTab] = React.useState('sync_now');
+    const [activeTab, setActiveTab] = React.useState(showTabs ? 'sync_now' : 'sources');
     const [sourcePage, setSourcePage] = React.useState(0);
     const [syncStatusSource, setSyncStatusSource] = React.useState(null);
     const [submitError, setSubmitError] = React.useState(null);
@@ -740,7 +740,7 @@ export default function SourcesTable() {
 
     return (
         <Box sx={{width: '100%', marginTop: 0}}>
-            <AntTabs
+            {showTabs && <AntTabs
                 value={activeTab}
                 onChange={(_event, nextTab) => setActiveTab(nextTab)}
                 variant="scrollable"
@@ -760,7 +760,7 @@ export default function SourcesTable() {
                     data-testid="orbital-data-tab-sources"
                     label={t('orbital_sources.tabs.sources', { defaultValue: 'Sources' })}
                 />
-            </AntTabs>
+            </AntTabs>}
 
             {activeTab === 'sources' ? (
             <Box sx={{ pt: 2, px: 2 }}>

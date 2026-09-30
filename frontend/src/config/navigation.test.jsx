@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { render } from '@testing-library/react';
+import { Provider } from 'react-redux';
+import { configureStore } from '@reduxjs/toolkit';
+import { Saturn01Icon } from 'hugeicons-react';
 import { getCelestialDataIconStatus, getNavigation } from './navigation.jsx';
 
 describe('administration navigation', () => {
@@ -8,6 +12,7 @@ describe('administration navigation', () => {
         const celestialData = navigation.find((item) => item.segment === 'admin/celestial');
 
         expect(satelliteData.children.map((item) => item.segment)).toEqual([
+            'orbital-data',
             'sources',
             'catalog',
             'groups',
@@ -16,6 +21,7 @@ describe('administration navigation', () => {
             'ephemeris',
             'catalog',
         ]);
+        expect(celestialData.collapsedSegment).toBe('admin/celestial/ephemeris');
         expect(navigation.some((item) => item.segment === 'admin/satellites/catalog')).toBe(false);
         expect(navigation.some((item) => item.segment === 'admin/celestial/catalog')).toBe(false);
     });
@@ -25,6 +31,26 @@ describe('administration navigation', () => {
 
         expect(navigation.some((item) => item.segment === 'admin/satellites')).toBe(false);
         expect(navigation.some((item) => item.segment === 'admin/celestial')).toBe(false);
+    });
+
+    it('uses a planet icon for celestial data administration and its catalog child', () => {
+        const navigation = getNavigation({ isAdmin: true });
+        const celestialData = navigation.find((item) => item.segment === 'admin/celestial');
+        const catalogChild = celestialData.children.find((item) => item.segment === 'catalog');
+
+        expect(catalogChild.icon.type).toBe(Saturn01Icon);
+
+        const store = configureStore({
+            reducer: {
+                celestial: () => ({}),
+            },
+        });
+        const { container } = render(
+            <Provider store={store}>
+                {celestialData.icon}
+            </Provider>
+        );
+        expect(container.querySelector('svg')).toBeInTheDocument();
     });
 });
 
