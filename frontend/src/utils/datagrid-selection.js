@@ -3,8 +3,12 @@ export const toSelectedIds = (selectionModel) => {
         return selectionModel;
     }
 
-    if (selectionModel?.ids instanceof Set) {
+    if (selectionModel?.ids && typeof selectionModel.ids[Symbol.iterator] === 'function') {
         return Array.from(selectionModel.ids);
+    }
+
+    if (selectionModel && typeof selectionModel[Symbol.iterator] === 'function') {
+        return Array.from(selectionModel);
     }
 
     return [];

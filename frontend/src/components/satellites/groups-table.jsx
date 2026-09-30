@@ -30,12 +30,17 @@ import {
     DialogContent,
     DialogActions,
     Stack,
-    DialogContentText,
     Chip,
     Typography,
+    IconButton,
+    Tooltip,
+    CircularProgress,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import { DataGrid, gridClasses } from '@mui/x-data-grid';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import ContentCopyOutlinedIcon from '@mui/icons-material/ContentCopyOutlined';
 import { toast } from '../../utils/toast-with-timestamp.jsx';
 import { useSocket } from '../common/socket.jsx';
 import { betterDateTimes } from '../common/common.jsx';
@@ -43,12 +48,10 @@ import { AddEditDialog } from './groups-dialog.jsx';
 import { useSelector, useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import {
-    fetchSatelliteGroups,
     deleteSatelliteGroups,
     setSelected,
     setSatGroup,
     setFormDialogOpen,
-    setFormErrorStatus,
     setGroups,
     setDeleteConfirmDialogOpen,
 } from './groups-slice.jsx';
@@ -56,13 +59,15 @@ import { useTranslation } from 'react-i18next';
 import {toRowSelectionModel, toSelectedIds} from '../../utils/datagrid-selection.js';
 
 
-const SatelliteChipsCell = ({ value, navigate }) => {
+const normalizeSatelliteIds = (value) => value ? (Array.isArray(value)
+    ? value
+    : value.split(',').map(id => id.trim()).filter(Boolean)) : [];
+
+const SatelliteChipsCell = ({ value, navigate, satelliteNames }) => {
     const containerRef = useRef(null);
     const [visibleCount, setVisibleCount] = useState(null);
 
-    const ids = value ? (Array.isArray(value)
-        ? value
-        : value.split(',').map(id => id.trim()).filter(Boolean)) : [];
+    const ids = normalizeSatelliteIds(value);
 
     useEffect(() => {
         if (!containerRef.current || ids.length === 0) return;
@@ -90,24 +95,24 @@ const SatelliteChipsCell = ({ value, navigate }) => {
 
     return (
         <Box ref={containerRef} sx={{ display: 'flex', flexWrap: 'nowrap', gap: 0.5, py: 1, overflow: 'hidden' }}>
-            {visibleIds.map((id, index) => (
-                <Chip
-                    key={index}
-                    label={id}
-                    variant="outlined"
-                    clickable
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        navigate(`/satellites/${id}`);
-                    }}
-                />
+            {visibleIds.map((id) => (
+                <Tooltip key={id} title={`NORAD ID: ${id}`}>
+                    <Chip
+                        label={satelliteNames[String(id)] || id}
+                        variant="outlined"
+                        clickable
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/satellites/${id}`);
+                        }}
+                        sx={{maxWidth: 180}}
+                    />
+                </Tooltip>
             ))}
             {remaining > 0 && (
-                <Chip
-                    label={`+${remaining} more`}
-                    variant="filled"
-                    color="default"
-                />
+                <Tooltip title={ids.slice(displayCount).map(id => `NORAD ID: ${id}`).join(', ')}>
+                    <Chip label={`+${remaining} more`} variant="filled" color="default" />
+                </Tooltip>
             )}
         </Box>
     );
@@ -118,6 +123,7 @@ const GroupsTable = () => {
     const { socket } = useSocket();
     const { t } = useTranslation('satellites');
     const navigate = useNavigate();
+    const [satelliteNames, setSatelliteNames] = useState({});
 
     // Get timezone preference
     const timezone = useSelector((state) => {
@@ -132,11 +138,28 @@ const GroupsTable = () => {
         formDialogOpen,
         deleteConfirmDialogOpen,
         satGroup,
-        formErrorStatus,
         loading,
         error,
     } = useSelector((state) => state.satelliteGroups);
     const rowSelectionModel = useMemo(() => toRowSelectionModel(selected), [selected]);
+
+    useEffect(() => {
+        const satelliteIds = [...new Set(groups.flatMap(group => normalizeSatelliteIds(group.satellite_ids)))];
+        if (!socket || satelliteIds.length === 0) {
+            setSatelliteNames({});
+            return undefined;
+        }
+
+        let cancelled = false;
+        socket.emit('api.call', {cmd: 'get-satellites', data: satelliteIds}, response => {
+            if (cancelled || !response.success) return;
+            setSatelliteNames(Object.fromEntries(
+                response.data.map(satellite => [String(satellite.norad_id), satellite.name])
+            ));
+        });
+
+        return () => { cancelled = true; };
+    }, [groups, socket]);
 
     const columns = [
         {
@@ -150,7 +173,13 @@ const GroupsTable = () => {
             headerName: t('groups.satellites'),
             width: 300,
             flex: 5,
-            renderCell: (params) => <SatelliteChipsCell value={params.value} navigate={navigate} />,
+            renderCell: (params) => (
+                <SatelliteChipsCell
+                    value={params.value}
+                    navigate={navigate}
+                    satelliteNames={satelliteNames}
+                />
+            ),
         },
         {
             field: 'added',
@@ -170,12 +199,65 @@ const GroupsTable = () => {
             headerAlign: 'right',
             renderCell: (params) => betterDateTimes(params.value, timezone),
         },
+        {
+            field: 'actions',
+            headerName: t('groups.actions'),
+            width: 148,
+            align: 'center',
+            headerAlign: 'center',
+            sortable: false,
+            filterable: false,
+            disableColumnMenu: true,
+            renderCell: (params) => (
+                <Stack
+                    direction="row"
+                    spacing={0.5}
+                    justifyContent="center"
+                    alignItems="center"
+                    sx={{width: '100%', height: '100%'}}
+                >
+                    <Tooltip title={t('groups.edit')}>
+                        <IconButton
+                            size="small"
+                            aria-label={t('groups.edit')}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                handleEditGroup(params.row);
+                            }}
+                        >
+                            <EditOutlinedIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                    <Tooltip title={t('groups.delete')}>
+                        <IconButton
+                            size="small"
+                            color="error"
+                            aria-label={t('groups.delete')}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                dispatch(setSelected([params.row.id]));
+                                dispatch(setDeleteConfirmDialogOpen(true));
+                            }}
+                        >
+                            <DeleteOutlineIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                    <Tooltip title={t('groups.copy_norad_ids')}>
+                        <IconButton
+                            size="small"
+                            aria-label={t('groups.copy_norad_ids')}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                handleCopyNoradIds(params.row);
+                            }}
+                        >
+                            <ContentCopyOutlinedIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                </Stack>
+            ),
+        },
     ];
-
-    // // Fetch data
-    // useEffect(() => {
-    //     dispatch(fetchSatelliteGroups({ socket }));
-    // }, [dispatch, socket]);
 
     // Handle Add
     const handleAddClick = () => {
@@ -184,12 +266,12 @@ const GroupsTable = () => {
     };
 
     // Handle Edit
-    const handleEditGroup = () => {
-        if (selected.length !== 1) return;
-        const singleRowId = selected[0];
-        const rowData = groups.find((row) => row.id === singleRowId);
-        if (rowData) {
-            dispatch(setSatGroup(rowData));
+    const handleEditGroup = (rowData = null) => {
+        const singleRowId = rowData?.id || selected[0];
+        if (!singleRowId || (rowData === null && selected.length !== 1)) return;
+        const group = rowData || groups.find((row) => row.id === singleRowId);
+        if (group) {
+            dispatch(setSatGroup(group));
             dispatch(setFormDialogOpen(true));
         }
     };
@@ -199,11 +281,23 @@ const GroupsTable = () => {
             .unwrap()
             .then(()=>{
                 dispatch(setDeleteConfirmDialogOpen(false));
+                dispatch(setSelected([]));
                 toast.success(t('groups.deleted_success'));
             })
             .catch((err) => {
                 toast.error(t('groups.failed_delete'));
             });
+    };
+
+    const handleCopyNoradIds = async (group) => {
+        const csv = normalizeSatelliteIds(group.satellite_ids).join(',');
+        try {
+            await navigator.clipboard.writeText(csv);
+            toast.success(t('groups.copied_norad_ids'));
+        } catch (copyError) {
+            console.error(copyError);
+            toast.error(t('groups.copy_norad_ids_failed'));
+        }
     };
 
     const paginationModel = { page: 0, pageSize: 10 };
@@ -225,6 +319,9 @@ const GroupsTable = () => {
                 initialState={{ pagination: { paginationModel } }}
                 pageSizeOptions={[5, 10]}
                 checkboxSelection
+                // Keep the controlled selection state as explicit selected IDs so
+                // bulk actions do not receive MUI's empty "exclude" select-all model.
+                disableRowSelectionExcludeModel
                 onRowSelectionModelChange={(ids) => {
                     dispatch(setSelected(toSelectedIds(ids)));
                 }}
@@ -263,16 +360,21 @@ const GroupsTable = () => {
                     },
                 }}
             />
-            <Stack spacing={2} direction="row" sx={{ my: 2 }}>
+            <Stack
+                spacing={2}
+                direction={{xs: 'column', sm: 'row'}}
+                alignItems={{xs: 'stretch', sm: 'center'}}
+                sx={{my: 2}}
+            >
                 <Button variant="contained" onClick={handleAddClick}>
                     {t('groups.add')}
                 </Button>
                 <Button
                     variant="contained"
-                    onClick={handleEditGroup}
+                    onClick={() => handleEditGroup()}
                     disabled={selected.length !== 1}
                 >
-                    {t('groups.edit')}
+                    {t('groups.edit_selected')}
                 </Button>
                 <Button
                     variant="contained"
@@ -280,8 +382,18 @@ const GroupsTable = () => {
                     onClick={() => dispatch(setDeleteConfirmDialogOpen(true))}
                     disabled={selected.length === 0}
                 >
-                    {t('groups.delete')}
+                    {t('groups.delete_selected')}
                 </Button>
+                {selected.length > 0 && (
+                    <Chip
+                        size="small"
+                        color="primary"
+                        variant="outlined"
+                        label={t(selected.length === 1 ? 'groups.selected_count_one' : 'groups.selected_count_other', {
+                            count: selected.length,
+                        })}
+                    />
+                )}
             </Stack>
             <Alert severity="info" sx={{ mt: 2 }}>
                 <AlertTitle>{t('groups.title')}</AlertTitle>
@@ -292,34 +404,12 @@ const GroupsTable = () => {
                     {error}
                 </Alert>
             )}
-            {formErrorStatus && (
-                <Alert severity="error" sx={{ mt: 2 }}>
-                    {t('groups.error_message')}
-                </Alert>
-            )}
-
-            {/* Example usage of Dialog */}
-            {formDialogOpen && (
-                <Dialog
-                    open={formDialogOpen}
-                    onClose={() => dispatch(setFormDialogOpen(false))}
-                >
-                    <DialogTitle>{satGroup.id ? t('groups.dialog_title_edit') : t('groups.dialog_title_add')}</DialogTitle>
-                    <DialogContent>
-                        <AddEditDialog
-                            formDialogOpen={formDialogOpen}
-                            handleRowsCallback={handleRowsCallback}
-                            handleDialogOpenCallback={handleDialogOpenCallback}
-                            satGroup={satGroup}
-                        />
-                    </DialogContent>
-                    <DialogActions>
-                        <Button onClick={() => dispatch(setFormDialogOpen(false))}>
-                            {t('groups.close')}
-                        </Button>
-                    </DialogActions>
-                </Dialog>
-            )}
+            <AddEditDialog
+                formDialogOpen={formDialogOpen}
+                handleRowsCallback={handleRowsCallback}
+                handleDialogOpenCallback={handleDialogOpenCallback}
+                satGroup={satGroup}
+            />
 
             <Dialog
                 open={deleteConfirmDialogOpen}
@@ -369,7 +459,9 @@ const GroupsTable = () => {
                         {t('groups.confirm_delete_message')}
                     </Typography>
                     <Typography variant="body2" sx={{ mb: 2, fontWeight: 600, color: 'text.secondary' }}>
-                        {selected.length === 1 ? 'Group to be deleted:' : `${selected.length} Groups to be deleted:`}
+                        {selected.length === 1
+                            ? t('groups.delete_one_label')
+                            : t('groups.delete_many_label', {count: selected.length})}
                     </Typography>
                     <Box sx={{
                         maxHeight: 300,
@@ -399,14 +491,18 @@ const GroupsTable = () => {
                                     </Typography>
                                     <Box sx={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 1, columnGap: 2 }}>
                                         <Typography variant="body2" sx={{ fontSize: '0.813rem', color: 'text.secondary', fontWeight: 500 }}>
-                                            Satellites:
+                                            {t('groups.satellites')}:
                                         </Typography>
                                         <Typography variant="body2" sx={{ fontSize: '0.813rem', color: 'text.primary' }}>
-                                            {satelliteIds.length > 0 ? `${satelliteIds.length} satellite(s)` : 'No satellites'}
+                                            {satelliteIds.length > 0
+                                                ? t(satelliteIds.length === 1
+                                                    ? 'groups.satellite_count_one'
+                                                    : 'groups.satellite_count_other', {count: satelliteIds.length})
+                                                : t('groups.no_satellites')}
                                         </Typography>
 
                                         <Typography variant="body2" sx={{ fontSize: '0.813rem', color: 'text.secondary', fontWeight: 500 }}>
-                                            Added:
+                                            {t('groups.added')}:
                                         </Typography>
                                         <Typography variant="body2" sx={{ fontSize: '0.813rem', color: 'text.primary' }}>
                                             {betterDateTimes(group.added, timezone)}
@@ -415,7 +511,7 @@ const GroupsTable = () => {
                                         {group.updated && (
                                             <>
                                                 <Typography variant="body2" sx={{ fontSize: '0.813rem', color: 'text.secondary', fontWeight: 500 }}>
-                                                    Updated:
+                                                    {t('groups.updated')}:
                                                 </Typography>
                                                 <Typography variant="body2" sx={{ fontSize: '0.813rem', color: 'text.primary' }}>
                                                     {betterDateTimes(group.updated, timezone)}
@@ -455,6 +551,8 @@ const GroupsTable = () => {
                             handleDeleteGroup();
                         }}
                         color="error"
+                        disabled={loading}
+                        startIcon={loading ? <CircularProgress size={16} color="inherit" /> : undefined}
                         sx={{
                             minWidth: 100,
                             textTransform: 'none',

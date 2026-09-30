@@ -99,12 +99,23 @@ async def fetch_satellite_group(
         return {"success": False, "data": None, "error": str(e)}
 
 
-async def add_satellite_group(session: AsyncSession, data: dict) -> dict:
+async def add_satellite_group(
+    session: AsyncSession, data: dict, group_type: Optional[str] = None
+) -> dict:
     """
     Add a new satellite group record.
     """
     try:
-        assert "name" in data, "Name is required."
+        assert "name" in data and data["name"], "Name is required."
+
+        if group_type is not None:
+            # The user-facing API may only create user groups. Keep system-only
+            # fields out of that path even if a client sends them deliberately.
+            data = {
+                "name": data["name"],
+                "satellite_ids": data.get("satellite_ids", []),
+                "type": group_type,
+            }
 
         group = Groups(**data)
         session.add(group)
@@ -119,20 +130,32 @@ async def add_satellite_group(session: AsyncSession, data: dict) -> dict:
         return {"success": False, "data": None, "error": str(e)}
 
 
-async def edit_satellite_group(session: AsyncSession, satellite_group_id: str, data: dict) -> dict:
+async def edit_satellite_group(
+    session: AsyncSession,
+    satellite_group_id: str,
+    data: dict,
+    group_type: Optional[str] = None,
+) -> dict:
     """
     Edit an existing satellite group record.
     """
     try:
-        # Remove 'id' from data if it exists
+        # Do not mutate the request object; callers may use it for error reporting.
+        data = dict(data)
         data.pop("id", None)
         satellite_group_uuid = uuid.UUID(satellite_group_id)
 
-        result = await session.execute(select(Groups).filter(Groups.id == satellite_group_uuid))
+        stmt = select(Groups).filter(Groups.id == satellite_group_uuid)
+        if group_type is not None:
+            stmt = stmt.filter(Groups.type == group_type)
+        result = await session.execute(stmt)
         group = result.scalars().first()
 
         if not group:
             return {"success": False, "data": None, "error": "Satellite group not found."}
+
+        if group_type is not None:
+            data = {key: data[key] for key in ("name", "satellite_ids") if key in data}
 
         for key, value in data.items():
             setattr(group, key, value)
@@ -149,7 +172,9 @@ async def edit_satellite_group(session: AsyncSession, satellite_group_id: str, d
 
 
 async def delete_satellite_group(
-    session: AsyncSession, satellite_group_ids: Union[List[str], dict]
+    session: AsyncSession,
+    satellite_group_ids: Union[List[str], dict],
+    group_type: Optional[str] = None,
 ) -> dict:
     """
     Delete satellite group record(s).
@@ -159,7 +184,13 @@ async def delete_satellite_group(
         result = await session.execute(select(Groups).filter(Groups.id.in_(satellite_group_ids)))
         groups = result.scalars().all()
 
-        if not groups:
+        if not groups or (
+            group_type is not None
+            and (
+                len(groups) != len(satellite_group_ids)
+                or any(group.type != group_type for group in groups)
+            )
+        ):
             return {"success": False, "data": None, "error": "Satellite group not found."}
 
         for group in groups:

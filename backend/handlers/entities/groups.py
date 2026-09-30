@@ -108,7 +108,7 @@ async def get_satellite_groups_system(
 
 async def submit_satellite_group(
     sio: Any, data: Optional[Dict], logger: Any, sid: str
-) -> Dict[str, Union[bool, list]]:
+) -> Dict[str, Any]:
     """
     Add a new satellite group.
 
@@ -123,12 +123,29 @@ async def submit_satellite_group(
     """
     async with AsyncSessionLocal() as dbsession:
         logger.debug(f"Adding satellite group, data: {data}")
-        submit_reply = await crud.groups.add_satellite_group(dbsession, data)
+        if (
+            not isinstance(data, dict)
+            or not isinstance(data.get("name"), str)
+            or not data["name"].strip()
+        ):
+            return {"success": False, "data": [], "error": "Name is required."}
+
+        submit_reply = await crud.groups.add_satellite_group(
+            dbsession,
+            {
+                "name": data["name"].strip(),
+                "satellite_ids": data.get("satellite_ids", []),
+            },
+            group_type=SatelliteGroupType.USER,
+        )
+        if not submit_reply["success"]:
+            return {"success": False, "data": [], "error": submit_reply.get("error")}
 
         satellite_groups = await crud.groups.fetch_satellite_group(dbsession, group_type="user")
         return {
-            "success": (satellite_groups["success"] & submit_reply["success"]),
+            "success": satellite_groups["success"],
             "data": satellite_groups.get("data", []),
+            "error": satellite_groups.get("error"),
         }
 
 
@@ -152,18 +169,29 @@ async def edit_satellite_group(
         if not data or "id" not in data:
             return {"success": False, "data": [], "error": "Missing satellite group ID"}
 
-        edit_reply = await crud.groups.edit_satellite_group(dbsession, data["id"], data)
+        edit_data = {key: data[key] for key in ("name", "satellite_ids") if key in data}
+        if "name" in edit_data and isinstance(edit_data["name"], str):
+            edit_data["name"] = edit_data["name"].strip()
+        edit_reply = await crud.groups.edit_satellite_group(
+            dbsession,
+            data["id"],
+            edit_data,
+            group_type=SatelliteGroupType.USER,
+        )
+        if not edit_reply["success"]:
+            return {"success": False, "data": [], "error": edit_reply.get("error")}
 
         satellite_groups = await crud.groups.fetch_satellite_group(dbsession, group_type="user")
         return {
-            "success": (satellite_groups["success"] & edit_reply["success"]),
+            "success": satellite_groups["success"],
             "data": satellite_groups.get("data", []),
+            "error": satellite_groups.get("error"),
         }
 
 
 async def delete_satellite_group(
     sio: Any, data: Optional[Dict], logger: Any, sid: str
-) -> Dict[str, Union[bool, list]]:
+) -> Dict[str, Any]:
     """
     Delete satellite groups.
 
@@ -178,12 +206,17 @@ async def delete_satellite_group(
     """
     async with AsyncSessionLocal() as dbsession:
         logger.debug(f"Deleting satellite groups, data: {data}")
-        delete_reply = await crud.groups.delete_satellite_group(dbsession, data)
+        delete_reply = await crud.groups.delete_satellite_group(
+            dbsession, data, group_type=SatelliteGroupType.USER
+        )
+        if not delete_reply["success"]:
+            return {"success": False, "data": [], "error": delete_reply.get("error")}
 
         satellite_groups = await crud.groups.fetch_satellite_group(dbsession, group_type="user")
         return {
-            "success": (satellite_groups["success"] & delete_reply["success"]),
+            "success": satellite_groups["success"],
             "data": satellite_groups.get("data", []),
+            "error": satellite_groups.get("error"),
         }
 
 

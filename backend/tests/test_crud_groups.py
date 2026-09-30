@@ -297,6 +297,54 @@ class TestGroupsCRUD:
         assert result["success"] is True
         assert result["data"]["satellite_ids"] is None
 
+    async def test_user_scoped_add_drops_system_fields(self, db_session):
+        """User group creation cannot set system identifiers or types."""
+        result = await add_satellite_group(
+            db_session,
+            {
+                "name": "User Group",
+                "identifier": "system-identifier",
+                "type": "system",
+                "satellite_ids": [12345],
+            },
+            group_type="user",
+        )
+
+        assert result["success"] is True
+        assert result["data"]["type"] == "user"
+        assert result["data"]["identifier"] is None
+
+    async def test_user_scoped_edit_cannot_modify_system_group(self, db_session):
+        """User group editing cannot address a system group."""
+        add_result = await add_satellite_group(
+            db_session,
+            {"name": "System Group", "type": "system", "satellite_ids": [12345]},
+        )
+
+        result = await edit_satellite_group(
+            db_session,
+            add_result["data"]["id"],
+            {"name": "Changed", "type": "user"},
+            group_type="user",
+        )
+
+        assert result["success"] is False
+        assert "not found" in result["error"]
+
+    async def test_user_scoped_delete_cannot_delete_system_group(self, db_session):
+        """User group deletion cannot address a system group."""
+        add_result = await add_satellite_group(
+            db_session,
+            {"name": "System Group", "type": "system", "satellite_ids": [12345]},
+        )
+
+        result = await delete_satellite_group(
+            db_session, [add_result["data"]["id"]], group_type="user"
+        )
+
+        assert result["success"] is False
+        assert "not found" in result["error"]
+
     async def test_edit_satellite_group_change_type(self, db_session):
         """Test changing group type from user to system."""
         add_result = await add_satellite_group(

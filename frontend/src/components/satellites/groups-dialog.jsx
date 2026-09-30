@@ -20,41 +20,49 @@
 
 
 import {useSocket} from "../common/socket.jsx";
-import {Fragment, useCallback, useEffect, useMemo, useState} from "react";
+import {Fragment, useCallback, useEffect, useMemo, useRef, useState} from "react";
 import * as React from "react";
 import { toast } from '../../utils/toast-with-timestamp.jsx';
-import {Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, TextField} from "@mui/material";
+import {Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, TextField} from "@mui/material";
 import {DataGrid} from "@mui/x-data-grid";
 import Autocomplete from "@mui/material/Autocomplete";
 import CircularProgress from "@mui/material/CircularProgress";
+import CloseIcon from '@mui/icons-material/Close';
 import {toRowSelectionModel, toSelectedIds} from '../../utils/datagrid-selection.js';
+import {useDispatch} from 'react-redux';
+import {useTranslation} from 'react-i18next';
+import {AddOrEditSatelliteGroup, fetchSatelliteGroups} from './groups-slice.jsx';
 
 
 export function AutocompleteAsync({setSelectedSatelliteCallback}) {
     const {socket} = useSocket();
+    const {t} = useTranslation('satellites');
     const [open, setOpen] = React.useState(false);
     const [options, setOptions] = React.useState([]);
     const [loading, setLoading] = React.useState(false);
+    const searchTimer = useRef(null);
+    const requestNumber = useRef(0);
+
+    useEffect(() => () => clearTimeout(searchTimer.current), []);
 
     const search = (keyword) => {
-        (async () => {
-            setLoading(true);
-            socket.emit("api.call", {
-  cmd: "get-satellite-search",
-  data: keyword
-}, response => {
-  if (response.success) {
-    setOptions(response.data);
-  } else {
-    console.error(response.error);
-    toast.error(`Error searching for satellites: ${response.error}`, {
-      autoClose: 5000
-    });
-    setOptions([]);
-  }
-  setLoading(false);
-});
-        })();
+        const currentRequest = ++requestNumber.current;
+        setLoading(true);
+        socket.emit("api.call", {
+            cmd: "get-satellite-search",
+            data: keyword,
+        }, response => {
+            // Ignore replies for an older input value.
+            if (currentRequest !== requestNumber.current) return;
+            if (response.success) {
+                setOptions(response.data);
+            } else {
+                console.error(response.error);
+                toast.error(`${t('groups.search_error')}: ${response.error}`, {autoClose: 5000});
+                setOptions([]);
+            }
+            setLoading(false);
+        });
     };
 
     const handleOpen = () => {
@@ -63,21 +71,27 @@ export function AutocompleteAsync({setSelectedSatelliteCallback}) {
 
     const handleClose = () => {
         setOpen(false);
+        requestNumber.current += 1;
         setOptions([]);
+        setLoading(false);
     };
 
     const handleInputChange = (event, newInputValue) => {
-        if (newInputValue.length > 2) {
-            search(newInputValue);
+        clearTimeout(searchTimer.current);
+        if (newInputValue.length <= 2) {
+            requestNumber.current += 1;
+            setOptions([]);
+            setLoading(false);
+            return;
         }
+        searchTimer.current = setTimeout(() => search(newInputValue), 250);
     };
 
     const handleOptionSelect = (event, newValue) => {
         if (newValue !== null) {
-            newValue['id'] = newValue['norad_id'];
             setSelectedSatelliteCallback(newValue);
         }
-    }
+    };
 
     return (
         <Autocomplete
@@ -98,7 +112,7 @@ export function AutocompleteAsync({setSelectedSatelliteCallback}) {
                 <TextField
                     fullWidth={true}
                     {...params}
-                    label="Add satellites (search by name or NORAD ID)"
+                    label={t('groups.add_satellites')}
                     slotProps={{
                         input: {
                             ...params.InputProps,
@@ -118,106 +132,110 @@ export function AutocompleteAsync({setSelectedSatelliteCallback}) {
 
 export function AddEditDialog({formDialogOpen, handleRowsCallback, handleDialogOpenCallback, satGroup}) {
     const { socket } = useSocket();
+    const dispatch = useDispatch();
+    const {t} = useTranslation('satellites');
     const defaultFormValues = {
         id: '',
         name: '',
         satellite_ids: [],
     };
     const [formDialogValues, setFormDialogValues] = useState(defaultFormValues);
-    const [formErrorStatus, setFormErrorStatus] = useState(false);
     const [selectionModel, setSelectionModel] = useState([]);
     const rowSelectionModel = useMemo(() => toRowSelectionModel(selectionModel), [selectionModel]);
     const paginationModel = {page: 0, pageSize: 10};
     const [satellites, setSatellites] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [submitting, setSubmitting] = useState(false);
+
+    const originalSatelliteIds = Array.isArray(satGroup?.satellite_ids) ? satGroup.satellite_ids : [];
+    const sameSatelliteIds = (first, second) => (
+        first.length === second.length
+        && new Set(first.map(String)).size === new Set(second.map(String)).size
+        && first.every(id => second.map(String).includes(String(id)))
+    );
+    const hasFormChanges = formDialogValues.id
+        ? formDialogValues.name.trim() !== (satGroup?.name || '').trim()
+            || !sameSatelliteIds(selectionModel, originalSatelliteIds)
+        : formDialogValues.name.trim().length > 0;
+    const canSubmit = formDialogValues.name.trim().length > 0 && hasFormChanges;
 
     const handleDialogClose = () => {
         handleDialogOpenCallback(false);
     };
 
     useEffect(() => {
-        setFormDialogValues(defaultFormValues);
-        return () => {
-
-        };
-    }, [formDialogOpen]);
-
-    useEffect(() => {
-        setLoading(true);
-        if (satGroup) {
-            // fetch the satellites for the satellite_id set in the satGroup
-            if (satGroup.satellite_ids && satGroup.satellite_ids.length > 0) {
-                socket.emit("api.call", {
-  cmd: "get-satellites",
-  data: satGroup.satellite_ids
-}, response => {
-  if (response.success) {
-    setSatellites(response.data);
-  } else {
-    console.error(response.error);
-  }
-})
-            }
-
-            setFormDialogValues({
-                id: satGroup.id,
-                name: satGroup.name,
-                satellite_ids: satGroup.satellite_ids || [],
-            });
-            setSelectionModel(satGroup.satellite_ids || []);
-
+        if (!formDialogOpen) {
+            setSatellites([]);
             setLoading(false);
+            return undefined;
         }
 
-        return () => {
+        const group = satGroup?.id ? satGroup : null;
+        const satelliteIds = Array.isArray(group?.satellite_ids) ? group.satellite_ids : [];
+        let cancelled = false;
 
-        };
-    }, [satGroup]);
+        setFormDialogValues(group ? {
+            id: group.id,
+            name: group.name || '',
+            satellite_ids: satelliteIds,
+        } : defaultFormValues);
+        setSelectionModel([...satelliteIds]);
+        setSatellites([]);
+        setSubmitting(false);
+
+        if (!group || satelliteIds.length === 0) {
+            setLoading(false);
+            return () => { cancelled = true; };
+        }
+
+        setLoading(true);
+        socket.emit("api.call", {
+            cmd: "get-satellites",
+            data: satelliteIds,
+        }, response => {
+            if (cancelled) return;
+            if (response.success) {
+                setSatellites(response.data);
+            } else {
+                console.error(response.error);
+            }
+            setLoading(false);
+        });
+
+        return () => { cancelled = true; };
+    }, [formDialogOpen, satGroup, socket]);
 
     const handleFormSubmit = (event) => {
         event.preventDefault();
 
-        let cmd;
-        let newRow;
-        let successMessage = "Satellite group added successfully";
-        if(formDialogValues.id) {
-            cmd = 'edit-satellite-group';
-            newRow = {
-                id: formDialogValues.id,
-                name: formDialogValues.name,
-                satellite_ids: selectionModel,
-            };
-            successMessage = "Satellite group edited successfully";
-        } else {
-            cmd = 'submit-satellite-group';
-            // create a new row based on input values
-            newRow = {
-                name: formDialogValues.name,
-                satellite_ids: selectionModel,
-            };
-            successMessage = "Satellite group added successfully";
-        }
-        socket.emit("api.call", {
-  cmd: cmd,
-  data: newRow
-}, response => {
-  if (response.success === true) {
-    handleRowsCallback(response.data);
-    handleDialogOpenCallback(false);
-    toast.success(successMessage, {
-      autoClose: 5000
-    });
-  } else {
-    toast.error("Error adding satellite group", {
-      autoClose: 5000
-    });
-  }
-});
+        const newRow = {
+            ...(formDialogValues.id ? {id: formDialogValues.id} : {}),
+            name: formDialogValues.name.trim(),
+            satellite_ids: [...new Set(selectionModel)],
+        };
+        setSubmitting(true);
+        dispatch(AddOrEditSatelliteGroup({socket, groupData: newRow}))
+            .unwrap()
+            .then(() => dispatch(fetchSatelliteGroups({socket})).unwrap())
+            .then((groups) => {
+                handleRowsCallback(groups);
+                handleDialogOpenCallback(false);
+                toast.success(t(formDialogValues.id ? 'groups.edited_success' : 'groups.added_success'), {autoClose: 5000});
+            })
+            .catch((error) => {
+                toast.error(`${t(formDialogValues.id ? 'groups.failed_edit' : 'groups.failed_add')}: ${error.message || error}`, {autoClose: 5000});
+            })
+            .finally(() => setSubmitting(false));
     };
 
     const setSelectedSatelliteCallback = useCallback((satellite) => {
-        setSatellites(prevSatellites => [...prevSatellites, satellite]);
-        setSelectionModel(prevSelectionModel => [...prevSelectionModel, satellite.id]);
+        const satelliteId = satellite.norad_id;
+        setSatellites(prevSatellites => prevSatellites.some(item => item.norad_id === satelliteId)
+            ? prevSatellites
+            : [...prevSatellites, {...satellite, id: satelliteId}]);
+        setSelectionModel(prevSelectionModel => prevSelectionModel.includes(satelliteId)
+            ? prevSelectionModel
+            : [...prevSelectionModel, satelliteId]);
 
     }, []);
 
@@ -242,20 +260,31 @@ export function AddEditDialog({formDialogOpen, handleRowsCallback, handleDialogO
                     fontSize: '1.25rem',
                     fontWeight: 'bold',
                     py: 2.5,
+                    display: 'flex',
+                    alignItems: 'center',
                 }}
             >
-                Add a new satellite group
+                <Box component="span" sx={{flexGrow: 1}}>
+                    {t(formDialogValues.id ? 'groups.dialog_title_edit' : 'groups.dialog_title_add')}
+                </Box>
+                <IconButton
+                    aria-label={t('groups.close')}
+                    onClick={handleDialogClose}
+                    size="small"
+                    sx={{color: 'inherit'}}
+                >
+                    <CloseIcon fontSize="small" />
+                </IconButton>
             </DialogTitle>
             <form onSubmit={handleFormSubmit}>
-                <DialogContent sx={{ px: 3, py: 3, minHeight: 600 }}>
-                    <Box sx={{ mt: 3 }}>
+                <DialogContent sx={{ px: 3, pt: 3, pb: 0 }}>
+                    <Box sx={{ mt: 0 }}>
                         <TextField
                             autoComplete="new-password"
                             autoFocus
                             id="name"
-                            error={formErrorStatus}
                             name="name"
-                            label="Name"
+                            label={t('groups.name')}
                             fullWidth
                             value={formDialogValues.name || ''}
                             onChange={(e) => setFormDialogValues(prevValues => ({...prevValues, name: e.target.value}))}
@@ -268,17 +297,21 @@ export function AddEditDialog({formDialogOpen, handleRowsCallback, handleDialogO
                                 getRowId={(row) => row['norad_id']}
                                 rows={satellites}
                                 columns={[
-                                    {field: 'norad_id', headerName: 'NORAD ID', width: 150},
-                                    {field: 'name', headerName: 'Name', width: 300},
+                                    {field: 'norad_id', headerName: t('groups.norad_id'), width: 150},
+                                    {field: 'name', headerName: t('groups.name'), width: 300},
                                 ]}
                                 initialState={{pagination: {paginationModel}}}
                                 pageSizeOptions={[5, 10]}
+                                localeText={{noRowsLabel: t('groups.no_selected_satellites')}}
                                 sx={{
-                                    height: 400,
+                                    height: {xs: 240, sm: 320, md: 400},
                                     marginTop: 2,
+                                    marginBottom: 0,
                                     border: '1px solid rgba(0, 0, 0, 0.12)',
                                 }}
                                 checkboxSelection
+                                // Keep the controlled selection state as explicit IDs.
+                                disableRowSelectionExcludeModel
                                 rowSelectionModel={rowSelectionModel}
                                 onRowSelectionModelChange={(newModel) => setSelectionModel(toSelectedIds(newModel))}
                             />
@@ -305,9 +338,13 @@ export function AddEditDialog({formDialogOpen, handleRowsCallback, handleDialogO
                             },
                         }}
                     >
-                        Cancel
+                        {t('groups.cancel')}
                     </Button>
-                    <Button type="submit" variant="contained">Submit</Button>
+                    <Button type="submit" variant="contained" disabled={submitting || !canSubmit}>
+                        {t(submitting
+                            ? (formDialogValues.id ? 'groups.saving' : 'groups.adding')
+                            : (formDialogValues.id ? 'groups.save' : 'groups.submit'))}
+                    </Button>
                 </DialogActions>
             </form>
         </Dialog>

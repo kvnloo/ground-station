@@ -72,7 +72,7 @@ export const AddOrEditSatelliteGroup = createAsyncThunk(
         try {
             return await new Promise((resolve, reject) => {
                 socket.emit("api.call", {
-  cmd: groupData.id ? 'edit-satellite-group' : 'add-satellite-group',
+  cmd: groupData.id ? 'edit-satellite-group' : 'submit-satellite-group',
   data: groupData
 }, response => {
   if (response.success) {
@@ -96,7 +96,6 @@ const groupsSlice = createSlice({
         selected: [],
         satGroup: {},         // for storing the row being edited, if needed
         formDialogOpen: false,
-        formErrorStatus: false,
         loading: false,
         error: null,
         deleteConfirmDialogOpen: false,
@@ -110,9 +109,6 @@ const groupsSlice = createSlice({
         },
         setFormDialogOpen: (state, action) => {
             state.formDialogOpen = action.payload;
-        },
-        setFormErrorStatus: (state, action) => {
-            state.formErrorStatus = action.payload;
         },
         setGroups: (state, action) => {
             state.groups = action.payload;
@@ -167,7 +163,6 @@ export const {
     setSelected,
     setSatGroup,
     setFormDialogOpen,
-    setFormErrorStatus,
     setGroups,
     setDeleteConfirmDialogOpen
 } = groupsSlice.actions;

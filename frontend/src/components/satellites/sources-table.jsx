@@ -1266,85 +1266,87 @@ export default function SourcesTable({ showTabs = true }) {
                                 />
                             </Stack>
 
-                            <Accordion disableGutters>
-                                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                                    <Typography variant="subtitle2">
-                                        {t('orbital_sources.advanced_settings')}
-                                    </Typography>
-                                </AccordionSummary>
-                                <AccordionDetails>
-                                    <Stack spacing={2}>
-                                        {isSpaceTrackSource && (
-                                            <FormControl fullWidth size="small" error={Boolean(validationErrors.format)}>
-                                                <InputLabel id="format-label-advanced">{t('orbital_sources.format')}</InputLabel>
-                                                <Select
-                                                    label={t('orbital_sources.format')}
-                                                    name="format"
-                                                    value={normalizedFormValues.format}
-                                                    onChange={handleInputChange}
-                                                    size="small"
-                                                >
-                                                    {FORMAT_OPTIONS.map((format) => (
-                                                        <MenuItem key={format} value={format}>
-                                                            {getFormatOptionLabel(format, normalizedFormValues.provider)}
-                                                        </MenuItem>
-                                                    ))}
-                                                </Select>
-                                                {validationErrors.format && (
-                                                    <FormHelperText>{validationErrors.format}</FormHelperText>
-                                                )}
-                                                <FormHelperText>{t('orbital_sources.format_hint')}</FormHelperText>
-                                            </FormControl>
-                                        )}
-                                        {!isSpaceTrackSource && !isCelestrakConfiguredSource && (
-                                            <FormControl fullWidth size="small" error={Boolean(validationErrors.auth_type)}>
-                                                <InputLabel id="auth-type-label">{t('orbital_sources.auth_type')}</InputLabel>
-                                                <Select
-                                                    label={t('orbital_sources.auth_type')}
-                                                    name="auth_type"
-                                                    value={normalizedFormValues.auth_type}
-                                                    onChange={handleInputChange}
-                                                    size="small"
-                                                >
-                                                    {AUTH_TYPE_OPTIONS.map((authType) => (
-                                                        <MenuItem key={authType} value={authType}>
-                                                            {authType}
-                                                        </MenuItem>
-                                                    ))}
-                                                </Select>
-                                                {validationErrors.auth_type && (
-                                                    <FormHelperText>{validationErrors.auth_type}</FormHelperText>
-                                                )}
-                                            </FormControl>
-                                        )}
-                                        {!isSpaceTrackSource && !isCelestrakConfiguredSource && normalizedFormValues.auth_type !== 'none' && (
-                                            <>
-                                                <TextField
-                                                    label={t('orbital_sources.username')}
-                                                    name="username"
-                                                    value={normalizedFormValues.username}
-                                                    onChange={handleInputChange}
-                                                    size="small"
-                                                    fullWidth
-                                                    error={Boolean(validationErrors.username)}
-                                                    helperText={validationErrors.username || ' '}
-                                                />
-                                                <TextField
-                                                    label={t('orbital_sources.password')}
-                                                    name="password"
-                                                    type="password"
-                                                    value={normalizedFormValues.password}
-                                                    onChange={handleInputChange}
-                                                    size="small"
-                                                    fullWidth
-                                                    error={Boolean(validationErrors.password)}
-                                                    helperText={validationErrors.password || ' '}
-                                                />
-                                            </>
-                                        )}
-                                    </Stack>
-                                </AccordionDetails>
-                            </Accordion>
+                            {!isCelestrakConfiguredSource && (
+                                <Accordion disableGutters>
+                                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                                        <Typography variant="subtitle2">
+                                            {t('orbital_sources.advanced_settings')}
+                                        </Typography>
+                                    </AccordionSummary>
+                                    <AccordionDetails>
+                                        <Stack spacing={2}>
+                                            {isSpaceTrackSource && (
+                                                <FormControl fullWidth size="small" error={Boolean(validationErrors.format)}>
+                                                    <InputLabel id="format-label-advanced">{t('orbital_sources.format')}</InputLabel>
+                                                    <Select
+                                                        label={t('orbital_sources.format')}
+                                                        name="format"
+                                                        value={normalizedFormValues.format}
+                                                        onChange={handleInputChange}
+                                                        size="small"
+                                                    >
+                                                        {FORMAT_OPTIONS.map((format) => (
+                                                            <MenuItem key={format} value={format}>
+                                                                {getFormatOptionLabel(format, normalizedFormValues.provider)}
+                                                            </MenuItem>
+                                                        ))}
+                                                    </Select>
+                                                    {validationErrors.format && (
+                                                        <FormHelperText>{validationErrors.format}</FormHelperText>
+                                                    )}
+                                                    <FormHelperText>{t('orbital_sources.format_hint')}</FormHelperText>
+                                                </FormControl>
+                                            )}
+                                            {!isSpaceTrackSource && (
+                                                <FormControl fullWidth size="small" error={Boolean(validationErrors.auth_type)}>
+                                                    <InputLabel id="auth-type-label">{t('orbital_sources.auth_type')}</InputLabel>
+                                                    <Select
+                                                        label={t('orbital_sources.auth_type')}
+                                                        name="auth_type"
+                                                        value={normalizedFormValues.auth_type}
+                                                        onChange={handleInputChange}
+                                                        size="small"
+                                                    >
+                                                        {AUTH_TYPE_OPTIONS.map((authType) => (
+                                                            <MenuItem key={authType} value={authType}>
+                                                                {authType}
+                                                            </MenuItem>
+                                                        ))}
+                                                    </Select>
+                                                    {validationErrors.auth_type && (
+                                                        <FormHelperText>{validationErrors.auth_type}</FormHelperText>
+                                                    )}
+                                                </FormControl>
+                                            )}
+                                            {!isSpaceTrackSource && normalizedFormValues.auth_type !== 'none' && (
+                                                <>
+                                                    <TextField
+                                                        label={t('orbital_sources.username')}
+                                                        name="username"
+                                                        value={normalizedFormValues.username}
+                                                        onChange={handleInputChange}
+                                                        size="small"
+                                                        fullWidth
+                                                        error={Boolean(validationErrors.username)}
+                                                        helperText={validationErrors.username || ' '}
+                                                    />
+                                                    <TextField
+                                                        label={t('orbital_sources.password')}
+                                                        name="password"
+                                                        type="password"
+                                                        value={normalizedFormValues.password}
+                                                        onChange={handleInputChange}
+                                                        size="small"
+                                                        fullWidth
+                                                        error={Boolean(validationErrors.password)}
+                                                        helperText={validationErrors.password || ' '}
+                                                    />
+                                                </>
+                                            )}
+                                        </Stack>
+                                    </AccordionDetails>
+                                </Accordion>
+                            )}
                         </Stack>
                     </DialogContent>
                     <DialogActions
