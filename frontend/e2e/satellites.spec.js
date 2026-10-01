@@ -290,7 +290,7 @@ test.describe('Satellite Groups CRUD', () => {
     await page.getByRole('button', { name: /^add$/i }).click();
 
     const formDialog = page.getByRole('dialog').filter({
-      has: page.getByRole('heading', { name: /^add group$/i }),
+      has: page.getByRole('heading', { name: /^add group/i }),
     });
     await formDialog.getByRole('textbox', { name: /^name$/i }).fill(groupName);
     await formDialog.getByRole('button', { name: /^submit$/i }).click();
