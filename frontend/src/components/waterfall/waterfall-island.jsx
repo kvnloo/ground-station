@@ -167,7 +167,13 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
     const mainWaterFallContainer = useRef(null);
     const [showSnapshotOverlay, setShowSnapshotOverlay] = useState(false);
     const [isFullscreen, setIsFullscreen] = useState(false);
-    const { workerRef, attachCanvases, detachCanvases, subscribeToWorkerMessages } = useWaterfallEngine();
+    const {
+        workerRef,
+        postWorkerMessage,
+        attachCanvases,
+        detachCanvases,
+        subscribeToWorkerMessages
+    } = useWaterfallEngine();
     const {
         colorMap,
         waterfallRendererMode,
@@ -311,9 +317,9 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
 
     const targetFPSRef = useRef(targetFPS);
     const waterfallControlRef = useRef(null);
-    // Keep track of the last event key we sent to the worker.
-    // Initialize from Redux to avoid replaying the current event on remount.
-    const lastRotatorEventRef = useRef(lastRotatorEvent || "");
+    // Keep track of the last event key sent during this waterfall view. A
+    // current tracking state must still create a marker when the view opens.
+    const lastRotatorEventRef = useRef("");
     const [scrollFactor, setScrollFactor] = useState(1);
     const accumulatedRowsRef = useRef(0);
     const [bandscopeAxisYWidth, setBandscopeAxisYWidth] = useState(60);
@@ -421,23 +427,24 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
     }, []);
 
     useEffect(() => {
-        if (waterfallRendererMode !== 'worker' || !workerRef.current || !lastRotatorEvent) {
+        if (waterfallRendererMode !== 'worker' || !lastRotatorEvent) {
             return;
         }
 
-        // Post only on event transitions, not on mount/remount with the same key.
+        // Do not duplicate updates received while this view remains mounted.
         if (lastRotatorEventRef.current === lastRotatorEvent) {
             return;
         }
 
-        // Format event with decorative dashes for waterfall display
+        // postWorkerMessage creates the worker when necessary, so an event is
+        // not lost while the canvas worker is still starting.
         const formattedEvent = getRotatorEventDisplay(lastRotatorEvent);
-        workerRef.current.postMessage({
+        postWorkerMessage({
             cmd: 'rotatorEvent',
             event: formattedEvent,
         });
         lastRotatorEventRef.current = lastRotatorEvent;
-    }, [lastRotatorEvent, waterfallRendererMode, workerRef]);
+    }, [lastRotatorEvent, waterfallRendererMode, postWorkerMessage]);
 
     useEffect(() => {
         if (waterfallRendererMode !== 'dom-tiles') {

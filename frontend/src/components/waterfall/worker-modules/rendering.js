@@ -392,28 +392,20 @@ export function drawFftLine({
  * @param {Object} params - Parameters object
  * @param {CanvasRenderingContext2D} params.waterFallLeftMarginCtx - Left margin canvas context
  * @param {OffscreenCanvas} params.waterfallLeftMarginCanvas - Left margin canvas
- * @param {OffscreenCanvas} params.waterfallCanvas - Main waterfall canvas
- * @param {CanvasRenderingContext2D} params.waterfallCtx - Main waterfall canvas context
  * @param {Array<string>} params.rotatorEventQueue - Queue of rotator events
- * @param {boolean} params.showRotatorDottedLines - Whether to show dotted lines
  * @param {Object} params.theme - Theme colors
  * @param {string} [params.timezone='UTC'] - IANA timezone used for timestamp labels
  * @param {Object} params.lastTimestamp - Last timestamp reference (mutable)
- * @param {Object} params.dottedLineImageData - Cached dotted line image data (mutable)
  * @param {Date|null} params.recordingDatetime - Recording datetime for playback mode (null for live)
- * @returns {Object} Updated state { lastTimestamp, dottedLineImageData }
+ * @returns {Object} Updated state { lastTimestamp, hasRotatorEvent }
  */
 export function updateWaterfallLeftMargin({
     waterFallLeftMarginCtx,
     waterfallLeftMarginCanvas,
-    waterfallCanvas,
-    waterfallCtx,
     rotatorEventQueue,
-    showRotatorDottedLines,
     theme,
     timezone = 'UTC',
     lastTimestamp,
-    dottedLineImageData,
     recordingDatetime = null
 }) {
     // This part should run on EVERY frame, not just when minutes change
@@ -457,40 +449,6 @@ export function updateWaterfallLeftMargin({
         // Draw the time text at y=0
         waterFallLeftMarginCtx.fillStyle = theme.palette.text.primary;
         waterFallLeftMarginCtx.fillText(newRotatorEvent, centerX, 0);
-
-        // Draw dotted line only when a target waterfall canvas/context is available.
-        // In headless left-margin updates we skip this overlay and keep timestamp continuity.
-        if (showRotatorDottedLines && waterfallCanvas && waterfallCtx) {
-            // Get or create the imageData for the dotted line
-            let imageData;
-
-            // Check if we have a cached imageData for the dotted line
-            if (!dottedLineImageData || dottedLineImageData.width !== waterfallCanvas.width) {
-                // Create new ImageData if none exists or if width changed
-                imageData = waterfallCtx.createImageData(waterfallCanvas.width, 1);
-                dottedLineImageData = imageData;
-
-                // Pre-fill the dotted line pattern
-                const data = imageData.data;
-                for (let i = 0; i < data.length; i += 32) { // Increase step to create dots
-                    for (let j = 0; j < 4; j++) { // Dot width of 1 pixel
-                        const idx = i + (j * 4);
-                        if (idx < data.length) {
-                            data[idx] = 255;     // R
-                            data[idx + 1] = 255; // G
-                            data[idx + 2] = 255; // B
-                            data[idx + 3] = 100; // A
-                        }
-                    }
-                }
-            } else {
-                // Reuse the cached imageData
-                imageData = dottedLineImageData;
-            }
-
-            // Draw the dotted line
-            waterfallCtx.putImageData(imageData, 0, 0);
-        }
     }
 
     // Use recording datetime if available (playback mode), otherwise use current time (live mode)
@@ -537,6 +495,6 @@ export function updateWaterfallLeftMargin({
     // Return updated mutable state
     return {
         lastTimestamp,
-        dottedLineImageData
+        hasRotatorEvent
     };
 }

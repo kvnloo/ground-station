@@ -16,6 +16,39 @@ vi.mock('react-i18next', async importOriginal => ({
 }));
 
 describe('rotator Stop recovery', () => {
+    it('derives waterfall events from sequenced hardware snapshots', () => {
+        const initial = reducer(undefined, {type: '@@init'});
+        const trackingState = {rotator_id: 'mount', rotator_state: 'tracking'};
+
+        const tracking = reducer(
+            {...initial, trackerId: 'target-1'},
+            setHardwareSnapshot({
+                tracker_id: 'target-1',
+                sequence: 1,
+                worker_generation: 'worker',
+                worker_started_at: 1,
+                observed_at: Date.now() / 1000,
+                tracking_state: trackingState,
+                rotator_data: {connected: true, tracking: true},
+            })
+        );
+        expect(tracking.lastRotatorEvent).toBe('TRK');
+
+        const stopped = reducer(
+            tracking,
+            setHardwareSnapshot({
+                tracker_id: 'target-1',
+                sequence: 2,
+                worker_generation: 'worker',
+                worker_started_at: 1,
+                observed_at: Date.now() / 1000,
+                tracking_state: {...trackingState, rotator_state: 'stopped'},
+                rotator_data: {connected: true, stopped: true},
+            })
+        );
+        expect(stopped.lastRotatorEvent).toBe('STOP');
+    });
+
     it('keeps Stop and Disconnect available and releases movement only after fresh stationary observations', async () => {
         const initial = reducer(undefined, {type: '@@init'});
         const trackingState = {rotator_id: 'mount', rotator_state: 'stopped', target_type: 'satellite', norad_id: 25544};

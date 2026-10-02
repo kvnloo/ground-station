@@ -1479,12 +1479,22 @@ const targetSatTrackSlice = createSlice({
                 view.satelliteId = resolveSatelliteIdFromTrackingState(data.desired_state);
                 view.groupId = resolveGroupIdFromTrackingState(data.desired_state);
             }
-            if (data.rotator_data) view.rotatorData = data.rotator_data;
+            if (data.rotator_data) {
+                view.rotatorData = data.rotator_data;
+                // Sequenced hardware snapshots are the live source once a
+                // tracker worker is running, so they must also drive the
+                // waterfall's rotator-event timeline.
+                view.lastRotatorEvent = deriveLastRotatorEvent(
+                    data.rotator_data,
+                    view.lastRotatorEvent
+                );
+            }
             if (data.rig_data) view.rigData = data.rig_data;
             state.trackerViews[trackerId] = view;
             if (state.trackerId === trackerId) {
                 state.rotatorData = view.rotatorData;
                 state.rigData = view.rigData;
+                state.lastRotatorEvent = view.lastRotatorEvent;
                 if (data.desired_state) {
                     state.trackingState = data.desired_state;
                     state.satelliteId = view.satelliteId;

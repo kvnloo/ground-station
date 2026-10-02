@@ -36,6 +36,9 @@ let waterfallCtx = null;
 let ringCanvas = null;
 let ringCtx = null;
 let ringHeadY = 0; // points to the next row to write (newest row will be at ringHeadY after write-1)
+// Transparent ring that keeps rotator markers aligned with their FFT rows.
+let rotatorOverlayCanvas = null;
+let rotatorOverlayCtx = null;
 let bandscopeCtx = null;
 let dBAxisCtx = null;
 let waterFallLeftMarginCtx = null;
@@ -61,7 +64,6 @@ let lastBandscopeDrawTime = 0;
 let bandscopeDrawInterval = 200;
 // Internal switch: default is per-FFT updates (no rate limiting).
 let bandscopeRateLimitEnabled = false;
-let dottedLineImageData = null;
 let rotatorEventQueue = [];
 let lastTimestamp = new Date();
 let timezone = 'UTC';
@@ -137,6 +139,8 @@ let presentLoopRunning = false;
 let presentTimeoutId = null;
 let pendingRowsToPresent = 0;
 let needsPresent = false;
+const ROTATOR_MARKER_DASH_WIDTH = 4;
+const ROTATOR_MARKER_DASH_GAP = 12;
 
 function initLeftMarginStateCanvas(options = {}) {
     if (!waterfallLeftMarginCanvas) return;
@@ -179,17 +183,80 @@ function advanceHeadlessLeftMargin() {
     const marginResult = updateWaterfallLeftMarginModule({
         waterFallLeftMarginCtx: leftMarginStateCtx,
         waterfallLeftMarginCanvas: leftMarginStateCanvas,
-        waterfallCanvas: null,
-        waterfallCtx: null,
         rotatorEventQueue,
-        showRotatorDottedLines,
         theme,
         timezone,
         lastTimestamp,
-        dottedLineImageData: null,
         recordingDatetime
     });
     lastTimestamp = marginResult.lastTimestamp;
+    if (marginResult.hasRotatorEvent) {
+        stampRotatorOverlayRow(ringHeadY);
+    }
+}
+
+function initializeRotatorOverlay(width, height, reset) {
+    const needsCreate = !rotatorOverlayCanvas
+        || rotatorOverlayCanvas.width !== width
+        || rotatorOverlayCanvas.height !== height;
+
+    if (needsCreate) {
+        rotatorOverlayCanvas = new OffscreenCanvas(width, height);
+        rotatorOverlayCtx = rotatorOverlayCanvas.getContext('2d', {
+            alpha: true,
+            desynchronized: true,
+            willReadFrequently: false,
+        });
+    }
+
+    if (rotatorOverlayCtx && (needsCreate || reset)) {
+        rotatorOverlayCtx.clearRect(0, 0, width, height);
+    }
+}
+
+function stampRotatorOverlayRow(y) {
+    if (!showRotatorDottedLines || !rotatorOverlayCtx || !rotatorOverlayCanvas) {
+        return;
+    }
+
+    // The overlay uses the same ring coordinates as FFT rows, so the marker
+    // follows the waterfall through every composition and CSS transform.
+    rotatorOverlayCtx.clearRect(0, y, rotatorOverlayCanvas.width, 1);
+    rotatorOverlayCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    for (let x = 0; x < rotatorOverlayCanvas.width; x += ROTATOR_MARKER_DASH_GAP) {
+        rotatorOverlayCtx.fillRect(x, y, ROTATOR_MARKER_DASH_WIDTH, 1);
+    }
+}
+
+function composeWaterfall() {
+    if (!waterfallCanvas || !waterfallCtx || !ringCanvas) {
+        return;
+    }
+
+    // Composite the ring buffers with the newest row at the top.
+    const h = waterfallCanvas.height;
+    const w = waterfallCanvas.width;
+    const topStart = ringHeadY;
+    const heightA = h - topStart;
+
+    if (heightA > 0) {
+        waterfallCtx.drawImage(ringCanvas, 0, topStart, w, heightA, 0, 0, w, heightA);
+    }
+    if (topStart > 0) {
+        waterfallCtx.drawImage(ringCanvas, 0, 0, w, topStart, 0, heightA, w, topStart);
+    }
+
+    // Draw the transparent marker ring after the FFT pixels. Keeping this in
+    // worker canvas space makes it inherit the existing zoom and pan exactly.
+    if (!showRotatorDottedLines || !rotatorOverlayCanvas) {
+        return;
+    }
+    if (heightA > 0) {
+        waterfallCtx.drawImage(rotatorOverlayCanvas, 0, topStart, w, heightA, 0, 0, w, heightA);
+    }
+    if (topStart > 0) {
+        waterfallCtx.drawImage(rotatorOverlayCanvas, 0, 0, w, topStart, 0, heightA, w, topStart);
+    }
 }
 
 function rebuildPalette() {
@@ -284,7 +351,10 @@ self.onmessage = function(eventMessage) {
 
         case 'toggleRotatorDottedLines':
             // Toggle the visibility of dotted lines for rotator events
-            showRotatorDottedLines = eventMessage.data.show;
+            showRotatorDottedLines = Boolean(eventMessage.data.show);
+            // Recompose immediately so hiding or showing existing markers does
+            // not require another FFT frame.
+            composeWaterfall();
             break;
 
         case 'updateFFTData': {
@@ -684,6 +754,8 @@ function setupCanvas(config = {}, options = {}) {
         needsPresent = false;
     }
 
+    initializeRotatorOverlay(width, height, shouldResetRing);
+
     // Initialize imageData from the ring context, so headless mode can render too.
     if (!imageData || imageData.width !== width) {
         imageData = ringCtx?.createImageData(width, 1) || null;
@@ -742,8 +814,8 @@ function startRendering(fps) {
     // Clear any existing loop first
     stopRendering();
 
-    // Clear last rotator events
-    rotatorEventQueue = [];
+    // Keep markers received while the worker was starting. The first FFT row
+    // should show the current rotator state even when tracking began first.
 
     targetFPS = fps;
     startPresentLoop();
@@ -799,6 +871,9 @@ function ingestWaterfallRow(frame) {
     ringHeadY = (ringHeadY - 1 + h) % h;
 
     // Render the new row in the ring buffer and mark presentation as needed.
+    // A ring slot is about to receive a new FFT row, so discard any marker
+    // from its previous trip through the ring before it can wrap into view.
+    rotatorOverlayCtx?.clearRect(0, ringHeadY, ringCanvas.width, 1);
     renderFFTRowIntoRing(frame, ringHeadY);
     if (waterfallCanvas && waterfallCtx) {
         pendingRowsToPresent = Math.min(pendingRowsToPresent + 1, ringCanvas.height);
@@ -816,46 +891,29 @@ function presentWaterfall() {
     // Increment the counter for rate calculation
     renderWaterfallCount++;
 
-    // Composite the ring buffer to the visible canvas with the NEWEST row at the TOP
-    // The newest row is at ringHeadY, so start composition there
-    const h = waterfallCanvas.height;
-    const w = waterfallCanvas.width;
-    const topStart = ringHeadY; // row index in ring that should appear at y=0
-    const heightA = h - topStart;
-
-    // Segment A: from topStart..h-1 -> to y=0..heightA-1 (places newest row at the very top)
-    if (heightA > 0) {
-        waterfallCtx.drawImage(ringCanvas, 0, topStart, w, heightA, 0, 0, w, heightA);
-    }
-    // Segment B: from 0..topStart-1 -> to y=heightA..h-1
-    if (topStart > 0) {
-        waterfallCtx.drawImage(ringCanvas, 0, 0, w, topStart, 0, heightA, w, topStart);
-    }
-
     // Left margin should advance one pixel per ingested waterfall row.
     if (pendingRowsToPresent > 0) {
         for (let i = 0; i < pendingRowsToPresent; i++) {
             const marginResult = updateWaterfallLeftMarginModule({
                 waterFallLeftMarginCtx,
                 waterfallLeftMarginCanvas,
-                waterfallCanvas,
-                waterfallCtx,
                 rotatorEventQueue,
-                showRotatorDottedLines,
                 theme,
                 timezone,
                 lastTimestamp,
-                dottedLineImageData,
                 recordingDatetime  // Pass recording datetime for playback mode
             });
             lastTimestamp = marginResult.lastTimestamp;
-            dottedLineImageData = marginResult.dottedLineImageData;
+            if (marginResult.hasRotatorEvent) {
+                stampRotatorOverlayRow(ringHeadY);
+            }
         }
         // Keep persistent left-margin state aligned with what was rendered visibly.
         if (leftMarginStateCtx && leftMarginStateCanvas && waterfallLeftMarginCanvas) {
             leftMarginStateCtx.drawImage(waterfallLeftMarginCanvas, 0, 0);
         }
     }
+    composeWaterfall();
     pendingRowsToPresent = 0;
     needsPresent = false;
 
