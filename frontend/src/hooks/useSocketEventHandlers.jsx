@@ -809,9 +809,9 @@ export const useSocketEventHandlers = (socket, enabled = true) => {
                     }
                     store.dispatch(decoderOutputReceived(data));
 
-                    // Show toast notification for image outputs.
-                    // Morse and other text-based decoders are too frequent for toasts
-                    if (['sstv', 'geoscanimage'].includes(data.decoder_type) && data.output.image_data) {
+                    // SSTV images appear in the decoded output UI without interrupting the user.
+                    // Keep the image toast for GeoScan output; text decoders are too frequent for toasts.
+                    if (data.decoder_type === 'geoscanimage' && data.output.image_data) {
                         const outputType = data.output.format;
                         const fileName = data.output.filename;
                         const imageData = data.output.image_data;

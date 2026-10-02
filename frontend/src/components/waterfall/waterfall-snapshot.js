@@ -37,21 +37,59 @@ export const useWaterfallSnapshot = ({
     bandscopeCanvasRef,
     dBAxisScopeCanvasRef,
     waterFallLeftMarginCanvasRef,
+    waterFallLeftMarginFillerRef,
     bandScopeHeight,
     frequencyScaleHeight,
     waterFallCanvasHeight,
     waterFallCanvasWidth,
     waterFallVisualWidth,
+    bandscopeTopPadding = 0,
     waterFallScaleX = 1,
     waterFallPositionX = 0,
+    waterfallRendererMode = 'worker',
+    waterFallTileCanvasARef,
+    waterFallTileCanvasBRef,
 }) => {
     const theme = useTheme();
 
     /**
-     * Captures the waterfall canvas from the worker
+     * Captures the waterfall canvas from the active renderer
      * @returns {Promise<string|null>} Data URL of the waterfall canvas or null if timeout
      */
+    const captureDomTileWaterfallCanvas = useCallback(() => {
+        const tileCanvases = [
+            waterFallTileCanvasARef?.current,
+            waterFallTileCanvasBRef?.current,
+        ].filter(Boolean);
+
+        if (tileCanvases.length === 0) {
+            console.error('Waterfall tile canvases are not available');
+            return null;
+        }
+
+        // The DOM renderer keeps the waterfall in two vertically translated
+        // tiles. Rebuild the visible waterfall strip before using the same
+        // horizontal crop path as the worker renderer.
+        const canvas = document.createElement('canvas');
+        canvas.width = waterFallCanvasWidth;
+        canvas.height = waterFallCanvasHeight;
+        const ctx = canvas.getContext('2d');
+
+        tileCanvases.forEach((tileCanvas) => {
+            const transform = window.getComputedStyle(tileCanvas).transform;
+            const matrix = transform === 'none' ? null : new DOMMatrixReadOnly(transform);
+            const offsetY = matrix ? matrix.m42 : 0;
+            ctx.drawImage(tileCanvas, 0, offsetY);
+        });
+
+        return canvas.toDataURL('image/png');
+    }, [waterFallCanvasHeight, waterFallCanvasWidth, waterFallTileCanvasARef, waterFallTileCanvasBRef]);
+
     const captureWaterfallCanvas = useCallback(async () => {
+        if (waterfallRendererMode === 'dom-tiles') {
+            return captureDomTileWaterfallCanvas();
+        }
+
         // Request waterfall canvas capture from worker
         const captureEvent = new CustomEvent('capture-waterfall-canvas');
         window.dispatchEvent(captureEvent);
@@ -79,21 +117,25 @@ export const useWaterfallSnapshot = ({
         }
 
         return waterfallDataURL;
-    }, []);
+    }, [captureDomTileWaterfallCanvas, waterfallRendererMode]);
 
     /**
      * Finds overlay canvases in the DOM
-     * @returns {Object} Object containing bookmarkCanvas, bandplanCanvas, frequencyScaleCanvas, frequencyScaleLeftCanvas, and vfoContainerCanvas
+     * @returns {Object} Waterfall overlay canvas elements
      */
     const findOverlayCanvases = useCallback(() => {
-        const allCanvases = document.querySelectorAll('canvas');
         let bookmarkCanvas = null;
         let bandplanCanvas = null;
         let frequencyScaleCanvas = null;
-        let frequencyScaleLeftCanvas = null;
+        const frequencyScaleLeftCanvas = waterFallLeftMarginFillerRef.current;
         let vfoContainerCanvas = null;
+        let recordingBandCanvas = null;
 
         const bandscopeCanvas = bandscopeCanvasRef.current;
+        // Limit discovery to this waterfall. The old document-wide search could
+        // select an unrelated small canvas when another page feature was open.
+        const waterfallContainer = bandscopeCanvas?.parentElement?.parentElement;
+        const allCanvases = waterfallContainer?.querySelectorAll('canvas') || [];
 
         allCanvases.forEach(canvas => {
             // Look for bookmark canvas by its class name
@@ -102,31 +144,25 @@ export const useWaterfallSnapshot = ({
             } else if (canvas.classList.contains('frequency-band-overlay')) {
                 // Look for bandplan overlay canvas by its class name
                 bandplanCanvas = canvas;
-            } else if (canvas.classList.contains('waterfall-left-margin-filler')) {
-                // Small canvas between dB axes (frequency scale left margin filler)
-                frequencyScaleLeftCanvas = canvas;
+            } else if (canvas.classList.contains('recording-band-overlay')) {
+                recordingBandCanvas = canvas;
+            } else if (canvas.classList.contains('frequency-scale-canvas')) {
+                frequencyScaleCanvas = canvas;
             } else if (canvas.classList.contains('vfo-markers-canvas')) {
                 // VFO container overlay
                 vfoContainerCanvas = canvas;
-            } else if (
-                canvas !== bandscopeCanvas &&
-                canvas.classList.contains('waterfall-canvas') === false &&
-                canvas.classList.contains('bandscope-canvas') === false &&
-                canvas.classList.contains('waterfall-left-margin-canvas') === false &&
-                canvas.classList.contains('waterfall-left-margin-filler') === false &&
-                canvas.classList.contains('bookmark-canvas') === false &&
-                canvas.classList.contains('frequency-band-overlay') === false &&
-                canvas.classList.contains('vfo-markers-canvas') === false
-            ) {
-                // Frequency scale is the other canvas that's not bandscope or waterfall
-                if (!frequencyScaleCanvas && canvas.height < 30 && canvas.height !== 21) {
-                    frequencyScaleCanvas = canvas;
-                }
             }
         });
 
-        return { bookmarkCanvas, bandplanCanvas, frequencyScaleCanvas, frequencyScaleLeftCanvas, vfoContainerCanvas };
-    }, [bandscopeCanvasRef]);
+        return {
+            bookmarkCanvas,
+            bandplanCanvas,
+            frequencyScaleCanvas,
+            frequencyScaleLeftCanvas,
+            vfoContainerCanvas,
+            recordingBandCanvas,
+        };
+    }, [bandscopeCanvasRef, waterFallLeftMarginFillerRef]);
 
     /**
      * Creates a composite canvas with all waterfall elements, cropped to visible area
@@ -138,14 +174,22 @@ export const useWaterfallSnapshot = ({
         const bandscopeCanvas = bandscopeCanvasRef.current;
         const dBAxisScopeCanvas = dBAxisScopeCanvasRef.current;
         const waterfallLeftMarginCanvas = waterFallLeftMarginCanvasRef.current;
-        const { bookmarkCanvas, bandplanCanvas, frequencyScaleCanvas, frequencyScaleLeftCanvas, vfoContainerCanvas } = overlayCanvases;
+        const {
+            bookmarkCanvas,
+            bandplanCanvas,
+            frequencyScaleCanvas,
+            frequencyScaleLeftCanvas,
+            vfoContainerCanvas,
+            recordingBandCanvas,
+        } = overlayCanvases;
 
         // Get the actual visual container width from the DOM
         const container = bandscopeCanvas.parentElement;
         const actualVisualWidth = container ? container.clientWidth : waterFallVisualWidth;
 
         const leftMarginWidth = dBAxisScopeCanvas ? dBAxisScopeCanvas.width : 0;
-        const totalHeight = bandScopeHeight + frequencyScaleHeight + waterFallCanvasHeight;
+        const bandscopeDisplayHeight = bandScopeHeight + bandscopeTopPadding;
+        const totalHeight = bandscopeDisplayHeight + frequencyScaleHeight + waterFallCanvasHeight;
 
         // Calculate visible area based on CSS transform
         // The CSS transform is: translateX(waterFallPositionX) scaleX(waterFallScaleX)
@@ -153,13 +197,6 @@ export const useWaterfallSnapshot = ({
         // Bandscope and waterfall are rendered at full canvas resolution (16384px)
         // Overlays (bookmark, bandplan, frequency scale) are rendered at visual width (actual width from canvas)
         // BUT overlays represent the SAME frequency range, just at lower DPI
-
-        // IMPORTANT: Overlays (bookmark, bandplan, frequency scale) dynamically resize their canvas
-        // resolution to match the visible area with high DPI for crisp fonts when zoomed.
-        // This means overlays show ONLY the currently visible portion, already cropped!
-
-        // Get actual overlay canvas width
-        const actualOverlayWidth = bookmarkCanvas?.width || bandplanCanvas?.width || frequencyScaleCanvas?.width || waterFallVisualWidth;
 
         // Calculate visible area in bandscope/waterfall canvas coordinates
         // The bandscope (16384px) shows the full frequency range regardless of zoom
@@ -175,13 +212,29 @@ export const useWaterfallSnapshot = ({
         const canvasSourceX = Math.max(0, (-waterFallPositionX * visualToCanvasRatio) / waterFallScaleX);
         const canvasSourceWidth = Math.min(visibleCanvasWidth, waterFallCanvasWidth - canvasSourceX);
 
-        // For overlays: they scale up their resolution to match the zoom level for crisp fonts
-        // But they still show the full frequency range, so we need to crop them
-        // The overlay canvas is scaled by the zoom factor: overlayWidth = visualWidth * scale
-        // So we need to crop proportionally to the bandscope
-        const overlayToCanvasRatio = actualOverlayWidth / waterFallCanvasWidth;
-        const overlaySourceX = canvasSourceX * overlayToCanvasRatio;
-        const overlaySourceWidth = canvasSourceWidth * overlayToCanvasRatio;
+        // Each overlay owns a separate backing store whose width can lag or
+        // lead the others while React applies a zoom/resize update. Its crop
+        // must therefore be based on its own width, never another layer's.
+        const getOverlaySourceCrop = (canvas) => {
+            const overlayToCanvasRatio = canvas.width / waterFallCanvasWidth;
+            return {
+                x: canvasSourceX * overlayToCanvasRatio,
+                width: canvasSourceWidth * overlayToCanvasRatio,
+            };
+        };
+
+        const drawOverlay = (canvas, sourceHeight, destinationY, destinationHeight) => {
+            if (!canvas || canvas.width <= 0 || canvas.height <= 0) {
+                return;
+            }
+
+            const sourceCrop = getOverlaySourceCrop(canvas);
+            ctx.drawImage(
+                canvas,
+                sourceCrop.x, 0, sourceCrop.width, sourceHeight,
+                leftMarginWidth, destinationY, canvasSourceWidth, destinationHeight
+            );
+        };
 
         // Use canvas source width for total width (bandscope/waterfall are the reference)
         const totalWidth = leftMarginWidth + canvasSourceWidth;
@@ -200,57 +253,31 @@ export const useWaterfallSnapshot = ({
 
         // Draw dB axis for bandscope on the left (full height, not cropped)
         if (dBAxisScopeCanvas) {
-            ctx.drawImage(dBAxisScopeCanvas, 0, yOffset, leftMarginWidth, bandScopeHeight);
+            ctx.drawImage(dBAxisScopeCanvas, 0, yOffset, leftMarginWidth, bandscopeDisplayHeight);
         }
 
         // Draw bandscope (cropped to visible area)
         ctx.drawImage(
             bandscopeCanvas,
             canvasSourceX, 0, canvasSourceWidth, bandScopeHeight, // source crop
-            leftMarginWidth, yOffset, canvasSourceWidth, bandScopeHeight // destination
+            leftMarginWidth, yOffset + bandscopeTopPadding, canvasSourceWidth, bandScopeHeight // destination
         );
 
-        // Draw bookmark overlay - scale from overlay resolution to match bandscope
-        if (bookmarkCanvas && bookmarkCanvas.width > 0 && bookmarkCanvas.height > 0) {
-            ctx.drawImage(
-                bookmarkCanvas,
-                overlaySourceX, 0, overlaySourceWidth, bandScopeHeight,
-                leftMarginWidth, yOffset, canvasSourceWidth, bandScopeHeight
-            );
-        }
+        // The bandscope overlays are painted in their DOM stacking order.
+        drawOverlay(bookmarkCanvas, bandscopeDisplayHeight, yOffset, bandscopeDisplayHeight);
+        drawOverlay(bandplanCanvas, bandscopeDisplayHeight, yOffset, bandscopeDisplayHeight);
+        drawOverlay(vfoContainerCanvas, bandScopeHeight, yOffset, bandScopeHeight);
+        drawOverlay(recordingBandCanvas, bandscopeDisplayHeight, yOffset, bandscopeDisplayHeight);
 
-        // Draw bandplan overlay - scale from overlay resolution to match bandscope
-        if (bandplanCanvas && bandplanCanvas.width > 0 && bandplanCanvas.height > 0) {
-            ctx.drawImage(
-                bandplanCanvas,
-                overlaySourceX, 0, overlaySourceWidth, bandScopeHeight,
-                leftMarginWidth, yOffset, canvasSourceWidth, bandScopeHeight
-            );
-        }
-
-        // Draw VFO container overlay - scale from overlay resolution to match bandscope
-        if (vfoContainerCanvas && vfoContainerCanvas.width > 0 && vfoContainerCanvas.height > 0) {
-            ctx.drawImage(
-                vfoContainerCanvas,
-                overlaySourceX, 0, overlaySourceWidth, bandScopeHeight,
-                leftMarginWidth, yOffset, canvasSourceWidth, bandScopeHeight
-            );
-        }
-
-        yOffset += bandScopeHeight;
+        yOffset += bandscopeDisplayHeight;
 
         // Draw small canvas between dB axes (21px height)
         if (frequencyScaleLeftCanvas) {
             ctx.drawImage(frequencyScaleLeftCanvas, 0, yOffset, leftMarginWidth, frequencyScaleHeight);
         }
 
-        // Draw frequency scale - scale from overlay resolution to match bandscope
         if (frequencyScaleCanvas && frequencyScaleCanvas.width > 0 && frequencyScaleCanvas.height > 0) {
-            ctx.drawImage(
-                frequencyScaleCanvas,
-                overlaySourceX, 0, overlaySourceWidth, frequencyScaleHeight,
-                leftMarginWidth, yOffset, canvasSourceWidth, frequencyScaleHeight
-            );
+            drawOverlay(frequencyScaleCanvas, frequencyScaleHeight, yOffset, frequencyScaleHeight);
         } else {
             // Fill with background if not available
             ctx.fillStyle = theme.palette.background.paper;
@@ -288,6 +315,7 @@ export const useWaterfallSnapshot = ({
         dBAxisScopeCanvasRef,
         waterFallLeftMarginCanvasRef,
         bandScopeHeight,
+        bandscopeTopPadding,
         frequencyScaleHeight,
         waterFallCanvasHeight,
         waterFallCanvasWidth,
@@ -307,7 +335,7 @@ export const useWaterfallSnapshot = ({
     const scaleCompositeCanvas = useCallback((compositeCanvas, targetTotalWidth = null) => {
         const dBAxisScopeCanvas = dBAxisScopeCanvasRef.current;
         const leftMarginWidth = dBAxisScopeCanvas ? dBAxisScopeCanvas.width : 0;
-        const totalHeight = bandScopeHeight + frequencyScaleHeight + waterFallCanvasHeight;
+        const totalHeight = bandScopeHeight + bandscopeTopPadding + frequencyScaleHeight + waterFallCanvasHeight;
         const croppedHeight = Math.min(900, totalHeight); // Crop to top 900px
 
         // The composite canvas already contains only the visible area
@@ -356,6 +384,7 @@ export const useWaterfallSnapshot = ({
     }, [
         dBAxisScopeCanvasRef,
         bandScopeHeight,
+        bandscopeTopPadding,
         frequencyScaleHeight,
         waterFallCanvasHeight,
         theme

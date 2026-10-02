@@ -292,13 +292,18 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
         bandscopeCanvasRef,
         dBAxisScopeCanvasRef,
         waterFallLeftMarginCanvasRef,
+        waterFallLeftMarginFillerRef,
         bandScopeHeight,
         frequencyScaleHeight,
         waterFallCanvasHeight,
         waterFallCanvasWidth,
         waterFallVisualWidth,
+        bandscopeTopPadding,
         waterFallScaleX,
         waterFallPositionX,
+        waterfallRendererMode,
+        waterFallTileCanvasARef,
+        waterFallTileCanvasBRef,
     });
 
     // Expose captureSnapshot globally for recording

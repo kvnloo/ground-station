@@ -141,14 +141,44 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
         return () => cancelAnimationFrame(rafId);
     }, [isStreaming, playbackRemainingSecondsRef]);
 
+    // Batch layout notifications so a resize drag triggers at most one overlay
+    // measurement per painted frame, even if ResizeObserver fires repeatedly.
+    const notifyOverlayLayoutChange = useCallback(() => {
+        if (bookmarkMeasureRafRef.current !== null) {
+            return;
+        }
+
+        bookmarkMeasureRafRef.current = requestAnimationFrame(() => {
+            bookmarkMeasureRafRef.current = null;
+            setBookmarkTransformTick((value) => value + 1);
+        });
+    }, []);
+
+    // Apply a transform directly to a DOM element.
+    const applyTransform = useCallback(() => {
+        if (containerRef.current) {
+            containerRef.current.style.transform = `translateX(${positionXRef.current}px) scaleX(${scaleRef.current})`;
+            notifyOverlayLayoutChange();
+        }
+    }, [notifyOverlayLayoutChange]);
+
     // Function to recalculate position when the container resizes
     const handleResize = useCallback(() => {
-        if (!containerRef.current || scaleRef.current <= 1) return;
+        if (!containerRef.current) return;
 
         const newWidth = containerRef.current.clientWidth;
         const oldWidth = containerWidthRef.current;
 
-        if (oldWidth === 0 || newWidth === oldWidth) return;
+        if (newWidth <= 0 || oldWidth === 0 || newWidth === oldWidth) return;
+
+        // CSS resizes the base canvases automatically, but each overlay keeps
+        // its own backing store. Notify them even at 1x zoom so they redraw at
+        // the new physical width instead of being stretched by the browser.
+        if (scaleRef.current <= 1) {
+            containerWidthRef.current = newWidth;
+            notifyOverlayLayoutChange();
+            return;
+        }
 
         // Calculate a new position based on scale and size change ratio
         // This keeps the visible content centered as the container resizes
@@ -171,7 +201,7 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
 
         // Apply transform (this now also updates React state)
         applyTransform();
-    }, []);
+    }, [applyTransform, notifyOverlayLayoutChange]);
 
     // Handle clicks on bookmarks
     const handleBookmarkClick = useCallback((bookmark) => {
@@ -201,17 +231,6 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
         };
 
     }, [handleResize]);
-
-    const notifyBookmarkTransform = useCallback(() => {
-        if (bookmarkMeasureRafRef.current !== null) {
-            return;
-        }
-
-        bookmarkMeasureRafRef.current = requestAnimationFrame(() => {
-            bookmarkMeasureRafRef.current = null;
-            setBookmarkTransformTick((value) => value + 1);
-        });
-    }, []);
 
     const markTransformInteraction = useCallback(() => {
         if (!interactionActiveRef.current) {
@@ -252,14 +271,6 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
             setIsTouchMeasuring(false);
         }
     }, [isTouchMeasuring]);
-
-    // Apply a transform directly to a DOM element
-    const applyTransform = useCallback(() => {
-        if (containerRef.current) {
-            containerRef.current.style.transform = `translateX(${positionXRef.current}px) scaleX(${scaleRef.current})`;
-            notifyBookmarkTransform();
-        }
-    }, [notifyBookmarkTransform]);
 
     // Debounced persist function
     const persistToRedux = useCallback(() => {
