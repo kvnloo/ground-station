@@ -483,7 +483,7 @@ export const PassCurve = ({
 
 /**
  * CurrentTimeMarker component - Renders the NOW marker showing current time
- * Uses CSS transforms and requestAnimationFrame for smooth movement without re-renders
+ * Updates outside React so the marker can follow time without rerendering the timeline.
  */
 export const CurrentTimeMarker = ({ startTime, endTime }) => {
   const theme = useTheme();
@@ -492,7 +492,7 @@ export const CurrentTimeMarker = ({ startTime, endTime }) => {
   const markerRef = useRef(null);
   const labelRef = useRef(null);
   const bottomLabelRef = useRef(null);
-  const animationFrameRef = useRef(null);
+  const updateIntervalRef = useRef(null);
 
   useEffect(() => {
     const updateMarkerPosition = () => {
@@ -507,7 +507,6 @@ export const CurrentTimeMarker = ({ startTime, endTime }) => {
         markerRef.current.style.display = 'none';
         if (labelRef.current) labelRef.current.style.display = 'none';
         if (bottomLabelRef.current) bottomLabelRef.current.style.display = 'none';
-        animationFrameRef.current = requestAnimationFrame(updateMarkerPosition);
         return;
       }
 
@@ -530,17 +529,18 @@ export const CurrentTimeMarker = ({ startTime, endTime }) => {
         bottomLabelRef.current.style.left = translateX;
       }
 
-      // Continue animation
-      animationFrameRef.current = requestAnimationFrame(updateMarkerPosition);
     };
 
-    // Start animation loop
-    animationFrameRef.current = requestAnimationFrame(updateMarkerPosition);
+    // The displayed time range spans minutes or hours, so sub-second updates are
+    // visually smooth while avoiding a layout pass on every display frame.
+    updateMarkerPosition();
+    updateIntervalRef.current = window.setInterval(updateMarkerPosition, 250);
 
     // Cleanup
     return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
+      if (updateIntervalRef.current != null) {
+        clearInterval(updateIntervalRef.current);
+        updateIntervalRef.current = null;
       }
     };
   }, [startTime, endTime]);

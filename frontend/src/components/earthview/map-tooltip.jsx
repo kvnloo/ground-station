@@ -44,7 +44,7 @@ const SatelliteMarker = ({
                              trackingSatelliteId,
                              trackingSatelliteIds = [],
                              targetNumberByNorad = {},
-                             selectedSatelliteId,
+                             isSelected = false,
                              markerEventHandlers,
                              satelliteIcon,
                              opacity = 1,
@@ -60,7 +60,6 @@ const SatelliteMarker = ({
     const targetNumber = targetNumberByNorad?.[String(satellite.norad_id)] ?? null;
     const map = useMap();
     const markerRef = useRef(null);
-    const isSelected = selectedSatelliteId === satellite.norad_id;
     const tooltipAnchorDistance = isTracking ? 15 : (isSelected ? 9 : 12);
 
     // Choose which tooltip component to use
@@ -74,6 +73,8 @@ const SatelliteMarker = ({
         position,
         anchorDistance: tooltipAnchorDistance,
         edgePadding: 10,
+        // Only interactive tooltips need to avoid map edges dynamically.
+        enabled: isTracking || isSelected,
     });
 
     const handleSetTarget = (e) => {

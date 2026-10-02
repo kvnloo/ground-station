@@ -144,6 +144,7 @@ export const useTooltipOrientation = ({
     map,
     markerRef = null,
     position,
+    enabled = true,
     preferredDirections = TOOLTIP_DIRECTIONS,
     anchorDistance = DEFAULT_ANCHOR_DISTANCE,
     edgePadding = DEFAULT_EDGE_PADDING,
@@ -169,7 +170,7 @@ export const useTooltipOrientation = ({
     }, []);
 
     const updateOrientation = useCallback(() => {
-        if (!map || !Array.isArray(position) || position.length !== 2) {
+        if (!enabled || !map || !Array.isArray(position) || position.length !== 2) {
             return;
         }
 
@@ -221,10 +222,18 @@ export const useTooltipOrientation = ({
         setDirection((currentDirection) => (
             currentDirection === nextDirection ? currentDirection : nextDirection
         ));
-    }, [anchorDistance, clearPendingRetry, directionOrder, edgePadding, getTooltipElement, map, position]);
+    }, [anchorDistance, clearPendingRetry, directionOrder, edgePadding, enabled, getTooltipElement, map, position]);
+
+    // Labels for ordinary satellites use a fixed direction. This avoids a
+    // layout measurement and animation-frame callback for every marker.
+    useEffect(() => {
+        if (!enabled) {
+            setDirection(directionOrder[0] || TOOLTIP_DIRECTIONS[0]);
+        }
+    }, [directionOrder, enabled]);
 
     useEffect(() => {
-        if (!map) {
+        if (!enabled || !map) {
             return undefined;
         }
 
@@ -240,14 +249,20 @@ export const useTooltipOrientation = ({
             map.off('moveend zoomend resize', scheduleOrientationUpdate);
             clearPendingRetry();
         };
-    }, [clearPendingRetry, map, updateOrientation]);
+    }, [clearPendingRetry, enabled, map, updateOrientation]);
 
     useEffect(() => {
+        if (!enabled) {
+            return undefined;
+        }
         const animationFrameId = requestAnimationFrame(updateOrientation);
         return () => cancelAnimationFrame(animationFrameId);
-    }, [updateOrientation]);
+    }, [enabled, updateOrientation]);
 
     useEffect(() => {
+        if (!enabled) {
+            return undefined;
+        }
         const tooltipElement = getTooltipElement();
         if (!tooltipElement || typeof ResizeObserver === 'undefined') {
             return undefined;
@@ -258,7 +273,7 @@ export const useTooltipOrientation = ({
         });
         resizeObserver.observe(tooltipElement);
         return () => resizeObserver.disconnect();
-    }, [direction, getTooltipElement, updateOrientation]);
+    }, [direction, enabled, getTooltipElement, updateOrientation]);
 
     useEffect(() => () => {
         clearPendingRetry();

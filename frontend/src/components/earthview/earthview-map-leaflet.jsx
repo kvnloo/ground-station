@@ -334,7 +334,7 @@ const LeafletEarthViewMapRenderer = ({
     const zoomControlsRef = useRef(null);
     const arrowControlsRef = useRef(null);
     const elevationHistoryRef = useRef({}); // Store elevation history for each satellite
-    const mapInvalidateIntervalRef = useRef(null); // Store interval ID for cleanup
+    const selectedSatelliteIdRef = useRef(selectedSatelliteId);
     const initialInvalidateTimeoutsRef = useRef([]); // Store initial invalidate timeouts for cleanup
 
     const handleSetMapZoomLevel = useCallback(
@@ -371,6 +371,10 @@ const LeafletEarthViewMapRenderer = ({
     }
 
     function satelliteUpdate(now) {
+        // Read the latest selection without making selection changes recreate the
+        // entire Leaflet layer tree.
+        const activeSelectedSatelliteId = selectedSatelliteIdRef.current;
+
         // Skip update if location is not loaded yet
         if (!location || location.lat == null || location.lon == null) {
             return;
@@ -501,7 +505,7 @@ const LeafletEarthViewMapRenderer = ({
                     timeToMaxEl
                 };
 
-                if (selectedSatelliteId === satellite['norad_id']) {
+                if (activeSelectedSatelliteId === satellite['norad_id']) {
                     // Get the recent state
                     const recentSatData = store.getState().earthViewTrack.satelliteData;
 
@@ -521,7 +525,7 @@ const LeafletEarthViewMapRenderer = ({
                     );
                 }
 
-                if (selectedSatelliteId === noradId) {
+                if (activeSelectedSatelliteId === noradId) {
                     // calculate paths
                     let paths = getSatellitePaths(
                         [satellite['tle1'], satellite['tle2']],
@@ -641,12 +645,12 @@ const LeafletEarthViewMapRenderer = ({
                             noClip={true}
                             key={'coverage-' + satellite['name']}
                             pathOptions={{
-                                color: selectedSatelliteId === noradId ? 'white' : satelliteCoverageColor,
+                                color: activeSelectedSatelliteId === noradId ? 'white' : satelliteCoverageColor,
                                 fillColor: satelliteCoverageColor,
-                                weight: selectedSatelliteId === noradId ? 2 : 1,
+                                weight: activeSelectedSatelliteId === noradId ? 2 : 1,
                                 fill: true,
                                 opacity: 1,
-                                fillOpacity: selectedSatelliteId === noradId ? 0.5 : 0.1,
+                                fillOpacity: activeSelectedSatelliteId === noradId ? 0.5 : 0.1,
                                 dashArray: '1 2',
                             }}
                             positions={coverage}
@@ -654,7 +658,7 @@ const LeafletEarthViewMapRenderer = ({
                     );
                 } else {
                     // If the satellite is selected, draw the coverage circle
-                    if (selectedSatelliteId === noradId) {
+                    if (activeSelectedSatelliteId === noradId) {
                         let coverage = getSatelliteCoverageCircle(lat, lon, altitude, 360);
                         currentCoverage.push(
                             <Polyline
@@ -676,7 +680,7 @@ const LeafletEarthViewMapRenderer = ({
                 }
 
                 const isTracked = trackedSatelliteIds.has(Number(noradId));
-                if (showTooltip || selectedSatelliteId === noradId || isTracked) {
+                if (showTooltip || activeSelectedSatelliteId === noradId || isTracked) {
                     currentPos.push(
                         <SatelliteMarker
                             key={`satellite-marker-${satellite.norad_id}`}
@@ -688,7 +692,7 @@ const LeafletEarthViewMapRenderer = ({
                             trackingSatelliteId={trackingSatelliteId}
                             trackingSatelliteIds={trackedSatelliteIdsList}
                             targetNumberByNorad={targetNumberByNorad}
-                            selectedSatelliteId={selectedSatelliteId}
+                            isSelected={activeSelectedSatelliteId === noradId}
                             markerEventHandlers={markerEventHandlers}
                             satelliteIcon={isVisible ? earthViewVisibleSatelliteIcon : satelliteIconDimCircle}
                             opacity={1}
@@ -747,6 +751,42 @@ const LeafletEarthViewMapRenderer = ({
         dispatch(setSelectedSatellitePositions(selectedSatPos));
     }
 
+    // Selecting a marker used to restart the full satellite update and remount
+    // every permanent tooltip. Only the old and new selections need to change
+    // immediately; position, coverage, and orbit data keep their 3-second cadence.
+    useEffect(() => {
+        selectedSatelliteIdRef.current = selectedSatelliteId;
+
+        if (!showTooltip) {
+            // Without permanent tooltips, the regular update is inexpensive and
+            // must create/remove the selected marker tooltip.
+            satelliteUpdate(new Date());
+            return;
+        }
+
+        setMapLayers((previousLayers) => {
+            let hasSelectionChange = false;
+            const currentSatellitesPosition = previousLayers.currentSatellitesPosition.map((marker) => {
+                const markerSatellite = marker?.props?.satellite;
+                if (!markerSatellite) {
+                    return marker;
+                }
+
+                const isSelected = markerSatellite.norad_id === selectedSatelliteId;
+                if (marker.props.isSelected === isSelected) {
+                    return marker;
+                }
+
+                hasSelectionChange = true;
+                return React.cloneElement(marker, {isSelected});
+            });
+
+            return hasSelectionChange
+                ? {...previousLayers, currentSatellitesPosition}
+                : previousLayers;
+        });
+    }, [selectedSatelliteId, showTooltip]);
+
     // Update the satellites position, day/night terminator every 3 seconds
     useEffect(() => {
         // Clear the interval
@@ -779,7 +819,6 @@ const LeafletEarthViewMapRenderer = ({
         orbitProjectionDuration,
         mapZoomLevel,
         showTooltip,
-        selectedSatelliteId,
         trackingSatelliteId,
         trackedSatelliteIds,
         trackedSatelliteIdsList,
@@ -824,15 +863,11 @@ const LeafletEarthViewMapRenderer = ({
 
         window.addEventListener('earth-view-map-layout-change', handleLayoutChange);
 
-        // Cleanup: clear the map invalidate interval when component unmounts
+        // Clear the initial layout timers when the map unmounts.
         return () => {
             window.removeEventListener('earth-view-map-layout-change', handleLayoutChange);
             initialInvalidateTimeoutsRef.current.forEach(clearTimeout);
             initialInvalidateTimeoutsRef.current = [];
-            if (mapInvalidateIntervalRef.current) {
-                clearInterval(mapInvalidateIntervalRef.current);
-                mapInvalidateIntervalRef.current = null;
-            }
         };
     }, []);
 
@@ -850,32 +885,6 @@ const LeafletEarthViewMapRenderer = ({
             }, delay)
         );
 
-        // Clear any existing interval before creating a new one
-        if (mapInvalidateIntervalRef.current) {
-            clearInterval(mapInvalidateIntervalRef.current);
-        }
-
-        mapInvalidateIntervalRef.current = setInterval(() => {
-            try {
-                // Check if MapObject exists and has required properties
-                if (!MapObject || !MapObject._container || !MapObject._loaded) {
-                    return;
-                }
-
-                // Additional check: verify the container element exists in DOM
-                if (!document.contains(MapObject._container)) {
-                    return;
-                }
-
-                MapObject.invalidateSize({ pan: false, debounceMoveend: true });
-            } catch (e) {
-                // Silently ignore - this can happen during rapid component unmount/remount
-                // Only log if it's not the _leaflet_pos error
-                if (!e.message.includes('_leaflet_pos')) {
-                    console.error(`Error while updating map: ${e}`);
-                }
-            }
-        }, 1000);
     };
 
     return (
