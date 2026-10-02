@@ -17,7 +17,7 @@
  *
  */
 
-import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import React, {startTransition, useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
     MapContainer,
     TileLayer,
@@ -66,7 +66,6 @@ import {
     getSatelliteCoverageCircle,
     getSatelliteLatLon,
     getSatellitePaths,
-    isSatelliteVisible,
 } from '../common/tracking-logic.jsx';
 
 import {setSatelliteData} from './earthview-slice.jsx';
@@ -79,6 +78,10 @@ import {store} from '../common/store.jsx';
 import {CircularProgress, Backdrop} from '@mui/material';
 
 const viewSatelliteLimit = 100;
+// A 5° step remains visually smooth at Earth View's supported zoom levels,
+// while avoiding thousands of polygon vertices on every live refresh.
+const coverageCircleSegments = 72;
+const timeToMaxElevationRefreshMs = 30 * 1000;
 
 let MapObject = null;
 
@@ -334,6 +337,7 @@ const LeafletEarthViewMapRenderer = ({
     const zoomControlsRef = useRef(null);
     const arrowControlsRef = useRef(null);
     const elevationHistoryRef = useRef({}); // Store elevation history for each satellite
+    const timeToMaxElevationRef = useRef(new Map());
     const selectedSatelliteIdRef = useRef(selectedSatelliteId);
     const initialInvalidateTimeoutsRef = useRef([]); // Store initial invalidate timeouts for cleanup
 
@@ -479,19 +483,41 @@ const LeafletEarthViewMapRenderer = ({
                     }
                 }
 
-                // Calculate time to max elevation only for visible satellites
+                // Finding a peak propagates an orbit many times. Reuse a recent
+                // result between the 3-second map refreshes and count it down.
                 let timeToMaxEl = null;
                 if (el > 0 && (trend === 'rising_slow' || trend === 'rising_fast')) {
-                    timeToMaxEl = calculateTimeToMaxElevation(
-                        satellite['tle1'],
-                        satellite['tle2'],
-                        {
-                            lat: location['lat'],
-                            lon: location['lon'],
-                            alt: location['alt'],
-                        },
-                        now
-                    );
+                    const cacheKey = [
+                        noradId,
+                        satellite.tle1,
+                        satellite.tle2,
+                        location.lat,
+                        location.lon,
+                        location.alt,
+                    ].join('|');
+                    const cachedPeak = timeToMaxElevationRef.current.get(cacheKey);
+                    const elapsedMs = cachedPeak ? now.getTime() - cachedPeak.calculatedAt : Infinity;
+
+                    if (elapsedMs < timeToMaxElevationRefreshMs) {
+                        timeToMaxEl = cachedPeak.timeToMaxEl == null
+                            ? null
+                            : Math.max(0, cachedPeak.timeToMaxEl - (elapsedMs / 1000));
+                    } else {
+                        timeToMaxEl = calculateTimeToMaxElevation(
+                            satellite.tle1,
+                            satellite.tle2,
+                            {
+                                lat: location.lat,
+                                lon: location.lon,
+                                alt: location.alt,
+                            },
+                            now,
+                        );
+                        timeToMaxElevationRef.current.set(cacheKey, {
+                            calculatedAt: now.getTime(),
+                            timeToMaxEl,
+                        });
+                    }
                 }
 
                 // Accumulate the selected satellite position with enriched data
@@ -525,7 +551,10 @@ const LeafletEarthViewMapRenderer = ({
                     );
                 }
 
-                if (activeSelectedSatelliteId === noradId) {
+                if (
+                    activeSelectedSatelliteId === noradId
+                    && (showPastOrbitPath || showFutureOrbitPath)
+                ) {
                     // calculate paths
                     let paths = getSatellitePaths(
                         [satellite['tle1'], satellite['tle2']],
@@ -585,7 +614,9 @@ const LeafletEarthViewMapRenderer = ({
                     contextmenu: (event) => onMarkerContextMenu(event, satellite),
                 };
 
-                const isVisible = isSatelliteVisible(satellite['tle1'], satellite['tle2'], now, location);
+                // calculateSatelliteAzEl above already propagated this satellite for
+                // the current observer and time. Its elevation is the visibility test.
+                const isVisible = el >= 0;
 
                 // Crosshairs for tracking satellite - always shown when the satellite is being tracked
                 if (trackedSatelliteIds.has(Number(noradId))) {
@@ -639,7 +670,12 @@ const LeafletEarthViewMapRenderer = ({
 
                 // If the satellite is visible, draw the coverage circle
                 if (isVisible && showSatelliteCoverage) {
-                    let coverage = getSatelliteCoverageCircle(lat, lon, altitude, 360);
+                    let coverage = getSatelliteCoverageCircle(
+                        lat,
+                        lon,
+                        altitude,
+                        coverageCircleSegments,
+                    );
                     currentCoverage.push(
                         <Polyline
                             noClip={true}
@@ -659,7 +695,12 @@ const LeafletEarthViewMapRenderer = ({
                 } else {
                     // If the satellite is selected, draw the coverage circle
                     if (activeSelectedSatelliteId === noradId) {
-                        let coverage = getSatelliteCoverageCircle(lat, lon, altitude, 360);
+                        let coverage = getSatelliteCoverageCircle(
+                            lat,
+                            lon,
+                            altitude,
+                            coverageCircleSegments,
+                        );
                         currentCoverage.push(
                             <Polyline
                                 noClip={true}
@@ -736,19 +777,23 @@ const LeafletEarthViewMapRenderer = ({
         // Sun and moon position
         const [newSunPos, newMoonPos] = getSunMoonCoords();
 
-        setMapLayers({
-            currentPastSatellitesPaths: currentPastPaths,
-            currentFutureSatellitesPaths: currentFuturePaths,
-            currentSatellitesPosition: currentPos,
-            currentSatellitesCoverage: currentCoverage,
-            currentCrosshairs: currentCrosshair,
-            terminatorLine: newTerminatorLine,
-            daySidePolygon: dayPoly,
-            sunPos: newSunPos,
-            moonPos: newMoonPos,
-        });
+        // Mounting or replacing up to 100 Leaflet children is non-urgent live
+        // data. Let React paint the route shell and handle input first.
+        startTransition(() => {
+            setMapLayers({
+                currentPastSatellitesPaths: currentPastPaths,
+                currentFutureSatellitesPaths: currentFuturePaths,
+                currentSatellitesPosition: currentPos,
+                currentSatellitesCoverage: currentCoverage,
+                currentCrosshairs: currentCrosshair,
+                terminatorLine: newTerminatorLine,
+                daySidePolygon: dayPoly,
+                sunPos: newSunPos,
+                moonPos: newMoonPos,
+            });
 
-        dispatch(setSelectedSatellitePositions(selectedSatPos));
+            dispatch(setSelectedSatellitePositions(selectedSatPos));
+        });
     }
 
     // Selecting a marker used to restart the full satellite update and remount
@@ -823,23 +868,6 @@ const LeafletEarthViewMapRenderer = ({
         trackedSatelliteIds,
         trackedSatelliteIdsList,
     ]);
-
-    useEffect(() => {
-        // zoom in and out a bit to fix the zoom factor issue
-        if (MapObject && MapObject._container && document.contains(MapObject._container)) {
-            const zoomLevel = MapObject.getZoom();
-            const loc = MapObject.getCenter();
-            setTimeout(() => {
-                MapObject.setView([loc.lat, loc.lng], zoomLevel - 0.25);
-                setTimeout(() => {
-                    MapObject.setView([loc.lat, loc.lng], zoomLevel);
-                }, 500);
-            }, 0);
-        }
-
-        return () => {
-        };
-    }, [tileLayerID]);
 
     // On component mount, keep map size in sync with layout changes.
     useEffect(() => {

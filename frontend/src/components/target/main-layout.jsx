@@ -81,6 +81,7 @@ const FIXED_ISLAND_HEIGHTS = {
     xs: {'rotator-control': 29, 'rig-control': 29},
     xxs: {'rotator-control': 29, 'rig-control': 29},
 };
+const DEFERRED_TRACKING_ISLAND_COUNT = 5;
 
 // -------------------------------------------------
 // Leaflet icon path fix for React
@@ -320,6 +321,7 @@ const TrackingLayout = React.memo(function TrackingLayout() {
     const coverageRef = useRef(null);
 
     const {width, containerRef, mounted} = useContainerWidth({measureBeforeMount: true});
+    const [deferredIslandCount, setDeferredIslandCount] = useState(0);
 
     // Handler for refreshing timeline passes
     const handleRefreshTimelinePasses = () => {
@@ -679,6 +681,33 @@ const TrackingLayout = React.memo(function TrackingLayout() {
     }, [layouts]);
 
     useEffect(() => {
+        if (!mounted) return undefined;
+
+        let cancelled = false;
+        let frameId = null;
+        let nextIslandCount = 1;
+        const mountNextIsland = () => {
+            if (cancelled) return;
+
+            // Keep route navigation responsive by mounting the target map before
+            // the data grids and hardware control islands.
+            React.startTransition(() => {
+                setDeferredIslandCount(nextIslandCount);
+            });
+            nextIslandCount += 1;
+            if (nextIslandCount <= DEFERRED_TRACKING_ISLAND_COUNT) {
+                frameId = window.requestAnimationFrame(mountNextIsland);
+            }
+        };
+
+        frameId = window.requestAnimationFrame(mountNextIsland);
+        return () => {
+            cancelled = true;
+            if (frameId != null) window.cancelAnimationFrame(frameId);
+        };
+    }, [mounted]);
+
+    useEffect(() => {
         if (!socket) return;
 
         // Load the persisted target once the socket context is ready.
@@ -704,25 +733,27 @@ const TrackingLayout = React.memo(function TrackingLayout() {
             <TargetViewRouter/>
         </StyledIslandParent>,
         <StyledIslandParentScrollbar key="info">
-            <TargetInfoIsland/>
+            {deferredIslandCount >= 1 ? <TargetInfoIsland/> : null}
         </StyledIslandParentScrollbar>,
         <StyledIslandParentNoScrollbar key="passes">
-            <NextPassesIsland/>
+            {deferredIslandCount >= 5 ? <NextPassesIsland/> : null}
         </StyledIslandParentNoScrollbar>,
         <StyledIslandParentNoScrollbar key="timeline">
-            <SatellitePassTimeline
-                timeWindowHours={nextPassesHours}
-                satelliteName={satelliteName}
-                labelType="peak"
-                onRefresh={handleRefreshTimelinePasses}
-                showGeostationarySatellites={true}
-            />
+            {deferredIslandCount >= 4 ? (
+                <SatellitePassTimeline
+                    timeWindowHours={nextPassesHours}
+                    satelliteName={satelliteName}
+                    labelType="peak"
+                    onRefresh={handleRefreshTimelinePasses}
+                    showGeostationarySatellites={true}
+                />
+            ) : null}
         </StyledIslandParentNoScrollbar>,
         <StyledIslandParentScrollbar key="rotator-control">
-            <RotatorControl/>
+            {deferredIslandCount >= 2 ? <RotatorControl/> : null}
         </StyledIslandParentScrollbar>,
         <StyledIslandParentScrollbar key="rig-control">
-            <RigControl/>
+            {deferredIslandCount >= 3 ? <RigControl/> : null}
         </StyledIslandParentScrollbar>,
     ];
 

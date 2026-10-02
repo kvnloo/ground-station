@@ -69,6 +69,7 @@ const MAX_PAST_PROJECTION_HOURS = 168;
 const MAX_FUTURE_PROJECTION_HOURS = 720;
 const VIEW_MODE_SOLAR_SYSTEM = 'solar-system';
 const VIEW_MODE_PLANETARIUM = 'planetarium';
+const DEFERRED_ISLAND_COUNT = 4;
 const normalizeViewMode = (value) => (
     value === VIEW_MODE_PLANETARIUM ? VIEW_MODE_PLANETARIUM : VIEW_MODE_SOLAR_SYSTEM
 );
@@ -316,6 +317,7 @@ const CelestialMainLayout = () => {
     const [openSolarSystemLayoutOptionsDialog, setOpenSolarSystemLayoutOptionsDialog] = useState(false);
     const [solarSystemFullscreen, setSolarSystemFullscreen] = useState(false);
     const [showRefreshOverlay, setShowRefreshOverlay] = useState(false);
+    const [deferredIslandCount, setDeferredIslandCount] = useState(0);
     const [solarCanvasStatusInfo, setSolarCanvasStatusInfo] = useState({
         gestureHintText: '',
         scaleLabel: '',
@@ -364,6 +366,33 @@ const CelestialMainLayout = () => {
     useEffect(() => {
         saveLayoutsToLocalStorage(layouts);
     }, [layouts]);
+
+    useEffect(() => {
+        if (!mounted) return undefined;
+
+        let cancelled = false;
+        let frameId = null;
+        let nextIslandCount = 1;
+        const mountNextIsland = () => {
+            if (cancelled) return;
+
+            // The map is the first useful part of this route. Mount each data
+            // grid/island in a separate frame so route navigation stays usable.
+            React.startTransition(() => {
+                setDeferredIslandCount(nextIslandCount);
+            });
+            nextIslandCount += 1;
+            if (nextIslandCount <= DEFERRED_ISLAND_COUNT) {
+                frameId = window.requestAnimationFrame(mountNextIsland);
+            }
+        };
+
+        frameId = window.requestAnimationFrame(mountNextIsland);
+        return () => {
+            cancelled = true;
+            if (frameId != null) window.cancelAnimationFrame(frameId);
+        };
+    }, [mounted]);
 
     useEffect(() => {
         if (!socket) return;
@@ -1084,59 +1113,67 @@ const CelestialMainLayout = () => {
                     </Tooltip>
                 </TitleBar>
                 <Box sx={{ p: 0, flex: 1, minHeight: 0 }}>
-                    <MonitoredCelestialGridIsland
-                        rows={monitoredState.monitored || []}
-                        loading={Boolean(monitoredState.loading)}
-                        targetNumberByTargetKey={targetNumberByTargetKey}
-                        onTargetSelected={(row) => {
-                            const key = buildTargetKeyFromCelestialRow(row);
-                            if (!key) return;
-                            setFocusTargetKey(key);
-                            setFocusTargetSignal((value) => value + 1);
-                        }}
-                    />
+                    {deferredIslandCount >= 1 ? (
+                        <MonitoredCelestialGridIsland
+                            rows={monitoredState.monitored || []}
+                            loading={Boolean(monitoredState.loading)}
+                            targetNumberByTargetKey={targetNumberByTargetKey}
+                            onTargetSelected={(row) => {
+                                const key = buildTargetKeyFromCelestialRow(row);
+                                if (!key) return;
+                                setFocusTargetKey(key);
+                                setFocusTargetSignal((value) => value + 1);
+                            }}
+                        />
+                    ) : null}
                 </Box>
             </Box>
         </StyledIslandParentNoScrollbar>,
         <StyledIslandParentNoScrollbar key="celestial-info">
-            <CelestialInfoIsland
-                selectedTargetKey={selectedInfoTargetKey}
-                tracks={combinedScene?.celestial || []}
-                passes={combinedScene?.celestial_passes || []}
-                monitoredRows={monitoredState?.monitored || []}
-                gridEditable={isEditing}
-                loading={Boolean(celestialState.tracksLoading)}
-            />
+            {deferredIslandCount >= 2 ? (
+                <CelestialInfoIsland
+                    selectedTargetKey={selectedInfoTargetKey}
+                    tracks={combinedScene?.celestial || []}
+                    passes={combinedScene?.celestial_passes || []}
+                    monitoredRows={monitoredState?.monitored || []}
+                    gridEditable={isEditing}
+                    loading={Boolean(celestialState.tracksLoading)}
+                />
+            ) : null}
         </StyledIslandParentNoScrollbar>,
         <StyledIslandParentNoScrollbar key="celestial-timeline">
-            <CelestialPassTimeline
-                passes={combinedScene?.celestial_passes || []}
-                loading={Boolean(celestialState.tracksLoading)}
-                gridEditable={isEditing}
-                projectionPastHours={projectionSettings.past_hours}
-                projectionFutureHours={projectionSettings.future_hours}
-                selectedTargetKey={selectedInfoTargetKey}
-                onRefresh={handleRefreshMonitored}
-            />
+            {deferredIslandCount >= 3 ? (
+                <CelestialPassTimeline
+                    passes={combinedScene?.celestial_passes || []}
+                    loading={Boolean(celestialState.tracksLoading)}
+                    gridEditable={isEditing}
+                    projectionPastHours={projectionSettings.past_hours}
+                    projectionFutureHours={projectionSettings.future_hours}
+                    selectedTargetKey={selectedInfoTargetKey}
+                    onRefresh={handleRefreshMonitored}
+                />
+            ) : null}
         </StyledIslandParentNoScrollbar>,
         <StyledIslandParentNoScrollbar key="celestial-passes">
             <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                <CelestialPasses
-                    passes={combinedScene?.celestial_passes || []}
-                    tracks={combinedScene?.celestial || []}
-                    monitoredRows={monitoredState?.monitored || []}
-                    sceneTimestampUtc={combinedScene?.timestamp_utc || ''}
-                    loading={Boolean(celestialState.tracksLoading)}
-                    gridEditable={isEditing}
-                    targetNumberByTargetKey={targetNumberByTargetKey}
-                    onTargetSelected={(targetKey) => {
-                        if (!targetKey) return;
-                        setFocusTargetKey(targetKey);
-                        setFocusTargetSignal((value) => value + 1);
-                    }}
-                    onRefresh={handleRefreshMonitored}
-                    refreshDisabled={!socket || Boolean(celestialState.tracksLoading)}
-                />
+                {deferredIslandCount >= 4 ? (
+                    <CelestialPasses
+                        passes={combinedScene?.celestial_passes || []}
+                        tracks={combinedScene?.celestial || []}
+                        monitoredRows={monitoredState?.monitored || []}
+                        sceneTimestampUtc={combinedScene?.timestamp_utc || ''}
+                        loading={Boolean(celestialState.tracksLoading)}
+                        gridEditable={isEditing}
+                        targetNumberByTargetKey={targetNumberByTargetKey}
+                        onTargetSelected={(targetKey) => {
+                            if (!targetKey) return;
+                            setFocusTargetKey(targetKey);
+                            setFocusTargetSignal((value) => value + 1);
+                        }}
+                        onRefresh={handleRefreshMonitored}
+                        refreshDisabled={!socket || Boolean(celestialState.tracksLoading)}
+                    />
+                ) : null}
             </Box>
         </StyledIslandParentNoScrollbar>,
     ];
