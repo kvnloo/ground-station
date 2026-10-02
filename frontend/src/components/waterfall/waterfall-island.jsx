@@ -322,9 +322,10 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
 
     const targetFPSRef = useRef(targetFPS);
     const waterfallControlRef = useRef(null);
-    // Keep track of the last event key sent during this waterfall view. A
-    // current tracking state must still create a marker when the view opens.
-    const lastRotatorEventRef = useRef("");
+    // The store retains the current rotator status while navigating between
+    // pages. Start from that status so returning to the waterfall does not
+    // redraw a historical marker; only subsequent status changes are events.
+    const lastRotatorEventRef = useRef(lastRotatorEvent);
     const [scrollFactor, setScrollFactor] = useState(1);
     const accumulatedRowsRef = useRef(0);
     const [bandscopeAxisYWidth, setBandscopeAxisYWidth] = useState(60);
@@ -436,7 +437,8 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
             return;
         }
 
-        // Do not duplicate updates received while this view remains mounted.
+        // Do not duplicate the status present at mount or updates received
+        // while this view remains mounted.
         if (lastRotatorEventRef.current === lastRotatorEvent) {
             return;
         }
