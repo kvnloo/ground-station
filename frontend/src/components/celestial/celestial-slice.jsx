@@ -76,6 +76,89 @@ const mergeLivePointingIntoTracks = (tracks, livePointing) => {
     };
 };
 
+// The backend may stream many individual rows while it builds a scene. Merge a
+// batch in one Redux update so consumers do not render once per incoming row.
+const applyCelestialTrackRowUpdates = (state, payloads) => {
+    const updates = Array.isArray(payloads) ? payloads : [];
+    const validUpdates = updates.filter((payload) => (
+        payload?.row && String(payload.row.target_key || '').trim()
+    ));
+    if (!validUpdates.length) return;
+
+    const firstPayload = validUpdates[0];
+    const nextTracks = state.celestialTracks ? { ...state.celestialTracks } : {
+        timestamp_utc: firstPayload.timestamp_utc || new Date().toISOString(),
+        frame: firstPayload.frame || 'heliocentric-ecliptic',
+        center: firstPayload.center || 'sun',
+        units: firstPayload.units || { position: 'au', velocity: 'au/day' },
+        celestial: [],
+        meta: firstPayload.meta || {},
+    };
+    const rows = Array.isArray(nextTracks.celestial) ? [...nextTracks.celestial] : [];
+    const rowIndexByTargetKey = new Map(rows.map((row, index) => [
+        String(row?.target_key || '').trim(),
+        index,
+    ]));
+    let latestProgress = state.tracksProgress;
+
+    validUpdates.forEach((payload) => {
+        const targetKey = String(payload.row.target_key || '').trim();
+        const existingIndex = rowIndexByTargetKey.get(targetKey);
+        if (existingIndex === undefined) {
+            rowIndexByTargetKey.set(targetKey, rows.length);
+            rows.push(payload.row);
+        } else {
+            rows[existingIndex] = { ...rows[existingIndex], ...payload.row };
+        }
+
+        nextTracks.timestamp_utc = payload.timestamp_utc || nextTracks.timestamp_utc;
+        nextTracks.frame = payload.frame || nextTracks.frame;
+        nextTracks.center = payload.center || nextTracks.center;
+        nextTracks.units = payload.units || nextTracks.units;
+        nextTracks.meta = { ...(nextTracks.meta || {}), ...(payload.meta || {}) };
+        latestProgress = payload.progress || latestProgress;
+    });
+
+    nextTracks.celestial = rows;
+    state.celestialTracks = nextTracks;
+    state.tracksProgress = latestProgress;
+    state.error = null;
+    state.lastUpdated = new Date().toISOString();
+};
+
+const applySolarSystemBodyUpdates = (state, payloads) => {
+    const updates = (Array.isArray(payloads) ? payloads : []).filter((payload) => (
+        payload?.request_id === state.activeSolarRequestId
+        && String(payload?.body?.target_key || '').trim()
+    ));
+    if (!updates.length) return;
+
+    const nextScene = state.solarScene ? { ...state.solarScene } : { planets: [] };
+    const planets = Array.isArray(nextScene.planets) ? [...nextScene.planets] : [];
+    const planetIndexByTargetKey = new Map(planets.map((body, index) => [
+        String(body?.target_key || '').trim(),
+        index,
+    ]));
+    let latestProgress = state.solarProgress;
+
+    updates.forEach((payload) => {
+        const targetKey = String(payload.body.target_key || '').trim();
+        const existingIndex = planetIndexByTargetKey.get(targetKey);
+        if (existingIndex === undefined) {
+            planetIndexByTargetKey.set(targetKey, planets.length);
+            planets.push(payload.body);
+        } else {
+            planets[existingIndex] = { ...planets[existingIndex], ...payload.body };
+        }
+        latestProgress = payload.progress || latestProgress;
+    });
+
+    nextScene.planets = planets;
+    state.solarScene = nextScene;
+    state.solarProgress = latestProgress;
+    state.lastUpdated = new Date().toISOString();
+};
+
 export const fetchCelestialScene = createAsyncThunk(
     'celestial/fetchScene',
     async ({ socket, payload = {} }, { rejectWithValue }) => {
@@ -313,65 +396,16 @@ const celestialSlice = createSlice({
             state.lastUpdated = new Date().toISOString();
         },
         upsertCelestialTrackRowLive: (state, action) => {
-            const payload = action.payload || {};
-            const row = payload.row || null;
-            if (!row) return;
-
-            const nextTracks = state.celestialTracks ? { ...state.celestialTracks } : {
-                timestamp_utc: payload.timestamp_utc || new Date().toISOString(),
-                frame: payload.frame || 'heliocentric-ecliptic',
-                center: payload.center || 'sun',
-                units: payload.units || { position: 'au', velocity: 'au/day' },
-                celestial: [],
-                meta: payload.meta || {},
-            };
-
-            const existingRows = Array.isArray(nextTracks.celestial) ? [...nextTracks.celestial] : [];
-            const targetKey = String(row.target_key || '').trim();
-            if (!targetKey) return;
-            const existingIndex = existingRows.findIndex(
-                (item) => {
-                    const existingKey = String(item?.target_key || '').trim();
-                    return existingKey === targetKey;
-                },
-            );
-
-            if (existingIndex >= 0) {
-                existingRows[existingIndex] = { ...existingRows[existingIndex], ...row };
-            } else {
-                existingRows.push(row);
-            }
-
-            nextTracks.celestial = existingRows;
-            nextTracks.timestamp_utc = payload.timestamp_utc || nextTracks.timestamp_utc;
-            nextTracks.frame = payload.frame || nextTracks.frame;
-            nextTracks.center = payload.center || nextTracks.center;
-            nextTracks.units = payload.units || nextTracks.units;
-            nextTracks.meta = { ...(nextTracks.meta || {}), ...(payload.meta || {}) };
-
-            state.celestialTracks = nextTracks;
-            state.tracksProgress = payload.progress || state.tracksProgress;
-            state.error = null;
-            state.lastUpdated = new Date().toISOString();
+            applyCelestialTrackRowUpdates(state, [action.payload || {}]);
+        },
+        upsertCelestialTrackRowsLive: (state, action) => {
+            applyCelestialTrackRowUpdates(state, action.payload?.updates);
         },
         upsertSolarSystemBodyLive: (state, action) => {
-            const payload = action.payload || {};
-            if (!payload.request_id || payload.request_id !== state.activeSolarRequestId) return;
-            const body = payload.body;
-            const targetKey = String(body?.target_key || '').trim();
-            if (!targetKey) return;
-
-            const nextScene = state.solarScene ? { ...state.solarScene } : { planets: [] };
-            const planets = Array.isArray(nextScene.planets) ? [...nextScene.planets] : [];
-            const existingIndex = planets.findIndex(
-                (item) => String(item?.target_key || '').trim() === targetKey,
-            );
-            if (existingIndex >= 0) planets[existingIndex] = { ...planets[existingIndex], ...body };
-            else planets.push(body);
-            nextScene.planets = planets;
-            state.solarScene = nextScene;
-            state.solarProgress = payload.progress || state.solarProgress;
-            state.lastUpdated = new Date().toISOString();
+            applySolarSystemBodyUpdates(state, [action.payload || {}]);
+        },
+        upsertSolarSystemBodiesLive: (state, action) => {
+            applySolarSystemBodyUpdates(state, action.payload?.updates);
         },
         setTargetCelestialLivePointing: (state, action) => {
             const payload = action.payload || {};
@@ -757,7 +791,9 @@ export const {
     setSolarSceneLive,
     setCelestialTracksLive,
     upsertCelestialTrackRowLive,
+    upsertCelestialTrackRowsLive,
     upsertSolarSystemBodyLive,
+    upsertSolarSystemBodiesLive,
     setTargetCelestialLivePointing,
     setObserverSkyBodies,
     setCelestialPassesTableColumnVisibility,

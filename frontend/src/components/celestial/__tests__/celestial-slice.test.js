@@ -10,7 +10,9 @@ import celestialReducer, {
   setTargetCelestialLivePointing,
   setCelestialTracksLive,
   refreshMonitoredCelestialNow,
+  upsertCelestialTrackRowsLive,
   upsertSolarSystemBodyLive,
+  upsertSolarSystemBodiesLive,
 } from '../celestial-slice';
 
 describe('target celestial scenes', () => {
@@ -41,6 +43,66 @@ describe('target celestial scenes', () => {
 
     expect(state.solarScene.planets).toEqual([
       { target_key: 'body:mars', name: 'Mars', stale: false },
+    ]);
+    expect(state.solarProgress).toEqual({ current: 2, total: 2 });
+  });
+
+  it('merges streamed celestial updates in one state transition', () => {
+    let state = celestialReducer(undefined, upsertCelestialTrackRowsLive({
+      updates: [
+        {
+          timestamp_utc: '2026-10-02T18:00:00Z',
+          row: { target_key: 'body:mars', name: 'Mars' },
+          progress: { current: 1, total: 2 },
+        },
+        {
+          timestamp_utc: '2026-10-02T18:00:01Z',
+          row: { target_key: 'body:mars', stale: false },
+          progress: { current: 2, total: 2 },
+        },
+        {
+          row: { target_key: 'body:venus', name: 'Venus' },
+        },
+      ],
+    }));
+
+    expect(state.celestialTracks.celestial).toEqual([
+      { target_key: 'body:mars', name: 'Mars', stale: false },
+      { target_key: 'body:venus', name: 'Venus' },
+    ]);
+    expect(state.celestialTracks.timestamp_utc).toBe('2026-10-02T18:00:01Z');
+    expect(state.tracksProgress).toEqual({ current: 2, total: 2 });
+  });
+
+  it('ignores an inactive solar request while applying a batch', () => {
+    const requestArgs = { socket: {}, payload: { allow_network_fetch: true } };
+    let state = celestialReducer(
+      undefined,
+      fetchSolarSystemScene.pending('solar-request', requestArgs),
+    );
+
+    state = celestialReducer(state, upsertSolarSystemBodiesLive({
+      updates: [
+        {
+          request_id: 'older-request',
+          body: { target_key: 'body:mars', name: 'Wrong Mars' },
+        },
+        {
+          request_id: 'solar-request',
+          body: { target_key: 'body:mars', name: 'Mars' },
+          progress: { current: 1, total: 2 },
+        },
+        {
+          request_id: 'solar-request',
+          body: { target_key: 'body:venus', name: 'Venus' },
+          progress: { current: 2, total: 2 },
+        },
+      ],
+    }));
+
+    expect(state.solarScene.planets).toEqual([
+      { target_key: 'body:mars', name: 'Mars' },
+      { target_key: 'body:venus', name: 'Venus' },
     ]);
     expect(state.solarProgress).toEqual({ current: 2, total: 2 });
   });

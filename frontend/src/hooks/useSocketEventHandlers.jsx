@@ -106,9 +106,11 @@ import {
     setCelestialEphemerisStatus,
     setCelestialTracksLive,
     setSolarSceneLive,
-    upsertCelestialTrackRowLive,
-    upsertSolarSystemBodyLive,
+    upsertCelestialTrackRowsLive,
+    upsertSolarSystemBodiesLive,
 } from '../components/celestial/celestial-slice.jsx';
+
+const CELESTIAL_LIVE_UPDATE_BATCH_MS = 200;
 
 /**
  * Custom hook to handle all socket event listeners
@@ -894,21 +896,55 @@ export const useSocketEventHandlers = (socket, enabled = true) => {
             dispatch(reconcileTaskSnapshot(data));
         });
 
+        const pendingCelestialTrackRows = [];
+        const pendingSolarSystemBodies = [];
+        let celestialLiveUpdateTimer = null;
+        const flushCelestialLiveUpdates = () => {
+            if (celestialLiveUpdateTimer != null) {
+                window.clearTimeout(celestialLiveUpdateTimer);
+            }
+            celestialLiveUpdateTimer = null;
+            if (pendingCelestialTrackRows.length) {
+                dispatch(upsertCelestialTrackRowsLive({
+                    updates: pendingCelestialTrackRows.splice(0),
+                }));
+            }
+            if (pendingSolarSystemBodies.length) {
+                dispatch(upsertSolarSystemBodiesLive({
+                    updates: pendingSolarSystemBodies.splice(0),
+                }));
+            }
+        };
+        const scheduleCelestialLiveUpdateFlush = () => {
+            if (celestialLiveUpdateTimer != null) return;
+            celestialLiveUpdateTimer = window.setTimeout(
+                flushCelestialLiveUpdates,
+                CELESTIAL_LIVE_UPDATE_BATCH_MS,
+            );
+        };
+        const handleCelestialTrackRowUpdate = (data) => {
+            pendingCelestialTrackRows.push(data);
+            scheduleCelestialLiveUpdateFlush();
+        };
+        const handleSolarSystemBodyUpdate = (data) => {
+            pendingSolarSystemBodies.push(data);
+            scheduleCelestialLiveUpdateFlush();
+        };
+
         socket.on('celestial-scene-update', (data) => {
+            flushCelestialLiveUpdates();
             dispatch(setCelestialSceneLive(data));
         });
         socket.on('solar-system-scene-update', (data) => {
+            flushCelestialLiveUpdates();
             dispatch(setSolarSceneLive(data));
         });
         socket.on('celestial-tracks-update', (data) => {
+            flushCelestialLiveUpdates();
             dispatch(setCelestialTracksLive(data));
         });
-        socket.on('celestial-track-row-update', (data) => {
-            dispatch(upsertCelestialTrackRowLive(data));
-        });
-        socket.on('solar-system-body-update', (data) => {
-            dispatch(upsertSolarSystemBodyLive(data));
-        });
+        socket.on('celestial-track-row-update', handleCelestialTrackRowUpdate);
+        socket.on('solar-system-body-update', handleSolarSystemBodyUpdate);
         socket.on('celestial-ephemeris-status-update', (response) => {
             if (response?.success && response.data) {
                 dispatch(setCelestialEphemerisStatus(response.data));
@@ -979,6 +1015,9 @@ export const useSocketEventHandlers = (socket, enabled = true) => {
 
         // Cleanup function
         return () => {
+            if (celestialLiveUpdateTimer != null) {
+                window.clearTimeout(celestialLiveUpdateTimer);
+            }
             clearInterval(timingInterval);
             socket.off('connect', handleConnect);
             socket.off('reconnect_attempt');

@@ -750,6 +750,8 @@ const SolarSystemCanvas = ({
     const { locale } = useUserTimeSettings();
     const containerRef = useRef(null);
     const canvasRef = useRef(null);
+    const pendingDrawFrameRef = useRef(null);
+    const drawSceneRef = useRef(null);
     const wheelCommitTimeoutRef = useRef(null);
     const viewportAnimationRef = useRef(null);
     const lastFitSignalRef = useRef(fitAllSignal);
@@ -2251,8 +2253,17 @@ const SolarSystemCanvas = ({
         viewport.zoom,
     ]);
 
+    // Several incremental backend rows can arrive in the same paint cycle.
+    // Draw only the latest complete scene instead of repainting every intermediate row.
     useEffect(() => {
-        drawScene();
+        drawSceneRef.current = drawScene;
+        if (pendingDrawFrameRef.current != null) return undefined;
+
+        pendingDrawFrameRef.current = window.requestAnimationFrame(() => {
+            pendingDrawFrameRef.current = null;
+            drawSceneRef.current?.();
+        });
+        return undefined;
     }, [drawScene]);
 
     useEffect(() => {
@@ -2330,7 +2341,11 @@ const SolarSystemCanvas = ({
         if (!container) return;
 
         const observer = new ResizeObserver(() => {
-            drawScene();
+            if (pendingDrawFrameRef.current != null) return;
+            pendingDrawFrameRef.current = window.requestAnimationFrame(() => {
+                pendingDrawFrameRef.current = null;
+                drawSceneRef.current?.();
+            });
         });
         observer.observe(container);
         return () => observer.disconnect();
@@ -2339,6 +2354,9 @@ const SolarSystemCanvas = ({
     useEffect(() => {
         return () => {
             cancelViewportAnimation();
+            if (pendingDrawFrameRef.current != null) {
+                window.cancelAnimationFrame(pendingDrawFrameRef.current);
+            }
             if (wheelCommitTimeoutRef.current) {
                 window.clearTimeout(wheelCommitTimeoutRef.current);
             }
