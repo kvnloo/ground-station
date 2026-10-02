@@ -26,6 +26,7 @@ import { useAudio } from '../../dashboard/audio-provider.jsx';
 import {
     setVFOProperty,
     setSelectedVFO,
+    syncDraggedVFOToBackend,
 } from './vfo-slice.jsx';
 import {
     canvasDrawingUtils,
@@ -146,6 +147,10 @@ const VFOMarkersContainer = ({
                                  zoomScale,
                                  currentPositionX,
                              }) => {
+    // A full marker canvas redraw is much more expensive than updating the
+    // drag ref. Thirty visual updates per second keeps a drag fluid while
+    // leaving enough main-thread time for input and the waterfall itself.
+    const DRAG_VISUAL_UPDATE_INTERVAL_MS = 33;
     const dispatch = useDispatch();
     const { getVfoSquelchDebug } = useAudio();
     const {
@@ -171,6 +176,10 @@ const VFOMarkersContainer = ({
     const canvasRef = useRef(null);
     // Canvas context caching for performance
     const canvasContextRef = useRef(null);
+    const dragOverridesRef = useRef({});
+    const lastDragVisualRenderRef = useRef(0);
+    const markerRenderFrameRef = useRef(null);
+    const renderVFOMarkersDirectRef = useRef(null);
     const [actualWidth, setActualWidth] = useState(containerWidth);
     const lastMeasuredWidthRef = useRef(0);
     const [activeMarker, setActiveMarker] = useState(null);
@@ -207,6 +216,23 @@ const VFOMarkersContainer = ({
     const lastTapRef = useRef(0);
     const tapTimeoutRef = useRef(null);
     const touchStartTimeoutRef = useRef(null);
+
+    const queueVFOMarkerRender = useCallback(() => {
+        if (markerRenderFrameRef.current !== null) {
+            return;
+        }
+
+        markerRenderFrameRef.current = requestAnimationFrame(() => {
+            markerRenderFrameRef.current = null;
+            renderVFOMarkersDirectRef.current?.();
+        });
+    }, []);
+
+    useEffect(() => () => {
+        if (markerRenderFrameRef.current !== null) {
+            cancelAnimationFrame(markerRenderFrameRef.current);
+        }
+    }, []);
 
     // Calculate frequency range
     const startFreq = centerFrequency - sampleRate / 2;
@@ -394,12 +420,53 @@ const VFOMarkersContainer = ({
     }, [canvasRef.current]);
 
     // Consolidated function to set redux state
-    const updateVFOProperty = useCallback((vfoNumber, updates) => {
+    const updateVFOProperty = useCallback((vfoNumber, updates, { skipBackendSync = false } = {}) => {
         dispatch(setVFOProperty({
+            vfoNumber,
+            updates,
+            skipBackendSync,
+        }));
+    }, [dispatch]);
+
+    const syncDraggedVFO = useCallback((vfoNumber, updates) => {
+        dispatch(syncDraggedVFOToBackend({
             vfoNumber,
             updates,
         }));
     }, [dispatch]);
+
+    const updateDraggedVFOVisual = useCallback((vfoNumber, updates) => {
+        const existingOverride = dragOverridesRef.current[vfoNumber] || {};
+        dragOverridesRef.current = {
+            ...dragOverridesRef.current,
+            [vfoNumber]: { ...existingOverride, ...updates },
+        };
+
+        const now = performance.now();
+        if (now - lastDragVisualRenderRef.current < DRAG_VISUAL_UPDATE_INTERVAL_MS) {
+            return;
+        }
+        lastDragVisualRenderRef.current = now;
+        queueVFOMarkerRender();
+    }, [queueVFOMarkerRender]);
+
+    useEffect(() => {
+        if (isDragging) {
+            return;
+        }
+
+        const overrides = dragOverridesRef.current;
+        const hasCommittedOverrides = Object.entries(overrides).every(([vfoNumber, updates]) => (
+            Object.entries(updates).every(([key, value]) => vfoMarkers[vfoNumber]?.[key] === value)
+        ));
+
+        // Keep the local value visible until the final Redux dispatch reaches
+        // this component. Clearing it earlier causes a one-frame jump back.
+        if (Object.keys(overrides).length > 0 && hasCommittedOverrides) {
+            dragOverridesRef.current = {};
+            queueVFOMarkerRender();
+        }
+    }, [isDragging, queueVFOMarkerRender, vfoMarkers]);
 
 
     // When the VFO status changes, detect which VFO was just made active
@@ -465,17 +532,22 @@ const VFOMarkersContainer = ({
         startFreq,
         endFreq,
         updateVFOProperty,
+        syncDraggedVFO,
+        onDragValueChange: updateDraggedVFOVisual,
         canvasRef
     });
 
     // End drag operation
     const endDragOperation = useCallback(() => {
+        // Commit any value drawn from the local drag ref before returning to
+        // Redux-backed rendering.
+        flushDragMovement();
         resetDragMovementState();
         setIsDragging(false);
         isDraggingRef.current = false;
         setActiveMarker(null);
         setDragMode(null);
-    }, [resetDragMovementState]);
+    }, [flushDragMovement, resetDragMovementState]);
 
     // Use VFO wheel handler
     useVFOWheelHandler({
@@ -563,11 +635,12 @@ const VFOMarkersContainer = ({
         }
     }, [actualWidth, height]);
 
-    // Send render commands to the worker or fallback to direct rendering
+    // Multiple store updates can land in one browser frame. Coalesce their
+    // canvas work so a live decoder or drag update paints once per frame.
     useEffect(() => {
-        renderVFOMarkersDirect();
+        queueVFOMarkerRender();
     }, [vfoActive, vfoMarkers, actualWidth, height,
-        centerFrequency, sampleRate, selectedVFO, streamingVFOs, vfoMuted, vfoSquelchOpen, containerWidth, currentPositionX, activeDecoders, decoderOutputs, runtimeSnapshot]);
+        centerFrequency, sampleRate, selectedVFO, streamingVFOs, vfoMuted, vfoSquelchOpen, containerWidth, currentPositionX, activeDecoders, decoderOutputs, runtimeSnapshot, queueVFOMarkerRender]);
 
     // Rendering function with cached context
     const renderVFOMarkersDirect = () => {
@@ -682,7 +755,10 @@ const VFOMarkersContainer = ({
 
         // Draw each marker in sorted order (selected one drawn last)
         sortedVfoKeys.forEach(markerIdx => {
-            const marker = vfoMarkers[markerIdx];
+            const marker = {
+                ...vfoMarkers[markerIdx],
+                ...dragOverridesRef.current[markerIdx],
+            };
             const isSelected = parseInt(markerIdx) === selectedVFO;
 
             // Get decoder info for this VFO
@@ -770,6 +846,10 @@ const VFOMarkersContainer = ({
             );
         });
     };
+
+    // The scheduler above uses a ref so it always invokes this render's
+    // current closures without scheduling a stale canvas paint.
+    renderVFOMarkersDirectRef.current = renderVFOMarkersDirect;
 
     // Check if mouse/touch is over a handle or edge
     const getHoverElement = useCallback((x, y) => {
@@ -1012,7 +1092,6 @@ const VFOMarkersContainer = ({
         activeMarker,
         handleDragMovement,
         endDragOperation,
-        flushDragMovement,
         lastClientXRef,
         lastTouchXRef
     });

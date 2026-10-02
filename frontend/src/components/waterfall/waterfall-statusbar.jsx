@@ -39,23 +39,15 @@ const WaterfallStatusBar = ({isStreaming, eventMetrics, centerFrequency, sampleR
 
         updateTransform();
 
-        let rafId = 0;
-        let lastTs = 0;
-
-        const tick = (ts) => {
-            if (document.hidden) {
-                rafId = requestAnimationFrame(tick);
-                return;
-            }
-            if (ts - lastTs >= TRANSFORM_UPDATE_MS) {
-                lastTs = ts;
+        // Transform data is displayed at this fixed cadence, so avoid a
+        // requestAnimationFrame callback on every frame while streaming.
+        const intervalId = setInterval(() => {
+            if (!document.hidden) {
                 updateTransform();
             }
-            rafId = requestAnimationFrame(tick);
-        };
-        rafId = requestAnimationFrame(tick);
+        }, TRANSFORM_UPDATE_MS);
 
-        return () => cancelAnimationFrame(rafId);
+        return () => clearInterval(intervalId);
     }, [isStreaming]);
 
     return (

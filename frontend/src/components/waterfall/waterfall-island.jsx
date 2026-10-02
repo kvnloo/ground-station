@@ -1016,22 +1016,15 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
 
         updatePlaybackTimeline();
 
-        let rafId = 0;
-        let lastTs = 0;
-        const tick = (ts) => {
-            if (document.hidden) {
-                rafId = requestAnimationFrame(tick);
-                return;
-            }
-            if (ts - lastTs >= PLAYBACK_TIMELINE_UPDATE_MS) {
-                lastTs = ts;
+        // Playback state is sampled four times per second. A timer preserves
+        // that cadence without scheduling work for every screen refresh.
+        const intervalId = setInterval(() => {
+            if (!document.hidden) {
                 updatePlaybackTimeline();
             }
-            rafId = requestAnimationFrame(tick);
-        };
-        rafId = requestAnimationFrame(tick);
+        }, PLAYBACK_TIMELINE_UPDATE_MS);
 
-        return () => cancelAnimationFrame(rafId);
+        return () => clearInterval(intervalId);
     }, [
         isPlaybackStreaming,
         isPlaybackSeeking,

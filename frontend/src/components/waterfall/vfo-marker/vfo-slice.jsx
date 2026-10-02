@@ -43,6 +43,14 @@ export const backendUpdateVFOParameters = createAsyncThunk(
     }
 );
 
+// Drag state is drawn locally in the marker canvas. This action lets the
+// middleware synchronize the transient value to the backend without first
+// changing Redux and forcing the waterfall page to reconcile.
+export const syncDraggedVFOToBackend = (payload) => ({
+    type: 'vfo/syncDraggedVFOToBackend',
+    payload,
+});
+
 export const startAudioRecording = createAsyncThunk(
     'vfo/startAudioRecording',
     async ({socket, vfoNumber, recordingName, selectedSDRId, centerFrequency, vfoFrequency, demodulatorType}, {getState, rejectWithValue}) => {

@@ -188,9 +188,42 @@ const backendSyncMiddleware = (store) => (next) => (action) => {
         return result;
     }
 
+    // Drag values are already rendered from a canvas-local ref. Merge the
+    // transient update only for this backend call so Redux can stay untouched
+    // until the drag ends.
+    if (action.type === 'vfo/syncDraggedVFOToBackend') {
+        const { vfoNumber, updates } = action.payload;
+        const currentVfoState = state.vfo.vfoMarkers[vfoNumber];
+        if (!currentVfoState) {
+            return result;
+        }
+
+        const backendVfoState = filterUIOnlyFields({
+            ...currentVfoState,
+            ...updates,
+        });
+        const currentVfoActiveState = state.vfo.vfoActive[vfoNumber];
+        const currentIsSelected = state.vfo.selectedVFO === vfoNumber;
+
+        store.dispatch(backendUpdateVFOParameters({
+            socket,
+            vfoNumber,
+            updates: {
+                vfoNumber,
+                ...backendVfoState,
+                active: currentVfoActiveState,
+                selected: currentIsSelected,
+            },
+        }));
+        return result;
+    }
+
     // Handle VFO property changes
     if (action.type === 'vfo/setVFOProperty') {
-        const { vfoNumber, updates } = action.payload;
+        const { vfoNumber, updates, skipBackendSync = false } = action.payload;
+        if (skipBackendSync) {
+            return result;
+        }
 
         // Handle frequencyOffset changes for locked VFOs
         const updateKeys = Object.keys(updates);

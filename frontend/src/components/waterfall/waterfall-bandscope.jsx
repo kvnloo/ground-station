@@ -123,22 +123,15 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
 
         updateCountdown();
 
-        let rafId = 0;
-        let lastTs = 0;
-        const tick = (ts) => {
-            if (document.hidden) {
-                rafId = requestAnimationFrame(tick);
-                return;
-            }
-            if (ts - lastTs >= PLAYBACK_COUNTDOWN_UPDATE_MS) {
-                lastTs = ts;
+        // The displayed value changes at most four times per second. A frame
+        // loop would still wake on every refresh while the waterfall streams.
+        const intervalId = setInterval(() => {
+            if (!document.hidden) {
                 updateCountdown();
             }
-            rafId = requestAnimationFrame(tick);
-        };
-        rafId = requestAnimationFrame(tick);
+        }, PLAYBACK_COUNTDOWN_UPDATE_MS);
 
-        return () => cancelAnimationFrame(rafId);
+        return () => clearInterval(intervalId);
     }, [isStreaming, playbackRemainingSecondsRef]);
 
     // Batch layout notifications so a resize drag triggers at most one overlay

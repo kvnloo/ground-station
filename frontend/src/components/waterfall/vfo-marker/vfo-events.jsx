@@ -21,7 +21,10 @@ import { useCallback, useEffect, useRef } from 'react';
 import { calculateBandwidthChange } from './vfo-utils.js';
 import { getBandwidthConfig } from './vfo-config.js';
 
-const DRAG_UPDATE_INTERVAL_MS = 33;
+// The overlay can follow every display frame, but Redux updates cause a much
+// larger React tree to reconcile. Send the backend a rate-limited stream of
+// updates while avoiding that work for every pointer move.
+const DRAG_BACKEND_SYNC_INTERVAL_MS = 150;
 
 /**
  * Custom hook for VFO drag operations
@@ -35,11 +38,15 @@ export const useVFODragHandlers = ({
     startFreq,
     endFreq,
     updateVFOProperty,
+    syncDraggedVFO,
+    onDragValueChange,
     canvasRef
 }) => {
     const queuedDeltaXRef = useRef(0);
     const rafIdRef = useRef(null);
-    const lastDispatchTsRef = useRef(0);
+    const lastBackendSyncTsRef = useRef(0);
+    const pendingBackendUpdateRef = useRef(null);
+    const finalStoreUpdateRef = useRef(null);
     const scaleFactorRef = useRef(1);
     const draggedValuesRef = useRef({
         markerKey: null,
@@ -56,6 +63,8 @@ export const useVFODragHandlers = ({
         startFreq: 0,
         endFreq: 0,
         updateVFOProperty: () => {},
+        syncDraggedVFO: () => {},
+        onDragValueChange: () => {},
         canvasRef: null,
     });
 
@@ -67,6 +76,8 @@ export const useVFODragHandlers = ({
     refs.current.startFreq = startFreq;
     refs.current.endFreq = endFreq;
     refs.current.updateVFOProperty = updateVFOProperty;
+    refs.current.syncDraggedVFO = syncDraggedVFO;
+    refs.current.onDragValueChange = onDragValueChange;
     refs.current.canvasRef = canvasRef;
 
     const cancelQueuedFrame = useCallback(() => {
@@ -94,9 +105,22 @@ export const useVFODragHandlers = ({
         }
 
         queuedDeltaXRef.current = 0;
-        lastDispatchTsRef.current = 0;
+        lastBackendSyncTsRef.current = 0;
+        pendingBackendUpdateRef.current = null;
+        finalStoreUpdateRef.current = null;
         cancelQueuedFrame();
     }, [cancelQueuedFrame]);
+
+    const syncPendingBackendUpdate = useCallback((timestamp) => {
+        const pendingUpdate = pendingBackendUpdateRef.current;
+        if (!pendingUpdate) {
+            return;
+        }
+
+        refs.current.syncDraggedVFO(pendingUpdate.vfoNumber, pendingUpdate.updates);
+        pendingBackendUpdateRef.current = null;
+        lastBackendSyncTsRef.current = timestamp;
+    }, []);
 
     const applyQueuedDelta = useCallback((deltaX) => {
         if (!deltaX) {
@@ -138,7 +162,13 @@ export const useVFODragHandlers = ({
 
             if (limitedFrequency !== currentFrequency) {
                 draggedValuesRef.current.frequency = limitedFrequency;
-                state.updateVFOProperty(parseInt(markerKey, 10), { frequency: limitedFrequency });
+                const vfoNumber = parseInt(markerKey, 10);
+                const updates = { frequency: limitedFrequency };
+                // Draw locally, synchronize the backend separately, and commit
+                // Redux only when the drag ends.
+                state.onDragValueChange(vfoNumber, updates);
+                pendingBackendUpdateRef.current = { vfoNumber, updates };
+                finalStoreUpdateRef.current = { vfoNumber, updates };
             }
             return;
         }
@@ -159,7 +189,11 @@ export const useVFODragHandlers = ({
 
         if (limitedBandwidth !== currentBandwidth) {
             draggedValuesRef.current.bandwidth = limitedBandwidth;
-            state.updateVFOProperty(parseInt(markerKey, 10), { bandwidth: limitedBandwidth });
+            const vfoNumber = parseInt(markerKey, 10);
+            const updates = { bandwidth: limitedBandwidth };
+            state.onDragValueChange(vfoNumber, updates);
+            pendingBackendUpdateRef.current = { vfoNumber, updates };
+            finalStoreUpdateRef.current = { vfoNumber, updates };
         }
     }, []);
 
@@ -170,20 +204,21 @@ export const useVFODragHandlers = ({
             return;
         }
 
-        if (lastDispatchTsRef.current !== 0 && (timestamp - lastDispatchTsRef.current) < DRAG_UPDATE_INTERVAL_MS) {
-            rafIdRef.current = requestAnimationFrame(runQueuedFrame);
-            return;
-        }
-
         const deltaX = queuedDeltaXRef.current;
         queuedDeltaXRef.current = 0;
-        lastDispatchTsRef.current = timestamp;
         applyQueuedDelta(deltaX);
+
+        if (
+            timestamp - lastBackendSyncTsRef.current >= DRAG_BACKEND_SYNC_INTERVAL_MS
+            || lastBackendSyncTsRef.current === 0
+        ) {
+            syncPendingBackendUpdate(timestamp);
+        }
 
         if (queuedDeltaXRef.current) {
             rafIdRef.current = requestAnimationFrame(runQueuedFrame);
         }
-    }, [applyQueuedDelta]);
+    }, [applyQueuedDelta, syncPendingBackendUpdate]);
 
     const handleDragMovement = useCallback((deltaX) => {
         if (!deltaX) {
@@ -202,13 +237,25 @@ export const useVFODragHandlers = ({
             applyQueuedDelta(queuedDeltaXRef.current);
             queuedDeltaXRef.current = 0;
         }
-        lastDispatchTsRef.current = 0;
-    }, [applyQueuedDelta, cancelQueuedFrame]);
+        // Always synchronize the final value, then store it once so the
+        // normal Redux-backed render takes over after the drag finishes.
+        syncPendingBackendUpdate(performance.now());
+        const finalUpdate = finalStoreUpdateRef.current;
+        if (finalUpdate) {
+            refs.current.updateVFOProperty(finalUpdate.vfoNumber, finalUpdate.updates, {
+                skipBackendSync: true,
+            });
+            finalStoreUpdateRef.current = null;
+        }
+        lastBackendSyncTsRef.current = 0;
+    }, [applyQueuedDelta, cancelQueuedFrame, syncPendingBackendUpdate]);
 
     const resetDragMovementState = useCallback(() => {
         cancelQueuedFrame();
         queuedDeltaXRef.current = 0;
-        lastDispatchTsRef.current = 0;
+        lastBackendSyncTsRef.current = 0;
+        pendingBackendUpdateRef.current = null;
+        finalStoreUpdateRef.current = null;
         draggedValuesRef.current = {
             markerKey: null,
             frequency: null,
@@ -498,7 +545,6 @@ export const useVFODragState = ({
     activeMarker,
     handleDragMovement,
     endDragOperation,
-    flushDragMovement,
     lastClientXRef,
     lastTouchXRef
 }) => {
@@ -521,7 +567,6 @@ export const useVFODragState = ({
             };
 
             const handleMouseUp = () => {
-                flushDragMovement();
                 endDragOperation();
             };
 
@@ -533,7 +578,7 @@ export const useVFODragState = ({
                 document.removeEventListener('mouseup', handleMouseUp);
             };
         }
-    }, [isDragging, activeMarker, handleDragMovement, endDragOperation, flushDragMovement, lastClientXRef]);
+    }, [isDragging, activeMarker, handleDragMovement, endDragOperation, lastClientXRef]);
 
     // Touch drag effect
     useEffect(() => {
@@ -555,7 +600,6 @@ export const useVFODragState = ({
         const handleDocumentTouchEnd = (e) => {
             e.preventDefault();
             e.stopPropagation();
-            flushDragMovement();
             endDragOperation();
         };
 
@@ -568,5 +612,5 @@ export const useVFODragState = ({
             document.removeEventListener('touchend', handleDocumentTouchEnd, { capture: true });
             document.removeEventListener('touchcancel', handleDocumentTouchEnd, { capture: true });
         };
-    }, [isDragging, handleDragMovement, endDragOperation, flushDragMovement, lastTouchXRef]);
+    }, [isDragging, handleDragMovement, endDragOperation, lastTouchXRef]);
 };

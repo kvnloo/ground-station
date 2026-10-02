@@ -157,22 +157,15 @@ const PlaybackAccordion = ({
 
         updateCountdown();
 
-        let rafId = 0;
-        let lastTs = 0;
-        const tick = (ts) => {
-            if (document.hidden) {
-                rafId = requestAnimationFrame(tick);
-                return;
-            }
-            if (ts - lastTs >= PLAYBACK_COUNTDOWN_UPDATE_MS) {
-                lastTs = ts;
+        // The countdown is intentionally refreshed at this interval, so it
+        // does not need a requestAnimationFrame callback on every display frame.
+        const intervalId = setInterval(() => {
+            if (!document.hidden) {
                 updateCountdown();
             }
-            rafId = requestAnimationFrame(tick);
-        };
-        rafId = requestAnimationFrame(tick);
+        }, PLAYBACK_COUNTDOWN_UPDATE_MS);
 
-        return () => cancelAnimationFrame(rafId);
+        return () => clearInterval(intervalId);
     }, [expanded, isStreaming, playbackRemainingSecondsRef]);
 
     // Filter, sort, and paginate recordings in the frontend
