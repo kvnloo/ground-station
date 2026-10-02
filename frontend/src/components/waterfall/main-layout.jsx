@@ -27,6 +27,7 @@ import 'leaflet/dist/leaflet.css';
 import {
     StyledIslandParentScrollbar,
 } from "../common/common.jsx";
+import DeferredIslandPlaceholder from '../common/deferredplaceholder.jsx';
 import {
     setGridEditable
 } from './waterfall-slice.jsx';
@@ -46,6 +47,7 @@ export const handleSetGridEditableWaterfall = function (value) {
 export const gridLayoutStoreName = 'waterfall-view-layouts';
 const LAYOUT_SCHEMA_VERSION = 7;
 const SHARED_RESIZE_HANDLES = ['s', 'sw', 'w', 'se', 'nw', 'ne', 'e'];
+const DEFERRED_WATERFALL_ISLAND_COUNT = 2;
 
 // load / save layouts from localStorage
 function loadLayoutsFromLocalStorage() {
@@ -111,6 +113,7 @@ const MainLayout = React.memo(function MainLayout() {
     } = useSelector(state => state.waterfall);
 
     const {width, containerRef, mounted} = useContainerWidth({measureBeforeMount: true});
+    const [deferredIslandCount, setDeferredIslandCount] = useState(0);
 
     // Default layout if none in localStorage
     const defaultLayouts = {
@@ -283,6 +286,33 @@ const MainLayout = React.memo(function MainLayout() {
         saveLayoutsToLocalStorage(layouts);
     }, [layouts]);
 
+    useEffect(() => {
+        if (!mounted) return undefined;
+
+        let cancelled = false;
+        let frameId = null;
+        let nextIslandCount = 1;
+        const mountNextIsland = () => {
+            if (cancelled) return;
+
+            // The display needs to be ready before streaming begins. Defer the
+            // settings and decoded-data islands so they cannot delay that path.
+            React.startTransition(() => {
+                setDeferredIslandCount(nextIslandCount);
+            });
+            nextIslandCount += 1;
+            if (nextIslandCount <= DEFERRED_WATERFALL_ISLAND_COUNT) {
+                frameId = window.requestAnimationFrame(mountNextIsland);
+            }
+        };
+
+        frameId = window.requestAnimationFrame(mountNextIsland);
+        return () => {
+            cancelled = true;
+            if (frameId != null) window.cancelAnimationFrame(frameId);
+        };
+    }, [mounted]);
+
     const gridContents = useMemo(() => [
         <StyledIslandParentScrollbar key="waterfall">
             <MainWaterfallDisplay
@@ -292,15 +322,17 @@ const MainLayout = React.memo(function MainLayout() {
             />
         </StyledIslandParentScrollbar>,
         <StyledIslandParentScrollbar key="settings">
-            <WaterfallSettings
-                ref={waterfallComponentSettingsRef}
-                playbackRemainingSecondsRef={playbackRemainingSecondsRef}
-            />
+            {deferredIslandCount >= 1 ? (
+                <WaterfallSettings
+                    ref={waterfallComponentSettingsRef}
+                    playbackRemainingSecondsRef={playbackRemainingSecondsRef}
+                />
+            ) : <DeferredIslandPlaceholder />}
         </StyledIslandParentScrollbar>,
         <StyledIslandParentScrollbar key="decoding">
-            <DecodedInsightsIsland />
+            {deferredIslandCount >= 2 ? <DecodedInsightsIsland /> : <DeferredIslandPlaceholder />}
         </StyledIslandParentScrollbar>,
-    ], []);
+    ], [deferredIslandCount]);
 
     const responsiveGridLayoutParent = mounted ? (
         <Responsive

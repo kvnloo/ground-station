@@ -31,6 +31,7 @@ import {
     StyledIslandParentNoScrollbar,
     StyledIslandParentScrollbar,
 } from "../common/common.jsx";
+import DeferredIslandPlaceholder from '../common/deferredplaceholder.jsx';
 import {toast} from "../../utils/toast-with-timestamp.jsx";
 import {useSocket} from "../common/socket.jsx";
 import {useDispatch, useSelector} from "react-redux";
@@ -733,10 +734,10 @@ const TrackingLayout = React.memo(function TrackingLayout() {
             <TargetViewRouter/>
         </StyledIslandParent>,
         <StyledIslandParentScrollbar key="info">
-            {deferredIslandCount >= 1 ? <TargetInfoIsland/> : null}
+            {deferredIslandCount >= 1 ? <TargetInfoIsland/> : <DeferredIslandPlaceholder/>}
         </StyledIslandParentScrollbar>,
         <StyledIslandParentNoScrollbar key="passes">
-            {deferredIslandCount >= 5 ? <NextPassesIsland/> : null}
+            {deferredIslandCount >= 5 ? <NextPassesIsland/> : <DeferredIslandPlaceholder/>}
         </StyledIslandParentNoScrollbar>,
         <StyledIslandParentNoScrollbar key="timeline">
             {deferredIslandCount >= 4 ? (
@@ -747,13 +748,13 @@ const TrackingLayout = React.memo(function TrackingLayout() {
                     onRefresh={handleRefreshTimelinePasses}
                     showGeostationarySatellites={true}
                 />
-            ) : null}
+            ) : <DeferredIslandPlaceholder/>}
         </StyledIslandParentNoScrollbar>,
         <StyledIslandParentScrollbar key="rotator-control">
-            {deferredIslandCount >= 2 ? <RotatorControl/> : null}
+            {deferredIslandCount >= 2 ? <RotatorControl/> : <DeferredIslandPlaceholder/>}
         </StyledIslandParentScrollbar>,
         <StyledIslandParentScrollbar key="rig-control">
-            {deferredIslandCount >= 3 ? <RigControl/> : null}
+            {deferredIslandCount >= 3 ? <RigControl/> : <DeferredIslandPlaceholder/>}
         </StyledIslandParentScrollbar>,
     ];
 

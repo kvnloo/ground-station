@@ -22,6 +22,7 @@ import {
     StyledIslandParentNoScrollbar,
     TitleBar,
 } from '../common/common.jsx';
+import DeferredIslandPlaceholder from '../common/deferredplaceholder.jsx';
 import {
     fetchSolarSystemScene,
     getCelestialMapSettings,
@@ -1125,7 +1126,7 @@ const CelestialMainLayout = () => {
                                 setFocusTargetSignal((value) => value + 1);
                             }}
                         />
-                    ) : null}
+                    ) : <DeferredIslandPlaceholder />}
                 </Box>
             </Box>
         </StyledIslandParentNoScrollbar>,
@@ -1139,7 +1140,7 @@ const CelestialMainLayout = () => {
                     gridEditable={isEditing}
                     loading={Boolean(celestialState.tracksLoading)}
                 />
-            ) : null}
+            ) : <DeferredIslandPlaceholder />}
         </StyledIslandParentNoScrollbar>,
         <StyledIslandParentNoScrollbar key="celestial-timeline">
             {deferredIslandCount >= 3 ? (
@@ -1152,7 +1153,7 @@ const CelestialMainLayout = () => {
                     selectedTargetKey={selectedInfoTargetKey}
                     onRefresh={handleRefreshMonitored}
                 />
-            ) : null}
+            ) : <DeferredIslandPlaceholder />}
         </StyledIslandParentNoScrollbar>,
         <StyledIslandParentNoScrollbar key="celestial-passes">
             <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -1173,7 +1174,7 @@ const CelestialMainLayout = () => {
                         onRefresh={handleRefreshMonitored}
                         refreshDisabled={!socket || Boolean(celestialState.tracksLoading)}
                     />
-                ) : null}
+                ) : <DeferredIslandPlaceholder />}
             </Box>
         </StyledIslandParentNoScrollbar>,
     ];
