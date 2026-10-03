@@ -129,11 +129,6 @@ function ConnectionStatus() {
                 </IconButton>
             </Tooltip>
             <Popover
-                sx={{
-                    '& .MuiPaper-root': {
-                        borderRadius: 0,
-                    }
-                }}
                 open={open}
                 anchorEl={anchorEl}
                 onClose={handleClose}
@@ -145,11 +140,19 @@ function ConnectionStatus() {
                     vertical: 'top',
                     horizontal: 'right',
                 }}
+                slotProps={{
+                    paper: {
+                        sx: {
+                            mt: 0.5,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: 1.25,
+                            overflow: 'hidden',
+                        },
+                    },
+                }}
             >
                 <Box sx={{
-                    borderRadius: 0,
-                    border: '1px solid',
-                    borderColor: 'border.main',
                     p: 1,
                     minWidth: 250,
                     width: 250,

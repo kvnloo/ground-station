@@ -71,8 +71,13 @@ function LocationWarningPopover() {
                 slotProps={{
                     paper: {
                         sx: {
+                            mt: 0.5,
                             minWidth: 300,
                             maxWidth: 400,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: 1.25,
+                            overflow: 'hidden',
                         },
                     },
                 }}

@@ -909,11 +909,6 @@ const SatelliteInfoPopover = () => {
             </Box>
 
             <Popover
-                sx={{
-                    '& .MuiPaper-root': {
-                        borderRadius: 0,
-                    }
-                }}
                 open={open}
                 anchorEl={anchorEl}
                 onClose={handleClose}
@@ -925,12 +920,20 @@ const SatelliteInfoPopover = () => {
                     vertical: 'top',
                     horizontal: 'right',
                 }}
+                slotProps={{
+                    paper: {
+                        sx: {
+                            mt: 0.5,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: 1.25,
+                            overflow: 'hidden',
+                        },
+                    },
+                }}
             >
                 {open && (
                 <Box sx={{
-                    borderRadius: 0,
-                    border: '1px solid',
-                    borderColor: 'border.main',
                     p: 1,
                     minWidth: 320,
                     maxWidth: 350,
