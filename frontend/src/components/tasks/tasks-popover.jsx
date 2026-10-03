@@ -713,16 +713,9 @@ const BackgroundTasksPopover = () => {
                             )}
 
                             {runningTaskIds.length > 0 && (
-                                <>
-                                    <Box>
-                                        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                                            {t('tasks_popover.running_section', 'Running')} ({runningTaskIds.length})
-                                        </Typography>
-                                    </Box>
-                                    <List disablePadding>
-                                        {runningTaskIds.map(taskId => renderTaskItem(taskId))}
-                                    </List>
-                                </>
+                                <List disablePadding>
+                                    {runningTaskIds.map(taskId => renderTaskItem(taskId))}
+                                </List>
                             )}
 
                             {completedTaskIds.length > 0 && (
