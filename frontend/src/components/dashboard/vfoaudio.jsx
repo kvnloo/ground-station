@@ -118,7 +118,7 @@ function VfoAudioRow({ decoderInfo, isPopoverOpen, muted, streaming, vfo, vfoCol
                             aria-label={muted ? t('vfo_audio.unmute') : t('vfo_audio.mute')}
                             onClick={handleMuteToggle}
                             size="small"
-                            sx={{ color: muted ? 'error.main' : 'text.secondary' }}
+                            sx={{ color: muted ? 'warning.main' : 'text.secondary' }}
                         >
                             {muted ? <VolumeOffIcon fontSize="small" /> : <VolumeUpIcon fontSize="small" />}
                         </IconButton>
@@ -215,6 +215,24 @@ function VfoAudioPopover() {
     ), [vfoActive]);
     const areAllActiveVfosMuted = activeVfoNumbers.length > 0
         && activeVfoNumbers.every((vfoNumber) => Boolean(vfoMuted[vfoNumber]));
+    const hasAudibleAudio = activeVfoNumbers.some((vfoNumber) => (
+        streamingVFOs.includes(vfoNumber) && !vfoMuted[vfoNumber]
+    ));
+    // The toolbar summarizes playback availability, while each popover row
+    // keeps its own VFO identity color. Mute is intentional attention, not a
+    // transport failure, so it remains amber rather than error red.
+    const audioIndicator = React.useMemo(() => {
+        if (activeVfoNumbers.length === 0) {
+            return { color: 'action.disabled', icon: <VolumeOffIcon /> };
+        }
+        if (areAllActiveVfosMuted) {
+            return { color: 'warning.main', icon: <VolumeOffIcon /> };
+        }
+        if (hasAudibleAudio) {
+            return { color: 'success.main', icon: <VolumeUpIcon /> };
+        }
+        return { color: 'text.secondary', icon: <VolumeUpIcon /> };
+    }, [activeVfoNumbers.length, areAllActiveVfosMuted, hasAudibleAudio]);
     const open = Boolean(anchorEl);
 
     const handleOpen = (event) => setAnchorEl(event.currentTarget);
@@ -236,7 +254,7 @@ function VfoAudioPopover() {
                     size="small"
                     sx={{
                         width: 40,
-                        color: activeVfoNumbers.length > 0 ? 'text.secondary' : 'action.disabled',
+                        color: audioIndicator.color,
                         '&:hover': { backgroundColor: 'overlay.light' },
                     }}
                 >
@@ -259,7 +277,7 @@ function VfoAudioPopover() {
                             },
                         }}
                     >
-                        <VolumeUpIcon />
+                        {audioIndicator.icon}
                     </Badge>
                 </IconButton>
             </Tooltip>
@@ -294,7 +312,7 @@ function VfoAudioPopover() {
                                 aria-label={areAllActiveVfosMuted ? t('vfo_audio.unmute_all') : t('vfo_audio.mute_all')}
                                 onClick={handleMuteAllToggle}
                                 size="small"
-                                sx={{ color: areAllActiveVfosMuted ? 'error.main' : 'text.secondary' }}
+                                sx={{ color: areAllActiveVfosMuted ? 'warning.main' : 'text.secondary' }}
                             >
                                 {areAllActiveVfosMuted ? <VolumeUpIcon fontSize="small" /> : <VolumeOffIcon fontSize="small" />}
                             </IconButton>
