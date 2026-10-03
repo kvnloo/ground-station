@@ -195,9 +195,14 @@ const RecordingBandOverlay = ({
         ctx.fillStyle = fillGradient;
         ctx.fillRect(leftEdge, drawTop, recordedWidth, drawHeight);
 
-        ctx.fillStyle = alpha(statusColor, 0.82);
-        ctx.fillRect(Math.round(leftEdge), drawTop, 1, drawHeight);
-        ctx.fillRect(Math.round(rightEdge), drawTop, 1, drawHeight);
+        // A full-bandwidth recording reaches both canvas boundaries. Those
+        // are not recording-band edges, and the right-hand stroke would be
+        // clipped because its coordinate is canvas.width.
+        if (recordedWidth < canvas.width) {
+            ctx.fillStyle = alpha(statusColor, 0.82);
+            ctx.fillRect(Math.round(leftEdge), drawTop, 1, drawHeight);
+            ctx.fillRect(Math.round(rightEdge), drawTop, 1, drawHeight);
+        }
 
         // This identifies the selected recording frequency even when the
         // selection spans the complete SDR bandwidth and has no movable edges.
