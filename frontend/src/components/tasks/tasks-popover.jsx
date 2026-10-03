@@ -726,7 +726,7 @@ const BackgroundTasksPopover = () => {
                             )}
 
                             {completedTaskIds.length > 0 && (
-                                <List disablePadding>
+                                <List disablePadding sx={{ mt: runningTaskIds.length > 0 ? 1 : 0 }}>
                                     {completedTaskIds.slice(0, 10).map(taskId => renderTaskItem(taskId))}
                                 </List>
                             )}
