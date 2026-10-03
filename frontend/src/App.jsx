@@ -37,6 +37,7 @@ import { loadAuthStatus } from './components/auth/auth-slice.jsx';
 import { resetRuntimeSessionState } from './components/dashboard/dashboard-slice.jsx';
 import ConnectionOverlay from './components/dashboard/reconnecting-overlay.jsx';
 import { LoginScreen, SetupScreen } from './components/auth/screens.jsx';
+import TranscriptionSubtitles from './components/waterfall/transcription-subtitles.jsx';
 
 export default function App() {
     const dispatch = useDispatch();
@@ -203,6 +204,12 @@ export default function App() {
                     branding={BRANDING}
                 >
                     <Outlet/>
+                    {/* Fixed-position subtitles belong to the application shell so a
+                        live transcription remains visible while navigating pages. */}
+                    <TranscriptionSubtitles
+                        maxLines={4}
+                        maxWordsPerLine={20}
+                    />
                 </ReactRouterAppProvider>
             </WaterfallEngineProvider>
             {/* Sibling of ReactRouterAppProvider, so it needs the dashboard theme
