@@ -41,6 +41,7 @@ const VfoTabPanelComponent = ({
     onOpenDecoderParamsDialog,
     onOpenTranscriptionParamsDialog,
     getVFODecoderInfo,
+    audioStatus,
     centerFrequency,
     sampleRate,
     onCenterFrequencyChange
@@ -70,6 +71,13 @@ const VfoTabPanelComponent = ({
                 {/* Frequency Display */}
                 <VfoFrequencyDisplay frequency={vfo?.frequency || 0} />
 
+                {/* Decoder and transcription status */}
+                <DecoderStatusDisplay
+                    vfo={vfo}
+                    decoderInfo={decoderInfo}
+                    audioStatus={audioStatus}
+                />
+
                 {/* Meters */}
                 <VfoLiveMeters
                     vfoIndex={vfoIndex}
@@ -96,11 +104,6 @@ const VfoTabPanelComponent = ({
                     onMuteToggle={onMuteToggle}
                 />
 
-                {/* Decoder Status */}
-                <DecoderStatusDisplay
-                    vfo={vfo}
-                    decoderInfo={decoderInfo}
-                />
             </Box>
 
             {/* Transmitter Lock */}
@@ -199,6 +202,7 @@ function areVfoTabPanelPropsEqual(prevProps, nextProps) {
         prevProps.onOpenDecoderParamsDialog === nextProps.onOpenDecoderParamsDialog &&
         prevProps.onOpenTranscriptionParamsDialog === nextProps.onOpenTranscriptionParamsDialog &&
         prevProps.getVFODecoderInfo === nextProps.getVFODecoderInfo &&
+        prevProps.audioStatus === nextProps.audioStatus &&
         prevProps.centerFrequency === nextProps.centerFrequency &&
         prevProps.sampleRate === nextProps.sampleRate &&
         prevProps.onCenterFrequencyChange === nextProps.onCenterFrequencyChange

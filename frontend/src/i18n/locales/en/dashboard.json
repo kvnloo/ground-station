@@ -9,6 +9,22 @@
     "done_editing": "Done editing",
     "edit_layout": "Edit layout"
   },
+  "vfo_audio": {
+    "tooltip": "VFO audio controls",
+    "title": "VFO audio",
+    "no_active_vfos": "No active VFOs",
+    "vfo": "VFO {{number}}",
+    "receiving": "Receiving audio",
+    "waiting": "Waiting for audio",
+    "mute": "Mute",
+    "unmute": "Unmute",
+    "mute_all": "Mute all VFOs",
+    "unmute_all": "Unmute all VFOs",
+    "volume": "Volume",
+    "volume_for": "VFO {{number}} volume",
+    "audio_level": "Audio level",
+    "buffer": "Audio buffer"
+  },
   "connection": {
     "connection_failed": "Connection Failed",
     "network_error": "Network error",

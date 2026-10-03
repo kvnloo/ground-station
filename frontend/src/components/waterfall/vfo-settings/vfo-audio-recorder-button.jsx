@@ -18,14 +18,14 @@
  */
 
 import React from 'react';
-import { Button, Tooltip } from '@mui/material';
+import { Button, IconButton, Tooltip } from '@mui/material';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import StopIcon from '@mui/icons-material/Stop';
 import { useDispatch, useSelector } from 'react-redux';
 import { startAudioRecording, stopAudioRecording } from '../vfo-marker/vfo-slice';
 import { useSocket } from '../../common/socket';
 
-const VFOAudioRecorderButton = ({ vfoNumber }) => {
+const VFOAudioRecorderButton = ({ vfoNumber, compact = false }) => {
     const dispatch = useDispatch();
     const { socket } = useSocket();
 
@@ -64,8 +64,36 @@ const VFOAudioRecorderButton = ({ vfoNumber }) => {
         }
     };
 
+    const tooltip = isRecording ? "Stop Audio Recording" : "Start Audio Recording";
+
+    if (compact) {
+        return (
+            <Tooltip title={tooltip}>
+                <span>
+                    <IconButton
+                        aria-label={tooltip}
+                        onClick={handleToggle}
+                        disabled={!canRecord && !isRecording}
+                        size="small"
+                        sx={{
+                            color: isRecording ? 'error.main' : 'text.secondary',
+                            backgroundColor: isRecording ? 'rgba(244, 67, 54, 0.1)' : 'transparent',
+                            animation: isRecording ? 'pulse 2s ease-in-out infinite' : 'none',
+                            '@keyframes pulse': {
+                                '0%, 100%': { opacity: 1 },
+                                '50%': { opacity: 0.5 }
+                            },
+                        }}
+                    >
+                        {isRecording ? <StopIcon fontSize="small" /> : <FiberManualRecordIcon fontSize="small" />}
+                    </IconButton>
+                </span>
+            </Tooltip>
+        );
+    }
+
     return (
-        <Tooltip title={isRecording ? "Stop Audio Recording" : "Start Audio Recording"}>
+        <Tooltip title={tooltip}>
             <span>
                 <Button
                     size="small"

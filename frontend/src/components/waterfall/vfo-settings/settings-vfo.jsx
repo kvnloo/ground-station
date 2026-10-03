@@ -59,6 +59,12 @@ const VfoAccordion = ({
 
     const { streamingVFOs, vfoMutedRedux } = useVfoStreamingState();
     const { vfoSquelchOpen } = useVfoSquelchState();
+    const selectedVfoNumber = selectedVFOTab + 1;
+    const selectedVfoAudioStatus = resolveVfoAudioStatus({
+        isStreaming: streamingVFOs.includes(selectedVfoNumber),
+        isMuted: Boolean(vfoMutedRedux[selectedVfoNumber]),
+        isSquelchOpen: vfoSquelchOpen[selectedVfoNumber],
+    });
 
     // Set up wheel event handlers for sliders
     useVfoWheelHandlers(vfoMarkers, vfoActive, onVFOPropertyChange);
@@ -231,6 +237,7 @@ const VfoAccordion = ({
                     onOpenDecoderParamsDialog={handleOpenDecoderParams}
                     onOpenTranscriptionParamsDialog={handleOpenTranscriptionParams}
                     getVFODecoderInfo={getVFODecoderInfo}
+                    audioStatus={selectedVfoAudioStatus}
                     centerFrequency={centerFrequency}
                     sampleRate={sampleRate}
                     onCenterFrequencyChange={onCenterFrequencyChange}

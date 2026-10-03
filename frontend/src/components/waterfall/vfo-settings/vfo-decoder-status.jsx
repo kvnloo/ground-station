@@ -5,16 +5,34 @@
  */
 
 import React from 'react';
-import { Box, Typography } from '@mui/material';
+import { Box, Tooltip, Typography } from '@mui/material';
+import { VFO_AUDIO_STATUS } from '../vfo-audio-status.js';
 
 /**
  * Decoder Status Display Component
  * Shows active decoder/transcription status with metrics
  */
-export const DecoderStatusDisplay = ({ vfo, decoderInfo }) => {
-    // Determine what to display
-    let line1Text = '—';
-    let line2Text = '';
+export const DecoderStatusDisplay = ({
+    vfo,
+    decoderInfo,
+    audioStatus = VFO_AUDIO_STATUS.NO_AUDIO,
+    compact = false,
+    hideWhenIdle = false,
+}) => {
+    const hasConfiguredStatus = Boolean(
+        decoderInfo
+        || vfo?.transcriptionEnabled
+        || (vfo?.decoder && vfo.decoder !== 'none')
+        || (vfo?.mode && vfo.mode !== 'none')
+    );
+
+    if (hideWhenIdle && !hasConfiguredStatus) {
+        return null;
+    }
+
+    // Build a single status line so the VFO controls remain scannable while
+    // still exposing decoder, transcription, and progress details.
+    let statusText = 'NO DECODER';
     let borderColor = 'divider';
     let textColor = 'text.disabled';
 
@@ -23,7 +41,6 @@ export const DecoderStatusDisplay = ({ vfo, decoderInfo }) => {
         const info = decoderInfo.info || {};
         const status = decoderInfo.status || 'unknown';
 
-        // Line 1: TRANSCRIBING status and language info
         const statusParts = [];
         statusParts.push(status.toUpperCase());
 
@@ -38,32 +55,26 @@ export const DecoderStatusDisplay = ({ vfo, decoderInfo }) => {
             }
         }
 
-        line1Text = statusParts.join(' • ');
-
-        // Line 2: Transcription metrics
-        const metricParts = [];
-
         // Transcription request stats
         if (info.transcriptions_sent !== undefined && info.transcriptions_received !== undefined) {
             const successRate = info.transcriptions_sent > 0
                 ? Math.round((info.transcriptions_received / info.transcriptions_sent) * 100)
                 : 0;
-            metricParts.push(`SENT:${info.transcriptions_sent} RCV:${info.transcriptions_received} (${successRate}%)`);
+            statusParts.push(`${info.transcriptions_received}/${info.transcriptions_sent} (${successRate}%)`);
         }
 
         // Show errors if any
         if (info.errors !== undefined && info.errors > 0) {
-            metricParts.push(`ERR:${info.errors}`);
+            statusParts.push(`ERR:${info.errors}`);
         }
 
-        line2Text = metricParts.length > 0 ? metricParts.join(' • ') : '—';
+        statusText = statusParts.join(' • ');
 
         borderColor = status === 'transcribing' ? 'success.dark' : 'warning.dark';
         textColor = 'text.secondary';
     } else if (vfo && vfo.transcriptionEnabled) {
         // Transcription enabled but not active
-        line1Text = 'TRANSCRIPTION - Not Active';
-        line2Text = '';
+        statusText = 'TRANSCRIPTION • WAITING';
         borderColor = 'warning.dark';
         textColor = 'warning.main';
     } else if (vfo && vfo.decoder && vfo.decoder !== 'none') {
@@ -72,105 +83,93 @@ export const DecoderStatusDisplay = ({ vfo, decoderInfo }) => {
             const info = decoderInfo.info || {};
             const status = decoderInfo.status || 'unknown';
 
-            // Line 1: STATUS, MODE, FRAMING
             const statusParts = [];
             statusParts.push(status.toUpperCase());
-            if (info.transmitter_mode !== undefined && info.transmitter_mode !== null) {
-                statusParts.push(info.transmitter_mode);
+            const decoderLabel = info.transmitter_mode || vfo.decoder || decoderInfo.decoder_type;
+            if (decoderLabel) {
+                statusParts.push(String(decoderLabel).toUpperCase());
             }
             if (info.framing !== undefined && info.framing !== null) {
                 statusParts.push(info.framing.toUpperCase());
             }
-            line1Text = statusParts.join(' • ');
 
-            // Line 2: baudrate and existing metrics (packets, signal power) or progress or morse-specific
-            const metricParts = [];
-
-            // Add baudrate at the start of line 2
             if (info.baudrate !== undefined && info.baudrate !== null) {
-                metricParts.push(`${info.baudrate}bd`);
+                statusParts.push(`${info.baudrate}bd`);
             }
 
-            // Show progress for SSTV if available
             if (decoderInfo.progress !== undefined && decoderInfo.progress !== null) {
-                metricParts.push(`Progress: ${decoderInfo.progress}%`);
+                statusParts.push(`${decoderInfo.progress}%`);
             }
 
-            // Show WPM and character count for Morse
             if (info.wpm !== undefined && info.wpm !== null) {
-                metricParts.push(`${info.wpm} WPM`);
+                statusParts.push(`${info.wpm} WPM`);
             }
             if (info.character_count !== undefined && info.character_count !== null && info.character_count > 0) {
-                metricParts.push(`CHAR:${info.character_count}`);
+                statusParts.push(`CHAR:${info.character_count}`);
             }
 
             if (info.packets_decoded !== undefined && info.packets_decoded !== null) {
-                metricParts.push(`PKT:${info.packets_decoded}`);
+                statusParts.push(`PKT:${info.packets_decoded}`);
             }
             if (info.signal_power_dbfs !== undefined && info.signal_power_dbfs !== null) {
-                metricParts.push(`${info.signal_power_dbfs.toFixed(1)}dB`);
+                statusParts.push(`${info.signal_power_dbfs.toFixed(1)}dB`);
             }
-            line2Text = metricParts.length > 0 ? metricParts.join(' • ') : '—';
+            statusText = statusParts.join(' • ');
 
             borderColor = (status === 'decoding' || status === 'transcribing') ? 'success.dark' : 'warning.dark';
             textColor = 'text.secondary';
         } else {
             // Decoder selected but not running
-            line1Text = `${vfo.decoder.toUpperCase()} - Not Active`;
-            line2Text = '';
+            statusText = `${vfo.decoder.toUpperCase()} • WAITING`;
             borderColor = 'warning.dark';
             textColor = 'warning.main';
         }
-    } else {
-        // No decoder or transcription selected
-        line1Text = '- no decoder -';
-        line2Text = '';
-        borderColor = 'divider';
-        textColor = 'text.disabled';
+    } else if (vfo?.mode && vfo.mode !== 'none') {
+        const audioStatusLabel = {
+            [VFO_AUDIO_STATUS.PLAYING]: 'PLAYING',
+            [VFO_AUDIO_STATUS.MUTED]: 'MUTED',
+            [VFO_AUDIO_STATUS.SQUELCHED]: 'SQUELCHED',
+            [VFO_AUDIO_STATUS.NO_AUDIO]: 'WAITING FOR AUDIO',
+        }[audioStatus] || 'WAITING FOR AUDIO';
+
+        statusText = `AUDIO • ${String(vfo.mode).toUpperCase()} • ${audioStatusLabel}`;
+        borderColor = audioStatus === VFO_AUDIO_STATUS.PLAYING ? 'success.dark' : 'warning.dark';
+        textColor = audioStatus === VFO_AUDIO_STATUS.PLAYING ? 'text.secondary' : 'warning.main';
     }
 
     return (
         <Box sx={{
-            mt: 1,
-            px: 1,
-            py: 0.5,
-            backgroundColor: 'rgba(0, 0, 0, 0.2)',
+            mt: compact ? 0.5 : 1,
+            px: compact ? 0.75 : 1,
+            py: compact ? 0.35 : 0.5,
+            backgroundColor: compact ? 'action.hover' : 'rgba(0, 0, 0, 0.2)',
             borderRadius: 0.5,
-            border: '1px solid',
-            borderColor: borderColor,
-            minHeight: '42px', // Ensure consistent height for two lines
+            border: compact ? 0 : '1px solid',
+            borderColor: compact ? 'transparent' : borderColor,
+            minHeight: compact ? 0 : 30,
             display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
+            alignItems: compact ? 'flex-start' : 'center',
             justifyContent: 'center'
         }}>
-            <Typography
-                variant="caption"
-                sx={{
-                    fontSize: '0.7rem',
-                    fontFamily: 'monospace',
-                    color: textColor,
-                    display: 'block',
-                    textAlign: 'center'
-                }}
-            >
-                {line1Text}
-            </Typography>
-            {line2Text && (
+            <Tooltip title={statusText} disableHoverListener={statusText.length < 42}>
                 <Typography
                     variant="caption"
                     sx={{
-                        fontSize: '0.7rem',
+                        fontSize: compact ? '0.65rem' : '0.7rem',
                         fontFamily: 'monospace',
                         color: textColor,
                         display: 'block',
-                        textAlign: 'center',
-                        minHeight: '0.7rem' // Reserve space even when empty
+                        textAlign: compact ? 'left' : 'center',
+                        lineHeight: 1.25,
+                        maxWidth: '100%',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
                     }}
                 >
-                    {line2Text || '\u00A0'}
+                    {statusText}
                 </Typography>
-            )}
+            </Tooltip>
         </Box>
     );
 };

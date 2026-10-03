@@ -88,6 +88,7 @@ import PerformanceMetricsDialog from "../performance/performance-metrics-dialog.
 import ObservationFormDialog from "../scheduler/observation-form-dialog.jsx";
 import MonitoredSatelliteDialog from "../scheduler/monitored-satellite-dialog.jsx";
 import BackgroundTasksPopover from "../tasks/tasks-popover.jsx";
+import VfoAudioPopover from "./vfoaudio.jsx";
 import LocationPage from "../settings/location-form.jsx";
 import MenuIcon from '@mui/icons-material/Menu';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
@@ -153,8 +154,7 @@ const CustomAppBar = styled(AppBar, {
     } : {}),
 }));
 
-function DashboardEditor() {
-    const theme = useTheme();
+function DashboardEditor({ isExpanded }) {
     const dispatch = useDispatch();
     const { t } = useTranslation('dashboard');
     const {isEditing} = useSelector(state => state.dashboard);
@@ -183,32 +183,55 @@ function DashboardEditor() {
         dispatch(setWaterfallGridEditable(false));
     };
 
+    const label = isEditing ? t('layout.done_editing') : t('layout.edit_layout');
+
     return (
-        <>
-            {isEditing ? (
-                <Stack direction="row" spacing={2}>
-                    <Tooltip title={t('layout.done_editing')}>
-                        <IconButton size="small" onClick={handleSaveClick} sx={{
-                            width: 40,
-                        }}>
-                            <CheckIcon color="success"/>
-                        </IconButton>
-                    </Tooltip>
-                </Stack>
-            ) : (
-                <Tooltip title={t('layout.edit_layout')}>
-                        <IconButton size="small" onClick={handleEditClick} sx={{
-                            width: 40,
-                        }}>
-                            <BorderColorIcon sx={{
-                            color: theme.palette.primary.main
-                        }}/>
-                    </IconButton>
-                </Tooltip>
-            )}
-        </>
+        <Tooltip
+            title={label}
+            placement="right"
+            disableFocusListener={isExpanded}
+            disableTouchListener={isExpanded}
+            disableHoverListener={isExpanded}
+        >
+            <ListItemButton
+                onClick={isEditing ? handleSaveClick : handleEditClick}
+                aria-label={label}
+                sx={{
+                    minHeight: 36,
+                    justifyContent: isExpanded ? 'flex-start' : 'center',
+                    px: isExpanded ? 1.25 : 0,
+                    py: 0.5,
+                    borderRadius: 1,
+                    color: isEditing ? 'success.main' : 'text.secondary',
+                    '&:hover': {
+                        color: isEditing ? 'success.dark' : 'text.primary',
+                    },
+                }}
+            >
+                <ListItemIcon
+                    sx={{
+                        minWidth: 0,
+                        mr: isExpanded ? 1.25 : 0,
+                        color: 'inherit',
+                        '& .MuiSvgIcon-root': { fontSize: '1.1rem' },
+                    }}
+                >
+                    {isEditing ? <CheckIcon /> : <BorderColorIcon />}
+                </ListItemIcon>
+                {isExpanded && (
+                    <ListItemText
+                        primary={label}
+                        primaryTypographyProps={{ variant: 'caption', fontWeight: 500 }}
+                    />
+                )}
+            </ListItemButton>
+        </Tooltip>
     );
 }
+
+DashboardEditor.propTypes = {
+    isExpanded: PropTypes.bool.isRequired,
+};
 
 function ToolbarActions() {
     const showLocationSetupDialog = useSelector((state) => state.dashboard.showLocationSetupDialog);
@@ -219,9 +242,12 @@ function ToolbarActions() {
             {!showLocationSetupDialog && <LocationWarningPopover />}
             <SatelliteInfoPopover />
             <HardwareSettingsPopover />
+            <VfoAudioPopover />
             <BackgroundTasksPopover />
-            <WakeLockStatus />
-            <DashboardEditor />
+            {/* Keep this battery-focused control on phone and tablet-sized layouts. */}
+            <Box sx={{ display: { xs: 'inline-flex', lg: 'none' } }}>
+                <WakeLockStatus />
+            </Box>
             <TimeDisplay />
             <ThemeSwitcher />
         </Stack>
@@ -671,6 +697,7 @@ function TimeDisplay() {
             onClick={() => setIsUTC(!isUTC)} // Toggle between UTC and Local Time on click
             sx={{
                 cursor: "pointer",
+                ml: 1,
                 p: 0,
                 paddingTop: 0.75,
                 paddingBottom: 0,
@@ -1328,6 +1355,9 @@ export default function Layout() {
                             );
                         })}
                     </List>
+                </Box>
+                <Box sx={{ px: 1, pb: 0.5 }}>
+                    <DashboardEditor isExpanded={isExpanded} />
                 </Box>
                 {isExpanded && (
                     <Box
