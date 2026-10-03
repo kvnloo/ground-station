@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Efstratios Goudelis
 
 import asyncio
+import logging
 import queue
 
 import pytest
@@ -88,6 +89,52 @@ async def test_sdr_readiness_propagates_worker_error():
 
     with pytest.raises(RuntimeError, match="device open failed"):
         await manager._wait_until_sdr_ready("sdr-1", process_info, ready)
+
+
+def test_decoder_error_status_is_logged(caplog):
+    manager = _new_manager()
+
+    with caplog.at_level(logging.ERROR, logger="process-lifecycle"):
+        manager._log_decoder_error_status(
+            {
+                "status": "error",
+                "decoder_type": "aprs",
+                "session_id": "session-1",
+                "vfo": 2,
+                "info": {"error": "GNU Radio filter binding failed"},
+            }
+        )
+
+    assert "Decoder aprs failed for session session-1 VFO 2" in caplog.text
+    assert "GNU Radio filter binding failed" in caplog.text
+
+
+def test_exited_decoder_process_is_logged_once(caplog):
+    class _FailedDecoder:
+        exitcode = 1
+
+        @staticmethod
+        def is_alive():
+            return False
+
+    process_info = {
+        "decoders": {
+            "session-1": {
+                2: {
+                    "instance": _FailedDecoder(),
+                    "decoder_type": "APRSDecoder",
+                }
+            }
+        }
+    }
+    manager = _new_manager()
+
+    with caplog.at_level(logging.ERROR, logger="process-lifecycle"):
+        manager._log_exited_decoder_processes("sdr-1", process_info)
+        manager._log_exited_decoder_processes("sdr-1", process_info)
+
+    assert caplog.text.count("Decoder APRSDecoder failed") == 1
+    assert "exit code 1" in caplog.text
 
 
 @pytest.mark.asyncio

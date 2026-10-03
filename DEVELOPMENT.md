@@ -60,73 +60,142 @@ The backend now uses modern Python packaging with `pyproject.toml`, which provid
     npm run dev
     ```
 
-## LoRa Decoder Support (GNU Radio + gr-lora_sdr)
+## GNU Radio decoder support
 
-The ground station includes a LoRa decoder that uses GNU Radio and gr-lora_sdr for proper LoRa PHY decoding. Due to NumPy 2.x compatibility requirements, GNU Radio must be compiled from source:
+APRS, FSK/GFSK/GMSK, BPSK, and LoRa decoders require GNU Radio and its
+out-of-tree `gr-satellites` and `gr-lora_sdr` modules. The supported releases
+are GNU Radio **3.10.12.0** and VOLK **3.2.0**. Build them in a user-owned,
+versioned prefix so they can coexist with a distribution-provided GNU Radio.
+Do not install either build into the backend virtual environment or overwrite
+the OS installation.
 
-**Prerequisites:**
+The backend launcher uses `/opt/ground-station/gnuradio-3.10.12.0` by default
+for maintainers who have that local installation. Other developers should pass
+their own prefix through `GNU_RADIO_PREFIX` and `GNU_RADIO_VOLK_PREFIX`.
+
+### Prerequisites
+
+On Debian or Ubuntu, install the native build prerequisites. Package names can
+vary on other distributions.
+
 ```bash
-# Install system dependencies
-sudo apt-get install cmake libboost-all-dev libgmp-dev libmpfr-dev \
-    liblog4cpp5-dev libspdlog-dev libfmt-dev libvolk-dev \
-    pybind11-dev python3-pybind11
+sudo apt-get install build-essential cmake git libboost-all-dev libgmp-dev \
+    libmpfr-dev liblog4cpp5-dev libspdlog-dev libfmt-dev libzmq3-dev \
+    pybind11-dev python3-pybind11 python3-packaging
 ```
 
-**Build GNU Radio 3.10 (with NumPy 2.x support):**
+Create the project's backend virtual environment before compiling, then install
+the Python build helpers into that environment:
+
 ```bash
-cd ~/projects/ground-station/backend
-source venv/bin/activate
-
-# Install Python packages
-pip install packaging pybind11
-
-# Clone and build GNU Radio
-cd /tmp
-git clone --recursive https://github.com/gnuradio/gnuradio.git
-cd gnuradio
-git checkout maint-3.10
-mkdir build && cd build
-
-# Configure to install into venv
-cmake -DCMAKE_BUILD_TYPE=Release \
-      -DENABLE_PYTHON=ON \
-      -DENABLE_GR_QTGUI=OFF \
-      -DENABLE_TESTING=OFF \
-      -DPython3_EXECUTABLE=$VIRTUAL_ENV/bin/python3 \
-      -DPYTHON_EXECUTABLE=$VIRTUAL_ENV/bin/python3 \
-      -DCMAKE_INSTALL_PREFIX=$VIRTUAL_ENV \
-      ..
-
-# Build and install (takes 15-30 minutes)
-make -j$(nproc)
-make install
+cd /path/to/ground-station/backend
+./venv/bin/python -m pip install packaging pybind11
 ```
 
-**Build gr-lora_sdr:**
-```bash
-cd /tmp
-git clone https://github.com/tapparelj/gr-lora_sdr.git
-cd gr-lora_sdr
-mkdir build && cd build
+### Build an isolated GNU Radio prefix
 
-cmake -DCMAKE_INSTALL_PREFIX=$VIRTUAL_ENV ..
-make -j$(nproc)
-make install
+The following creates a private installation under `~/.local/opt`; it does not
+write to `/usr`, change `ldconfig`, or affect the OS GNU Radio packages. Set
+the variables once in the shell that performs the build:
+
+```bash
+export GS_GNURADIO_VERSION=3.10.12.0
+export GS_VOLK_VERSION=3.2.0
+export GS_DEPS_PREFIX="$HOME/.local/opt/ground-station"
+export GNU_RADIO_PREFIX="$GS_DEPS_PREFIX/gnuradio-$GS_GNURADIO_VERSION"
+export GNU_RADIO_VOLK_PREFIX="$GS_DEPS_PREFIX/volk-$GS_VOLK_VERSION"
+export GS_BUILD_ROOT="$HOME/src/ground-station-radio-builds"
+export GS_REPO_ROOT=/path/to/ground-station
+export GS_BACKEND_PYTHON="$GS_REPO_ROOT/backend/venv/bin/python"
+mkdir -p "$GS_BUILD_ROOT"
 ```
 
-**Configure library paths:**
+Build the matching VOLK release first:
+
 ```bash
-cd ~/projects/ground-station/backend
-echo 'export LD_LIBRARY_PATH=$VIRTUAL_ENV/lib:$LD_LIBRARY_PATH' >> venv/bin/activate
-source venv/bin/activate
+cd "$GS_BUILD_ROOT"
+git clone --branch "v$GS_VOLK_VERSION" --depth 1 --recurse-submodules \
+    https://github.com/gnuradio/volk.git "volk-$GS_VOLK_VERSION"
+cmake -S "volk-$GS_VOLK_VERSION" -B "volk-$GS_VOLK_VERSION/build" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="$GNU_RADIO_VOLK_PREFIX"
+cmake --build "volk-$GS_VOLK_VERSION/build" --parallel
+cmake --install "volk-$GS_VOLK_VERSION/build"
 ```
 
-**Verify installation:**
+Build the pinned GNU Radio release against that private VOLK installation:
+
 ```bash
-python -c "from gnuradio import gr, lora_sdr; print('LoRa decoder ready!')"
+cd "$GS_BUILD_ROOT"
+git clone --branch "v$GS_GNURADIO_VERSION" --depth 1 --recurse-submodules \
+    https://github.com/gnuradio/gnuradio.git "gnuradio-$GS_GNURADIO_VERSION"
+cmake -S "gnuradio-$GS_GNURADIO_VERSION" -B "gnuradio-$GS_GNURADIO_VERSION/build" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="$GNU_RADIO_PREFIX" \
+    -DCMAKE_PREFIX_PATH="$GNU_RADIO_VOLK_PREFIX" \
+    -DENABLE_PYTHON=ON \
+    -DENABLE_GR_QTGUI=OFF \
+    -DENABLE_GR_ZEROMQ=ON \
+    -DENABLE_TESTING=OFF \
+    -DPython3_EXECUTABLE="$GS_BACKEND_PYTHON" \
+    -DPYTHON_EXECUTABLE="$GS_BACKEND_PYTHON"
+cmake --build "gnuradio-$GS_GNURADIO_VERSION/build" --parallel
+cmake --install "gnuradio-$GS_GNURADIO_VERSION/build"
 ```
 
-> **Note:** This is only required for development. Docker images include pre-built GNU Radio and gr-lora_sdr.
+### Build the required out-of-tree modules
+
+Install both modules into the same GNU Radio prefix. `CMAKE_PREFIX_PATH` makes
+their build resolve the private GNU Radio instead of a system installation.
+
+```bash
+cd "$GS_BUILD_ROOT"
+git clone --depth 1 https://github.com/daniestevez/gr-satellites.git
+cmake -S gr-satellites -B gr-satellites/build \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="$GNU_RADIO_PREFIX" \
+    -DCMAKE_PREFIX_PATH="$GNU_RADIO_PREFIX;$GNU_RADIO_VOLK_PREFIX" \
+    -DPYTHON_EXECUTABLE="$GS_BACKEND_PYTHON" \
+    -DGR_PYTHON_DIR="$GNU_RADIO_PREFIX/lib/python3.12/site-packages"
+cmake --build gr-satellites/build --parallel
+cmake --install gr-satellites/build
+
+git clone --depth 1 https://github.com/tapparelj/gr-lora_sdr.git
+cmake -S gr-lora_sdr -B gr-lora_sdr/build \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="$GNU_RADIO_PREFIX" \
+    -DCMAKE_PREFIX_PATH="$GNU_RADIO_PREFIX;$GNU_RADIO_VOLK_PREFIX" \
+    -DPYTHON_EXECUTABLE="$GS_BACKEND_PYTHON" \
+    -DGR_PYTHON_DIR="$GNU_RADIO_PREFIX/lib/python3.12/site-packages"
+cmake --build gr-lora_sdr/build --parallel
+cmake --install gr-lora_sdr/build
+```
+
+### Verify and run the backend
+
+The launcher preserves normal backend venv dependencies and puts the selected
+GNU Radio and VOLK libraries ahead of inherited `LD_LIBRARY_PATH`. This avoids
+loading Python bindings from one GNU Radio build and core libraries from
+another build with the same SONAME. Do not add `venv/lib` manually to
+`LD_LIBRARY_PATH`.
+
+```bash
+cd "$GS_REPO_ROOT"
+GNU_RADIO_PREFIX="$GNU_RADIO_PREFIX" \
+GNU_RADIO_VOLK_PREFIX="$GNU_RADIO_VOLK_PREFIX" \
+    ./backend/startdev.sh --check-gnuradio
+
+GNU_RADIO_PREFIX="$GNU_RADIO_PREFIX" \
+GNU_RADIO_VOLK_PREFIX="$GNU_RADIO_VOLK_PREFIX" \
+    ./backend/startdev.sh --log-level=INFO --host=0.0.0.0 --port=5000
+```
+
+`--check-gnuradio` imports GNU Radio, APRS/GFSK/BPSK decoder modules, and
+checks that those decoders are registered. It also verifies that the mapped GNU
+Radio core shared libraries come from the selected prefix.
+
+> **Note:** Docker images build their own GNU Radio stack. These instructions
+> apply only to native development environments.
 
 ## SSDV Decoder Support
 

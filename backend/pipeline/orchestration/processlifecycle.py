@@ -179,6 +179,52 @@ class ProcessLifecycleManager:
         if sample_count > 0:
             process_info["startup_ready"] = True
 
+    def _log_decoder_error_status(self, data: Dict[str, Any]) -> None:
+        """Make decoder status failures visible in the backend log."""
+        if str(data.get("status") or "").strip().lower() != "error":
+            return
+
+        info = data.get("info") or {}
+        error = info.get("error") if isinstance(info, dict) else None
+        self.logger.error(
+            "Decoder %s failed for session %s VFO %s: %s",
+            data.get("decoder_type") or "unknown",
+            data.get("session_id") or "unknown",
+            data.get("vfo") if data.get("vfo") is not None else "unknown",
+            error or "decoder reported an error without details",
+        )
+
+    def _log_exited_decoder_processes(self, sdr_id: str, process_info: Dict[str, Any]) -> None:
+        """Log child decoder crashes that occur before they can send a status message."""
+        # Decoder stop/restart work can update these maps from another thread.
+        # Snapshot both levels so health logging never disrupts SDR monitoring.
+        for session_id, vfo_decoders in list(process_info.get("decoders", {}).items()):
+            if not isinstance(vfo_decoders, dict):
+                continue
+            for vfo_number, decoder_entry in list(vfo_decoders.items()):
+                if not isinstance(decoder_entry, dict) or decoder_entry.get("failure_reported"):
+                    continue
+
+                decoder = decoder_entry.get("instance")
+                if not decoder or not hasattr(decoder, "is_alive") or decoder.is_alive():
+                    continue
+
+                exit_code = getattr(decoder, "exitcode", None)
+                # A clean exit is expected when a decoder is deliberately stopped.
+                if exit_code in (None, 0):
+                    continue
+
+                decoder_entry["failure_reported"] = True
+                self.logger.error(
+                    "Decoder %s failed for session %s VFO %s on SDR %s "
+                    "before reporting status (exit code %s)",
+                    decoder_entry.get("decoder_type") or type(decoder).__name__,
+                    session_id,
+                    vfo_number,
+                    sdr_id,
+                    exit_code,
+                )
+
     @staticmethod
     def _fail_ready_waiters(process_info: Dict[str, Any], message: str) -> None:
         for waiter in process_info.get("ready_waiters", []):
@@ -1086,6 +1132,10 @@ class ProcessLifecycleManager:
                 if current_info is None:
                     break
 
+                # A child may crash during initialization before it can enqueue
+                # a decoder-status error. Check that path on every monitor pass.
+                self._log_exited_decoder_processes(sdr_id, current_info)
+
                 current_pid = current_info["process"].pid
                 # Guard against stale monitor tasks: only the monitor attached to
                 # the current process instance is allowed to keep running/cleanup.
@@ -1294,6 +1344,9 @@ class ProcessLifecycleManager:
 
                                 # Check if this is an internal session (automated observation)
                                 is_internal = VFOManager.is_internal_session(session_id)
+
+                                if data_type == "decoder-status":
+                                    self._log_decoder_error_status(data)
 
                                 # Reset backend transition memory when a GNSS decoder reports terminal/non-tracking states.
                                 if (
