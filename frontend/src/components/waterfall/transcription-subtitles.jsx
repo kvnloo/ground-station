@@ -121,6 +121,11 @@ const getLanguageFlag = (languageCode) => {
     }
 };
 
+// Keep the overlay anchored at the horizontal centre and move it with a
+// compositor-friendly transform. Its vertical position is measured upward
+// from the viewport bottom to match the persisted position format.
+const overlayTransform = ({ x, y }) => `translate3d(calc(-50% + ${x}px), -${y}px, 0)`;
+
 /**
  * Single VFO Subtitle Component
  */
@@ -165,8 +170,11 @@ const VFOSubtitle = ({
         }
     });
     const [isDragging, setIsDragging] = useState(false);
-    const dragStart = useRef({ x: 0, y: 0 });
     const containerRef = useRef(null);
+    const positionRef = useRef(position);
+    const dragRef = useRef(null);
+    const dragBoundsRef = useRef(null);
+    const animationFrameRef = useRef(null);
 
     // Track maximum width reached - never shrink once expanded
     const maxWidthRef = useRef(0);
@@ -267,10 +275,13 @@ const VFOSubtitle = ({
         }
     }, [latestLineId]);
 
-    // Constrain position to viewport boundaries
-    const constrainPosition = (newX, newY) => {
+    useEffect(() => {
+        positionRef.current = position;
+    }, [position]);
+
+    const getDragBounds = () => {
         const container = containerRef.current;
-        if (!container) return { x: newX, y: newY };
+        if (!container) return null;
 
         const rect = container.getBoundingClientRect();
         const viewportWidth = window.innerWidth;
@@ -289,87 +300,107 @@ const VFOSubtitle = ({
         const maxY = viewportHeight - rect.height - 20;
         const minY = 20;
 
+        return { minX, maxX, minY, maxY };
+    };
+
+    // The bounds are measured at drag start, so pointer movement never forces
+    // a layout read while the overlay is following the cursor.
+    const constrainPosition = (newX, newY, bounds = getDragBounds()) => {
+        if (!bounds) return { x: newX, y: newY };
+
+        const { minX, maxX, minY, maxY } = bounds;
         const constrainedX = Math.max(minX, Math.min(maxX, newX));
         const constrainedY = Math.max(minY, Math.min(maxY, newY));
 
         return { x: constrainedX, y: constrainedY };
     };
 
-    // Drag handlers for mouse
-    const handleMouseDown = (e) => {
-        if (e.target.closest('.subtitle-header')) {
-            setIsDragging(true);
-            dragStart.current = { x: e.clientX - position.x, y: e.clientY + position.y };
-            e.preventDefault();
+    const renderPendingPosition = () => {
+        animationFrameRef.current = null;
+        if (containerRef.current) {
+            containerRef.current.style.transform = overlayTransform(positionRef.current);
         }
     };
 
-    const handleMouseMove = (e) => {
-        if (isDragging) {
-            const newX = e.clientX - dragStart.current.x;
-            const newY = dragStart.current.y - e.clientY;
-            const constrained = constrainPosition(newX, newY);
-            setPosition(constrained);
+    const schedulePositionRender = (nextPosition) => {
+        positionRef.current = nextPosition;
+        if (animationFrameRef.current === null) {
+            animationFrameRef.current = requestAnimationFrame(renderPendingPosition);
         }
     };
 
-    const handleMouseUp = () => {
-        if (isDragging) {
-            setIsDragging(false);
-            localStorage.setItem(`transcription_overlay_position_vfo${vfoNumber}`, JSON.stringify(position));
+    const flushPositionRender = () => {
+        if (animationFrameRef.current !== null) {
+            cancelAnimationFrame(animationFrameRef.current);
+            animationFrameRef.current = null;
         }
+        renderPendingPosition();
     };
 
-    // Drag handlers for touch
-    const handleTouchStart = (e) => {
-        if (e.target.closest('.subtitle-header')) {
-            const touch = e.touches[0];
-            setIsDragging(true);
-            dragStart.current = { x: touch.clientX - position.x, y: touch.clientY + position.y };
-            e.preventDefault();
+    // Pointer capture keeps mouse, touch, and pen drags on the header without
+    // repeatedly installing document listeners as the position changes.
+    const handlePointerDown = (event) => {
+        if (event.button !== 0 || event.target.closest('button, [role="button"]')) {
+            return;
         }
+
+        const currentPosition = positionRef.current;
+        dragBoundsRef.current = getDragBounds();
+        dragRef.current = {
+            pointerId: event.pointerId,
+            startClientX: event.clientX,
+            startClientY: event.clientY,
+            startPosition: currentPosition,
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setIsDragging(true);
+        event.preventDefault();
     };
 
-    const handleTouchMove = (e) => {
-        if (isDragging && e.touches.length > 0) {
-            const touch = e.touches[0];
-            const newX = touch.clientX - dragStart.current.x;
-            const newY = dragStart.current.y - touch.clientY;
-            const constrained = constrainPosition(newX, newY);
-            setPosition(constrained);
-            e.preventDefault();
-        }
+    const handlePointerMove = (event) => {
+        const drag = dragRef.current;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+
+        const constrained = constrainPosition(
+            drag.startPosition.x + event.clientX - drag.startClientX,
+            drag.startPosition.y - (event.clientY - drag.startClientY),
+            dragBoundsRef.current,
+        );
+        schedulePositionRender(constrained);
     };
 
-    const handleTouchEnd = () => {
-        if (isDragging) {
-            setIsDragging(false);
-            localStorage.setItem(`transcription_overlay_position_vfo${vfoNumber}`, JSON.stringify(position));
+    const finishDrag = (event) => {
+        const drag = dragRef.current;
+        if (!drag || (event?.pointerId !== undefined && drag.pointerId !== event.pointerId)) {
+            return;
         }
+
+        flushPositionRender();
+        dragRef.current = null;
+        dragBoundsRef.current = null;
+        setIsDragging(false);
+        setPosition(positionRef.current);
+        localStorage.setItem(
+            `transcription_overlay_position_vfo${vfoNumber}`,
+            JSON.stringify(positionRef.current),
+        );
     };
 
-    // Add event listeners
     useEffect(() => {
-        if (isDragging) {
-            document.addEventListener('mousemove', handleMouseMove);
-            document.addEventListener('mouseup', handleMouseUp);
-            document.addEventListener('touchmove', handleTouchMove, { passive: false });
-            document.addEventListener('touchend', handleTouchEnd);
-
-            return () => {
-                document.removeEventListener('mousemove', handleMouseMove);
-                document.removeEventListener('mouseup', handleMouseUp);
-                document.removeEventListener('touchmove', handleTouchMove);
-                document.removeEventListener('touchend', handleTouchEnd);
-            };
-        }
-    }, [isDragging, position]);
+        return () => {
+            if (animationFrameRef.current !== null) {
+                cancelAnimationFrame(animationFrameRef.current);
+            }
+        };
+    }, []);
 
     // Ensure position is within bounds on mount and window resize
     useEffect(() => {
         const checkBounds = () => {
-            const constrained = constrainPosition(position.x, position.y);
-            if (constrained.x !== position.x || constrained.y !== position.y) {
+            const currentPosition = positionRef.current;
+            const constrained = constrainPosition(currentPosition.x, currentPosition.y);
+            if (constrained.x !== currentPosition.x || constrained.y !== currentPosition.y) {
+                positionRef.current = constrained;
                 setPosition(constrained);
                 localStorage.setItem(`transcription_overlay_position_vfo${vfoNumber}`, JSON.stringify(constrained));
             }
@@ -388,19 +419,18 @@ const VFOSubtitle = ({
         <Fade in={true} timeout={300}>
             <Box
                 ref={containerRef}
-                onMouseDown={handleMouseDown}
-                onTouchStart={handleTouchStart}
                 sx={{
                     position: 'fixed',
-                    bottom: `${position.y}px`,
+                    bottom: 0,
                     left: '50%',
-                    transform: `translate(calc(-50% + ${position.x}px), 0)`,
+                    transform: overlayTransform(position),
                     width: { xs: 'calc(100vw - 12px)', sm: 'auto' },
                     maxWidth: { xs: 'calc(100vw - 12px)', sm: 'none' },
                     zIndex: 1000,
                     pointerEvents: 'auto',
                     cursor: isDragging ? 'grabbing' : 'default',
                     userSelect: 'none',
+                    willChange: isDragging ? 'transform' : 'auto',
                 }}
             >
                 {/* Subtitle box - split into header and body */}
@@ -417,6 +447,11 @@ const VFOSubtitle = ({
                     {/* Header with VFO color background */}
                     <Box
                         className="subtitle-header"
+                        onPointerDown={handlePointerDown}
+                        onPointerMove={handlePointerMove}
+                        onPointerUp={finishDrag}
+                        onPointerCancel={finishDrag}
+                        onLostPointerCapture={finishDrag}
                         sx={{
                             backgroundColor: `${vfoColor}80`,
                             padding: { xs: '4px 6px', sm: '6px 10px' },
