@@ -333,6 +333,9 @@ self.onmessage = function(eventMessage) {
             break;
 
         case 'start':
+            // Rotator markers describe the current stream. Drop any status
+            // changes accumulated while the waterfall was idle.
+            rotatorEventQueue = [];
             // Reset auto-scale flags/history for new sessions
             hasPerformedInitialAutoScale = false;
             waterfallHistory = []; // Clear any existing history

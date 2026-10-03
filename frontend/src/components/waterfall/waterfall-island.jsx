@@ -443,6 +443,14 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
             return;
         }
 
+        // Rotator status continues to update while the waterfall is idle.
+        // Remember those changes without creating markers, otherwise the
+        // worker would draw the observation history when a later stream starts.
+        if (!isStreaming) {
+            lastRotatorEventRef.current = lastRotatorEvent;
+            return;
+        }
+
         // postWorkerMessage creates the worker when necessary, so an event is
         // not lost while the canvas worker is still starting.
         const formattedEvent = getRotatorEventDisplay(lastRotatorEvent);
@@ -451,7 +459,7 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
             event: formattedEvent,
         });
         lastRotatorEventRef.current = lastRotatorEvent;
-    }, [lastRotatorEvent, waterfallRendererMode, postWorkerMessage]);
+    }, [isStreaming, lastRotatorEvent, waterfallRendererMode, postWorkerMessage]);
 
     useEffect(() => {
         if (waterfallRendererMode !== 'dom-tiles') {
