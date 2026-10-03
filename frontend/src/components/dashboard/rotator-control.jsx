@@ -27,11 +27,10 @@ import {
     moveRotatorToPosition,
     stopRotator,
 } from "../target/target-slice.jsx";
-import {updateRotatorTrackingLead} from "../hardware/rotator-slice.jsx";
 import {getClassNamesBasedOnGridEditing, TitleBar} from "../common/common.jsx";
 import { useTranslation } from 'react-i18next';
 import Grid from "@mui/material/Grid";
-import {Box, Button, Chip, FormControl, IconButton, InputLabel, MenuItem, Select, Slider, Tooltip} from "@mui/material";
+import {Box, Button, Chip, FormControl, IconButton, InputLabel, MenuItem, Select, Tooltip} from "@mui/material";
 import Paper from "@mui/material/Paper";
 import Typography from "@mui/material/Typography";
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -58,6 +57,14 @@ const finiteOrNull = (value) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
 };
+
+const signedAzimuthDifference = (targetAzimuth, rotatorAzimuth) => {
+    // Use the shortest turn across north so the error stays within ±180°.
+    const difference = targetAzimuth - rotatorAzimuth;
+    return ((difference % 360) + 540) % 360 - 180;
+};
+
+const formatPointingError = (value) => `${value >= 0 ? '+' : ''}${value.toFixed(1)}°`;
 
 const passTimeMs = (value) => {
     const parsed = new Date(value || '').getTime();
@@ -155,8 +162,6 @@ const RotatorControl = React.memo(function RotatorControl({ trackerId: trackerId
     const [openQuickEditDialog, setOpenQuickEditDialog] = React.useState(false);
     const [openManualControlDialog, setOpenManualControlDialog] = React.useState(false);
     const [rotatorErrorMessage, setRotatorErrorMessage] = React.useState('');
-    const [trackingLeadInput, setTrackingLeadInput] = React.useState('2');
-    const [trackingLeadSaving, setTrackingLeadSaving] = React.useState(false);
     const confirmedTrackingState = scopedTrackerView?.confirmedTrackingState || {};
 
     const showRotatorError = React.useCallback((error, fallbackMessage) => {
@@ -170,13 +175,6 @@ const RotatorControl = React.memo(function RotatorControl({ trackerId: trackerId
         () => rotators.find((rotator) => rotator.id === effectiveSelectedRotatorValue),
         [rotators, effectiveSelectedRotatorValue]
     );
-    const configuredTrackingLead = finiteOrNull(selectedRotatorDevice?.tracking_lead_seconds) ?? 2;
-    React.useEffect(() => {
-        setTrackingLeadInput(String(configuredTrackingLead));
-    }, [configuredTrackingLead, effectiveSelectedRotatorValue]);
-    const parsedTrackingLead = String(trackingLeadInput).trim() === ''
-        ? null
-        : finiteOrNull(trackingLeadInput);
     const rotatorUsageById = React.useMemo(() => {
         const usage = {};
         trackerInstances.forEach((instance, index) => {
@@ -231,10 +229,17 @@ const RotatorControl = React.memo(function RotatorControl({ trackerId: trackerId
         az: finiteOrNull(effectiveSatelliteData?.position?.az),
         el: finiteOrNull(effectiveSatelliteData?.position?.el),
     }), [effectiveSatelliteData?.position?.az, effectiveSatelliteData?.position?.el]);
-    const targetCommandPosition = React.useMemo(() => ({
-        az: finiteOrNull(effectiveRotatorData?.command_az),
-        el: finiteOrNull(effectiveRotatorData?.command_el),
-    }), [effectiveRotatorData?.command_az, effectiveRotatorData?.command_el]);
+    const pointingError = React.useMemo(() => {
+        const rotatorAz = finiteOrNull(effectiveRotatorData?.az);
+        const rotatorEl = finiteOrNull(effectiveRotatorData?.el);
+        if (targetCurrentPosition.az === null || targetCurrentPosition.el === null || rotatorAz === null || rotatorEl === null) {
+            return null;
+        }
+        return {
+            az: signedAzimuthDifference(targetCurrentPosition.az, rotatorAz),
+            el: targetCurrentPosition.el - rotatorEl,
+        };
+    }, [effectiveRotatorData?.az, effectiveRotatorData?.el, targetCurrentPosition]);
     const gaugePass = React.useMemo(() => {
         const combinedPasses = [
             ...(Array.isArray(satellitePasses) ? satellitePasses : []),
@@ -321,8 +326,6 @@ const RotatorControl = React.memo(function RotatorControl({ trackerId: trackerId
         return ((currentAz % 360) + 360) % 360;
     }, [effectiveRotatorData?.az, selectedRotatorDevice?.azimuth_mode]);
     const rotatorLiveStatus = React.useMemo(() => {
-        // Manual positioning is independent of the sky target, so omit target
-        // elevation/azimuth events from this status label.
         if (!effectiveRotatorData?.connected) {
             return { value: 'Disconnected', bgColor: 'grey.600', fgColor: 'grey.800' };
         }
@@ -344,7 +347,7 @@ const RotatorControl = React.memo(function RotatorControl({ trackerId: trackerId
             return { value: 'Stopped', bgColor: 'info.light', fgColor: 'info.dark' };
         }
         return { value: 'Connected', bgColor: 'success.light', fgColor: 'success.dark' };
-    }, [motionUnconfirmed, effectiveRotatorData?.connected, effectiveRotatorData?.error, effectiveRotatorData?.slewing, effectiveRotatorData?.stopped, effectiveRotatorData?.tracking, effectiveTrackingState?.rotator_state, rotatorIsParked]);
+    }, [motionUnconfirmed, effectiveRotatorData?.connected, effectiveRotatorData?.error, effectiveRotatorData?.slewing, effectiveRotatorData?.stopped, effectiveRotatorData?.tracking, effectiveTrackingState?.rotator_state]);
     const manualControlDisabled = !hardwareReady || !canControlRotator(effectiveRotatorData, confirmedTrackingState) || rotatorIsParked;
     const manualControlDisabledReason = motionUnconfirmed ? 'Waiting for stationary position readings' : rotatorIsParked
         ? 'Unpark the rotator before using manual control'
@@ -426,30 +429,6 @@ const RotatorControl = React.memo(function RotatorControl({ trackerId: trackerId
     function handleManualStop() {
         return dispatch(stopRotator({socket, trackerId: scopedTrackerId,
             rotatorId: effectiveSelectedRotator})).unwrap();
-    }
-
-    async function applyTrackingLead(value = parsedTrackingLead) {
-        const normalizedValue = finiteOrNull(value);
-        if (
-            !socket
-            || !selectedRotatorDevice
-            || normalizedValue === null
-            || normalizedValue < 0
-            || normalizedValue > 10
-            || Math.abs(normalizedValue - configuredTrackingLead) <= 0.0001
-        ) return;
-        setTrackingLeadSaving(true);
-        try {
-            await dispatch(updateRotatorTrackingLead({
-                socket,
-                rotatorId: selectedRotatorDevice.id,
-                trackingLeadSeconds: normalizedValue,
-            })).unwrap();
-        } catch (error) {
-            showRotatorError(error, 'Failed updating satellite tracking lead');
-        } finally {
-            setTrackingLeadSaving(false);
-        }
     }
 
     return (
@@ -592,44 +571,17 @@ const RotatorControl = React.memo(function RotatorControl({ trackerId: trackerId
                 </Grid>
 
                 <Grid size={{ xs: 12, sm: 12, md: 12 }} style={{padding: '0rem 0.5rem 0rem 0.5rem'}}>
-
-                    <Box sx={{ width: '100%', mb: 0.5 }}>
-                        <Typography variant="caption" sx={{ display: 'flex', justifyContent: 'space-between', color: 'text.secondary', lineHeight: 1.1 }}>
-                            <span>{t('rotator_control.tracking_lead_short', {defaultValue: 'Lead'})}</span>
-                            <strong>{(parsedTrackingLead ?? 0).toFixed(1)} s</strong>
-                        </Typography>
-                        <Slider
-                            aria-label={t('rotator_control.tracking_lead', {defaultValue: 'Satellite tracking lead'})}
-                            value={parsedTrackingLead ?? 0}
-                            onChange={(_event, value) => setTrackingLeadInput(value)}
-                            onChangeCommitted={(_event, value) => { void applyTrackingLead(value); }}
-                            disabled={!selectedRotatorDevice || trackingLeadSaving}
-                            size="small"
-                            min={0}
-                            max={10}
-                            step={0.1}
-                            valueLabelDisplay="auto"
-                            sx={{
-                                color: 'text.secondary',
-                                height: 2,
-                                py: 0.5,
-                                '& .MuiSlider-thumb': { width: 10, height: 10 },
-                                '& .MuiSlider-rail': { opacity: 0.25 },
-                            }}
-                        />
-                    </Box>
-
                     <Grid container direction="row" sx={{
                         justifyContent: "space-between",
                         alignItems: "center",
                     }}>
                         <Grid size="grow" style={{textAlign: 'center'}}>
                             <GaugeAz
+                                size={150}
                                 az={effectiveRotatorData['az']}
                                 limits={[gaugePass?.start_azimuth, gaugePass?.end_azimuth]}
                                 peakAz={gaugePass?.peak_azimuth}
                                 targetCurrentAz={targetCurrentPosition.az}
-                                targetCommandAz={configuredTrackingLead > 0 ? targetCommandPosition.az : null}
                                 isGeoStationary={gaugePass?.is_geostationary}
                                 isGeoSynchronous={gaugePass?.is_geosynchronous}
                                 hardwareLimits={[effectiveRotatorData['minaz'], effectiveRotatorData['maxaz']]}
@@ -637,10 +589,10 @@ const RotatorControl = React.memo(function RotatorControl({ trackerId: trackerId
                         </Grid>
                         <Grid size="grow" style={{textAlign: 'center'}}>
                             <GaugeEl
+                                size={150}
                                 el={effectiveRotatorData['el']}
                                 maxElevation={gaugePass?.peak_altitude}
                                 targetCurrentEl={targetCurrentPosition.el}
-                                targetCommandEl={configuredTrackingLead > 0 ? targetCommandPosition.el : null}
                                 hardwareLimits={[effectiveRotatorData['minel'], effectiveRotatorData['maxel']]}
                             />
                         </Grid>
@@ -649,6 +601,7 @@ const RotatorControl = React.memo(function RotatorControl({ trackerId: trackerId
                     <Grid container direction="row" sx={{
                         justifyContent: "space-between",
                         alignItems: "stretch",
+                        mb: 1,
                     }}>
                         <Grid size="grow" style={{textAlign: 'center'}}>
                             {t('rotator_control.az')} <Typography
@@ -687,6 +640,38 @@ const RotatorControl = React.memo(function RotatorControl({ trackerId: trackerId
                         alignItems: "stretch",
                     }}>
                         <Grid size="grow" style={{textAlign: 'center'}}>
+                            <Paper
+                                elevation={1}
+                                sx={{
+                                    height: '24px',
+                                    padding: '2px 0px',
+                                    marginBottom: '4px',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    borderRadius: '4px',
+                                    minWidth: '180px',
+                                    width: '100%',
+                                    gap: 2,
+                                }}
+                            >
+                                <Typography
+                                    variant="caption"
+                                    sx={{
+                                        fontWeight: "bold",
+                                    }}
+                                >
+                                    {t('rotator_control.target_offset', {defaultValue: 'Target offset'})}
+                                </Typography>
+                                {pointingError ? <>
+                                    <Typography variant="body2" sx={{fontFamily: "Monospace, monospace"}}>
+                                        ΔAZ {formatPointingError(pointingError.az)}
+                                    </Typography>
+                                    <Typography variant="body2" sx={{fontFamily: "Monospace, monospace"}}>
+                                        ΔEL {formatPointingError(pointingError.el)}
+                                    </Typography>
+                                </> : <Typography variant="body2" sx={{fontFamily: "Monospace, monospace"}}>—</Typography>}
+                            </Paper>
                             <Paper
                                 elevation={1}
                                 sx={{
@@ -731,7 +716,7 @@ const RotatorControl = React.memo(function RotatorControl({ trackerId: trackerId
                                         fullWidth={true}
                                         variant="contained"
                                         color="success"
-                                        style={{height: '52px'}}
+                                        style={{height: '47px'}}
                                         onClick={() => {
                                             connectRotator()
                                         }}
@@ -750,7 +735,7 @@ const RotatorControl = React.memo(function RotatorControl({ trackerId: trackerId
                                         fullWidth={true}
                                         variant="contained"
                                         color="error"
-                                        style={{height: '52px'}}
+                                        style={{height: '47px'}}
                                         onClick={() => {
                                              disconnectRotator()
                                         }}
@@ -769,7 +754,7 @@ const RotatorControl = React.memo(function RotatorControl({ trackerId: trackerId
                                         fullWidth={true}
                                         variant="contained"
                                         color="warning"
-                                        style={{height: '52px'}}
+                                        style={{height: '47px'}}
                                         onClick={() => {
                                             parkRotator()
                                         }}

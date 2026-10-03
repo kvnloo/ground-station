@@ -311,15 +311,14 @@ const rescaleToRange = (value, originalMin, originalMax, targetMin, targetMax) =
 };
 
 function GaugeAz({az, limits = [null, null],
-                     peakAz = null, targetCurrentAz = null, targetCommandAz = null,
+                     peakAz = null, targetCurrentAz = null,
                      isGeoStationary = false, isGeoSynchronous = false,
-                     hardwareLimits = [null, null]
+                     hardwareLimits = [null, null], size = 140
 }) {
     let [maxAz, minAz] = limits;
     let [hwMinAz, hwMaxAz] = hardwareLimits;
     const safeAz = normalizeAzimuthForGauge(az);
     const safeTargetCurrentAz = isFiniteNumber(targetCurrentAz) ? targetCurrentAz : null;
-    const safeTargetCommandAz = isFiniteNumber(targetCommandAz) ? targetCommandAz : null;
     minAz = isFiniteNumber(minAz) ? minAz : null;
     maxAz = isFiniteNumber(maxAz) ? maxAz : null;
     hwMinAz = isFiniteNumber(hwMinAz) ? hwMinAz : null;
@@ -334,8 +333,8 @@ function GaugeAz({az, limits = [null, null],
             }}
             valueMin={0}
             valueMax={360}
-            width={140}
-            height={140}
+            width={size}
+            height={size}
             startAngle={0}
             endAngle={360}
             value={safeAz}
@@ -366,10 +365,10 @@ function GaugeAz({az, limits = [null, null],
                     opacity={0.2}
                 />
             </>}
-            <text x="70" y="18" textAnchor="middle" dominantBaseline="middle" fontSize="12" fontWeight={"bold"}>0</text>
-            <text x="124" y="70" textAnchor="middle" dominantBaseline="middle" fontSize="12" fontWeight={"bold"}>90</text>
-            <text x="70" y="125" textAnchor="middle" dominantBaseline="middle" fontSize="12" fontWeight={"bold"}>180</text>
-            <text x="15" y="70" textAnchor="middle" dominantBaseline="middle" fontSize="12" fontWeight={"bold"}>270</text>
+            <text x={size * 0.5} y={size * 0.129} textAnchor="middle" dominantBaseline="middle" fontSize={size * 0.086} fontWeight={"bold"}>0</text>
+            <text x={size * 0.886} y={size * 0.5} textAnchor="middle" dominantBaseline="middle" fontSize={size * 0.086} fontWeight={"bold"}>90</text>
+            <text x={size * 0.5} y={size * 0.893} textAnchor="middle" dominantBaseline="middle" fontSize={size * 0.086} fontWeight={"bold"}>180</text>
+            <text x={size * 0.107} y={size * 0.5} textAnchor="middle" dominantBaseline="middle" fontSize={size * 0.086} fontWeight={"bold"}>270</text>
             {/* Hardware limits - red restricted zones */}
             {hwMinAz !== null && hwMaxAz !== null && <>
                 {/* Show red zone from 0 to hwMinAz if hwMinAz > 0 */}
@@ -391,17 +390,15 @@ function GaugeAz({az, limits = [null, null],
             </>}
             {/* Keep current-position indicators visible even in a restricted sector. */}
             <EdgeArrow angle={safeTargetCurrentAz} />
-            <Pointer angle={safeTargetCommandAz} stroke="#00bcd4" strokeWidth={2} opacity={0.9} />
             <GaugePointer/>
         </GaugeContainer>
     );
 }
 
-function GaugeEl({el, maxElevation = null, targetCurrentEl = null, targetCommandEl = null, hardwareLimits = [null, null]}) {
+function GaugeEl({el, maxElevation = null, targetCurrentEl = null, hardwareLimits = [null, null], size = 130}) {
     const safeEl = isFiniteNumber(el) ? el : null;
     const safeMaxElevation = isFiniteNumber(maxElevation) ? maxElevation : null;
     const safeTargetCurrentEl = isFiniteNumber(targetCurrentEl) ? targetCurrentEl : null;
-    const safeTargetCommandEl = isFiniteNumber(targetCommandEl) ? targetCommandEl : null;
     let [hwMinEl, hwMaxEl] = hardwareLimits;
     hwMinEl = isFiniteNumber(hwMinEl) ? hwMinEl : null;
     hwMaxEl = isFiniteNumber(hwMaxEl) ? hwMaxEl : null;
@@ -424,8 +421,8 @@ function GaugeEl({el, maxElevation = null, targetCurrentEl = null, targetCommand
             }}
             valueMin={90}
             valueMax={0}
-            width={130}
-            height={130}
+            width={size}
+            height={size}
             startAngle={0}
             endAngle={90}
             value={safeEl}
@@ -454,9 +451,9 @@ function GaugeEl({el, maxElevation = null, targetCurrentEl = null, targetCommand
                     spansNorth={false}
                 />
             </>}
-            <text x="107" y="120" textAnchor="middle" dominantBaseline="middle" fontSize="12" fontWeight={"bold"}>0</text>
-            <text x="80" y="55" textAnchor="middle" dominantBaseline="middle" fontSize="12" fontWeight={"bold"}>45</text>
-            <text x="10" y="23" textAnchor="middle" dominantBaseline="middle" fontSize="12" fontWeight={"bold"}>90</text>
+            <text x={size * 0.823} y={size * 0.923} textAnchor="middle" dominantBaseline="middle" fontSize={size * 0.092} fontWeight={"bold"}>0</text>
+            <text x={size * 0.615} y={size * 0.423} textAnchor="middle" dominantBaseline="middle" fontSize={size * 0.092} fontWeight={"bold"}>45</text>
+            <text x={size * 0.077} y={size * 0.177} textAnchor="middle" dominantBaseline="middle" fontSize={size * 0.092} fontWeight={"bold"}>90</text>
             {/* Hardware limits - red restricted zones */}
             {hwMinElAngle !== null && hwMaxElAngle !== null && <>
                 {/* Show red zone from gauge angle 90 (0° elevation) to hwMinElAngle */}
@@ -480,12 +477,6 @@ function GaugeEl({el, maxElevation = null, targetCurrentEl = null, targetCommand
             </>}
             {/* Elevation endpoints can also fall inside a restricted sector. */}
             <EdgeArrow angle={safeTargetCurrentEl !== null ? rescaleValue(safeTargetCurrentEl) : null} />
-            <Pointer
-                angle={safeTargetCommandEl !== null ? rescaleValue(safeTargetCommandEl) : null}
-                stroke="#00bcd4"
-                strokeWidth={2}
-                opacity={0.9}
-            />
             <GaugePointer/>
         </GaugeContainer>
     );
