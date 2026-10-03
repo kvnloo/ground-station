@@ -179,7 +179,7 @@ function TargetMapSettingsDialog({updateBackend}) {
                             showGrid: true,
                             pastOrbitLineColor: '#33C833',
                             futureOrbitLineColor: '#E4971E',
-                            satelliteCoverageColor: '#112EED',
+                            satelliteCoverageColor: '#FFFFFF',
                             orbitProjectionDuration: 60 * 24,
                             tileLayerID: 'satellite',
                             mapEngine: MAP_ENGINE_MAPLIBRE,

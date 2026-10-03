@@ -807,7 +807,7 @@ const targetSatTrackSlice = createSlice({
         daySidePolygon: [],
         pastOrbitLineColor: '#33c833',
         futureOrbitLineColor: '#e4971e',
-        satelliteCoverageColor: '#112eed',
+        satelliteCoverageColor: '#FFFFFF',
         orbitProjectionDuration: 60*24,
         tileLayerID: 'satellite',
         mapEngine: MAP_ENGINE_MAPLIBRE,
