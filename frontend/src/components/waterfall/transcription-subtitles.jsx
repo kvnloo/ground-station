@@ -453,7 +453,7 @@ const VFOSubtitle = ({
                         onPointerCancel={finishDrag}
                         onLostPointerCapture={finishDrag}
                         sx={{
-                            backgroundColor: `${vfoColor}80`,
+                            backgroundColor: vfoColor,
                             padding: { xs: '4px 6px', sm: '6px 10px' },
                             display: 'flex',
                             alignItems: 'center',
@@ -638,10 +638,10 @@ const VFOSubtitle = ({
                     <Box
                         ref={contentRef}
                         sx={{
-                            backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                            backgroundColor: '#000000',
                             padding: { xs: '8px 12px', sm: '10px 16px' },
                             textAlign: textAlignment,
-                            border: `1px solid ${vfoColor}60`,
+                            border: `1px solid ${vfoColor}`,
                             borderTop: 'none',
                             borderBottomLeftRadius: '8px',
                             borderBottomRightRadius: '8px',
