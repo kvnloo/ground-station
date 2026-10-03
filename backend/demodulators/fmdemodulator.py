@@ -28,6 +28,7 @@ import webrtcvad
 from scipy import signal
 
 from common.audio_queue_config import get_audio_queue_config
+from monitoring.timing import TimingCollector, timestamp_ns
 from vfos.state import VFOManager
 
 logger = logging.getLogger("fm-demodulator")
@@ -165,6 +166,7 @@ class FMDemodulator(threading.Thread):
             "is_sleeping": False,
         }
         self.stats_lock = threading.Lock()
+        self.timing = TimingCollector()
 
         # Track sleeping state (mirror in stats["is_sleeping"])
         self.is_sleeping = False
@@ -738,6 +740,12 @@ class FMDemodulator(threading.Thread):
 
                 iq_message = self.iq_queue.get(timeout=0.1)
 
+                iq_enqueued_at_ns = iq_message.get("iq_enqueued_at_ns")
+                if iq_enqueued_at_ns is not None:
+                    self.timing.record_duration(
+                        "queue_age", (time.perf_counter_ns() - iq_enqueued_at_ns) / 1_000_000.0
+                    )
+
                 # Update stats
                 with self.stats_lock:
                     self.stats["iq_chunks_in"] += 1
@@ -752,6 +760,9 @@ class FMDemodulator(threading.Thread):
 
                 if samples is None or len(samples) == 0:
                     continue
+
+                processing_started = self.timing.start()
+                input_duration_seconds = len(samples) / max(float(sdr_sample_rate or 0), 1.0)
 
                 # Update sample count and ingest accumulators
                 with self.stats_lock:
@@ -866,12 +877,15 @@ class FMDemodulator(threading.Thread):
 
                 offset_freq = vfo_center_freq - sdr_center_freq
 
+                translation_started = self.timing.start()
                 translated = self._frequency_translate(samples, offset_freq, sdr_sample_rate)
+                self.timing.record_since("translation", translation_started)
 
                 # Step 2: Multi-stage cascaded decimation
                 stages, total_decimation = self.decimation_filter
 
                 # Apply each stage sequentially
+                decimation_started = self.timing.start()
                 decimated = translated
                 for stage_idx, ((b, a), stage_decimation) in enumerate(stages):
                     # Initialize state if needed
@@ -888,6 +902,7 @@ class FMDemodulator(threading.Thread):
 
                     # Decimate
                     decimated = filtered[::stage_decimation]
+                self.timing.record_since("decimation", decimation_started)
 
                 # Measure RF signal power for squelch AFTER filtering (within VFO bandwidth)
                 # Calculate on every chunk for accurate squelch operation
@@ -907,16 +922,20 @@ class FMDemodulator(threading.Thread):
                 intermediate_rate = sdr_sample_rate / total_decimation
 
                 # Step 3: FM demodulation
+                demodulation_started = self.timing.start()
                 demodulated = self._fm_demodulate(decimated)
+                self.timing.record_since("demodulation", demodulation_started)
 
                 # Step 4: Audio filtering
                 if audio_filter_state is None:
                     # Initialize filter state on first run
                     audio_filter_state = signal.lfilter_zi(self.audio_filter, 1) * demodulated[0]
 
+                audio_filter_started = self.timing.start()
                 audio_filtered, audio_filter_state = signal.lfilter(
                     self.audio_filter, 1, demodulated, zi=audio_filter_state
                 )
+                self.timing.record_since("audio_filter", audio_filter_started)
 
                 # Step 5: De-emphasis
                 b, a = self.deemphasis_filter  # type: ignore[misc]
@@ -925,14 +944,18 @@ class FMDemodulator(threading.Thread):
                     # Initialize filter state on first run
                     deemph_state = signal.lfilter_zi(b, a) * audio_filtered[0]
 
+                deemphasis_started = self.timing.start()
                 deemphasized, deemph_state = signal.lfilter(b, a, audio_filtered, zi=deemph_state)
+                self.timing.record_since("deemphasis", deemphasis_started)
 
                 # Step 6: Resample to audio rate (44.1 kHz)
                 num_output_samples = int(
                     len(deemphasized) * self.audio_sample_rate / intermediate_rate
                 )
                 if num_output_samples > 0:
+                    resample_started = self.timing.start()
                     audio = signal.resample(deemphasized, num_output_samples)
+                    self.timing.record_since("resample", resample_started)
 
                     # NOTE: Volume is applied by WebAudioStreamer, not here
                     # This allows per-session volume control
@@ -969,6 +992,7 @@ class FMDemodulator(threading.Thread):
                     carrier_open = self._apply_carrier_squelch(rf_power_db, squelch_threshold_db)
                     voice_open = self.voice_squelch_open
 
+                    squelch_started = self.timing.start()
                     if squelch_mode == "carrier":
                         voice_open = False
                         if not carrier_open:
@@ -1031,8 +1055,10 @@ class FMDemodulator(threading.Thread):
 
                     # Convert to float32
                     audio = audio.astype(np.float32)
+                    self.timing.record_since("squelch", squelch_started)
 
                     # Buffer audio samples to create consistent chunk sizes
+                    buffer_started = self.timing.start()
                     self.audio_buffer = np.concatenate([self.audio_buffer, audio])
 
                     # CRITICAL: Limit buffer size to prevent unbounded growth
@@ -1090,6 +1116,12 @@ class FMDemodulator(threading.Thread):
                             "rf_power_db": self.last_rf_power_db,  # Include latest power measurement
                             "squelch_debug": dict(self.last_squelch_debug),
                         }
+                        pipeline_started_ns = iq_message.get("pipeline_started_at_ns")
+                        if pipeline_started_ns is not None:
+                            audio_message["pipeline_started_at_ns"] = pipeline_started_ns
+                        audio_enqueued_at_ns = timestamp_ns()
+                        if audio_enqueued_at_ns is not None:
+                            audio_message["audio_enqueued_at_ns"] = audio_enqueued_at_ns
 
                         # Always output audio (UI handles muting, transcription always active)
                         # Put audio chunk in queue (single output point)
@@ -1113,6 +1145,9 @@ class FMDemodulator(threading.Thread):
                         except Exception as e:
                             logger.warning(f"Could not queue audio: {str(e)}")
                             break
+
+                    self.timing.record_since("buffer_output", buffer_started)
+                self.timing.record_since("processing", processing_started, input_duration_seconds)
 
             except Exception as e:
                 if self.running:

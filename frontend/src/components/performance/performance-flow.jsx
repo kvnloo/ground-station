@@ -230,6 +230,34 @@ const FlowContent = ({ metrics, onAutoArrangeCallback }) => {
                                 </Typography>
                             </Box>
                         </Box>
+                        <Typography variant="caption" sx={{ fontWeight: 'bold', color: '#fff', display: 'block', mt: 1, mb: 0.5, fontSize: '0.65rem' }}>
+                            Real-time factor
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.3 }}>
+                            <Typography variant="caption" sx={{ color: '#fff', fontSize: '0.6rem' }}>
+                                Green: P95 below 0.50
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: '#fff', fontSize: '0.6rem' }}>
+                                Amber: P95 from 0.50 to 0.99
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: '#fff', fontSize: '0.6rem' }}>
+                                Red: P95 at or above 1.00
+                            </Typography>
+                        </Box>
+                        <Typography variant="caption" sx={{ fontWeight: 'bold', color: '#fff', display: 'block', mt: 1, mb: 0.5, fontSize: '0.65rem' }}>
+                            Queue / end-to-end age
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.3 }}>
+                            <Typography variant="caption" sx={{ color: '#fff', fontSize: '0.6rem' }}>
+                                Green: below 100ms
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: '#fff', fontSize: '0.6rem' }}>
+                                Amber: 100ms to 499ms
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: '#fff', fontSize: '0.6rem' }}>
+                                Red: 500ms or higher
+                            </Typography>
+                        </Box>
                     </Box>
                 </Panel>
             </ReactFlow>

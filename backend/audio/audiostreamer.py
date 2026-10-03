@@ -35,6 +35,7 @@ from typing import Any, Dict
 
 import numpy as np
 
+from monitoring.timing import TimingCollector
 from vfos.state import VFOManager
 
 # Configure logging
@@ -55,11 +56,14 @@ class WebAudioStreamer(threading.Thread):
             "audio_chunks_in": 0,
             "audio_samples_in": 0,
             "messages_emitted": 0,
+            "pending_emits": 0,
+            "emit_errors": 0,
             "queue_timeouts": 0,
             "last_activity": None,
             "errors": 0,
         }
         self.stats_lock = threading.Lock()
+        self.timing = TimingCollector()
 
         # Per-session activity tracking
         self.session_stats: Dict[str, Dict[str, Any]] = {}
@@ -70,6 +74,19 @@ class WebAudioStreamer(threading.Thread):
             try:
                 # Get audio message from queue (now contains session_id and audio data)
                 audio_message = self.audio_queue.get(timeout=1.0)
+
+                audio_enqueued_at_ns = audio_message.get("audio_enqueued_at_ns")
+                if audio_enqueued_at_ns is not None:
+                    self.timing.record_duration(
+                        "queue_age", (time.perf_counter_ns() - audio_enqueued_at_ns) / 1_000_000.0
+                    )
+                pipeline_started_at_ns = audio_message.get("pipeline_started_at_ns")
+                if pipeline_started_at_ns is not None:
+                    self.timing.record_duration(
+                        "pipeline_age",
+                        (time.perf_counter_ns() - pipeline_started_at_ns) / 1_000_000.0,
+                    )
+                processing_started = self.timing.start()
 
                 # Update stats
                 with self.stats_lock:
@@ -109,6 +126,7 @@ class WebAudioStreamer(threading.Thread):
                         continue
 
                     # Process audio based on VFO settings
+                    prepare_started = self.timing.start()
                     if vfo_state.active:
                         # Convert volume from the 0-100 range to 0.0-1.5 multiplier
                         volume_multiplier = vfo_state.volume / 100.0 * 1.5
@@ -134,9 +152,12 @@ class WebAudioStreamer(threading.Thread):
                     # Ensure float32 format and proper range (-1.0 to 1.0)
                     processed_audio = processed_audio.astype(np.float32)
                     processed_audio = np.clip(processed_audio, -1.0, 1.0)
+                    self.timing.record_since("prepare", prepare_started)
 
                     # Convert to a list for JSON serialization
+                    encode_started = self.timing.start()
                     audio_data = processed_audio.tolist()
+                    self.timing.record_since("encode", encode_started)
 
                     # Detect if audio is stereo (interleaved L/R) or mono
                     # Stereo demodulators produce interleaved samples: [L0, R0, L1, R1, ...]
@@ -147,7 +168,23 @@ class WebAudioStreamer(threading.Thread):
 
                     # Schedule the emit() in the main event loop ONLY for the originating session
                     # Use fire-and-forget to avoid blocking the audio consumer thread
-                    asyncio.run_coroutine_threadsafe(
+                    emit_started = self.timing.start()
+                    with self.session_stats_lock:
+                        session_stat = self.session_stats.setdefault(
+                            originating_session_id,
+                            {
+                                "audio_chunks_in": 0,
+                                "audio_samples_in": 0,
+                                "messages_emitted": 0,
+                                "pending_emits": 0,
+                                "emit_errors": 0,
+                                "last_activity": None,
+                            },
+                        )
+                        session_stat["pending_emits"] += 1
+                    with self.stats_lock:
+                        self.stats["pending_emits"] += 1
+                    emit_future = asyncio.run_coroutine_threadsafe(
                         self.sio.emit(
                             "audio-data",
                             {
@@ -170,6 +207,40 @@ class WebAudioStreamer(threading.Thread):
                         ),  # Emit ONLY to the originating session
                         self.loop,
                     )
+                    self.timing.record_since("emit_schedule", emit_started)
+
+                    def on_emit_complete(
+                        future,
+                        emit_started_ns=emit_started,
+                        session_id=originating_session_id,
+                    ):
+                        # The future completes on the event loop, so this measures
+                        # both local scheduling delay and Socket.IO emit work.
+                        # Bind values from this specific emission. The callback can
+                        # run after the streaming loop has begun processing another
+                        # audio chunk for a different session.
+                        self.timing.record_since("emit_completion", emit_started_ns)
+                        failed = False
+                        try:
+                            future.result()
+                        except Exception:
+                            failed = True
+                        with self.stats_lock:
+                            self.stats["pending_emits"] = max(0, self.stats["pending_emits"] - 1)
+                            if failed:
+                                self.stats["emit_errors"] += 1
+                        with self.session_stats_lock:
+                            completed_stat = self.session_stats.get(session_id)
+                            if completed_stat:
+                                completed_stat["pending_emits"] = max(
+                                    0, completed_stat.get("pending_emits", 0) - 1
+                                )
+                                if failed:
+                                    completed_stat["emit_errors"] = (
+                                        completed_stat.get("emit_errors", 0) + 1
+                                    )
+
+                    emit_future.add_done_callback(on_emit_complete)
                     # Don't wait for result - fire and forget to keep audio flowing
 
                     # Update stats
@@ -178,18 +249,13 @@ class WebAudioStreamer(threading.Thread):
 
                     # Update per-session stats
                     with self.session_stats_lock:
-                        if originating_session_id not in self.session_stats:
-                            self.session_stats[originating_session_id] = {
-                                "audio_chunks_in": 0,
-                                "audio_samples_in": 0,
-                                "messages_emitted": 0,
-                                "last_activity": None,
-                            }
                         session_stat = self.session_stats[originating_session_id]
                         session_stat["audio_chunks_in"] += 1
                         session_stat["audio_samples_in"] += len(audio_chunk)
                         session_stat["messages_emitted"] += 1
                         session_stat["last_activity"] = time.time()
+
+                    self.timing.record_since("processing", processing_started)
 
                 except Exception as e:
                     logger.error(

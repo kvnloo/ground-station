@@ -15,10 +15,12 @@
 
 
 import logging
+import multiprocessing
 import queue
 import threading
 import time
 
+from monitoring.timing import bind_enabled_event
 from server import runtimestate
 from session.socketregistry import SESSIONS
 from tracker.messages import tracker_stats
@@ -59,6 +61,10 @@ class PerformanceMonitor(threading.Thread):
         self.running = True
         self.monitoring_enabled = False  # Start disabled, enabled on client request
         self.monitoring_lock = threading.Lock()
+        # This event is also passed to the FFT child process. Timing instrumentation
+        # remains dormant until the existing performance dialog requests metrics.
+        self.timing_enabled_event = multiprocessing.Event()
+        bind_enabled_event(self.timing_enabled_event)
         self.metrics_queue: queue.Queue = queue.Queue(maxsize=10)  # Output to UI
         self.previous_snapshots = {}  # For calculating rates
         self.last_collection_time = time.time()
@@ -69,12 +75,14 @@ class PerformanceMonitor(threading.Thread):
         """Enable active monitoring when client requests it."""
         with self.monitoring_lock:
             self.monitoring_enabled = True
+            self.timing_enabled_event.set()
             logger.info("Performance monitoring enabled")
 
     def disable_monitoring(self):
         """Disable active monitoring to reduce overhead when not in use."""
         with self.monitoring_lock:
             self.monitoring_enabled = False
+            self.timing_enabled_event.clear()
             logger.info("Performance monitoring disabled")
 
     def run(self):
@@ -390,6 +398,7 @@ class PerformanceMonitor(threading.Thread):
             "source_queue_maxsize": source_queue_maxsize,
             "subscriber_count": subscriber_count,
             "stats": stats_snapshot,
+            "timing": broadcaster.timing.snapshot() if hasattr(broadcaster, "timing") else None,
             "rates": {
                 "messages_in_per_sec": messages_in_rate,
                 "messages_broadcast_per_sec": messages_broadcast_rate,
@@ -740,6 +749,11 @@ class PerformanceMonitor(threading.Thread):
                     "output_queue_maxsize": output_queue_maxsize,
                     "is_alive": demod_instance.is_alive(),
                     "stats": stats_snapshot,
+                    "timing": (
+                        demod_instance.timing.snapshot()
+                        if hasattr(demod_instance, "timing")
+                        else None
+                    ),
                     "rates": {
                         "iq_chunks_in_per_sec": iq_chunks_in_rate,
                         "iq_samples_in_per_sec": iq_samples_in_rate,
@@ -969,9 +983,11 @@ class PerformanceMonitor(threading.Thread):
                         # Lock access failed (expected for multiprocessing), use empty stats
                         stats_snapshot = {}
 
-                # Skip if still no stats available
-                if not stats_snapshot:
-                    continue
+                # Process-based decoders initialize their stats inside the child
+                # process. Keep the decoder visible in the topology during that
+                # startup window (or if its first stats message is delayed).
+                # The node can still report queue depth and process health, and
+                # its counters will populate as soon as a stats update arrives.
 
                 # Get queue sizes - handle both audio_queue (SSTV, Morse) and iq_queue (BPSK, FSK family)
                 input_queue_size = 0
@@ -1190,6 +1206,8 @@ class PerformanceMonitor(threading.Thread):
                         "audio_chunks_in": 0,
                         "audio_samples_in": 0,
                         "messages_emitted": 0,
+                        "pending_emits": 0,
+                        "emit_errors": 0,
                         "last_activity": None,
                     },
                 )
@@ -1232,6 +1250,11 @@ class PerformanceMonitor(threading.Thread):
                     "input_queue_size": input_queue_size,  # Shared queue
                     "is_alive": audio_consumer.is_alive(),
                     "stats": session_stats,
+                    "timing": (
+                        audio_consumer.timing.snapshot()
+                        if hasattr(audio_consumer, "timing")
+                        else None
+                    ),
                     "rates": {
                         "audio_chunks_in_per_sec": audio_chunks_in_rate,
                         "audio_samples_in_per_sec": audio_samples_in_rate,

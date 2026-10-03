@@ -25,6 +25,7 @@ import numpy as np
 from scipy import signal
 
 from common.audio_queue_config import get_audio_queue_config
+from monitoring.timing import TimingCollector, timestamp_ns
 from vfos.state import VFOManager
 
 logger = logging.getLogger("ssb-demodulator")
@@ -118,6 +119,7 @@ class SSBDemodulator(threading.Thread):
             "is_sleeping": False,
         }
         self.stats_lock = threading.Lock()
+        self.timing = TimingCollector()
 
         # Track sleeping state (mirror in stats["is_sleeping"])
         self.is_sleeping = False
@@ -306,6 +308,12 @@ class SSBDemodulator(threading.Thread):
 
                 iq_message = self.iq_queue.get(timeout=0.1)
 
+                iq_enqueued_at_ns = iq_message.get("iq_enqueued_at_ns")
+                if iq_enqueued_at_ns is not None:
+                    self.timing.record_duration(
+                        "queue_age", (time.perf_counter_ns() - iq_enqueued_at_ns) / 1_000_000.0
+                    )
+
                 # Update stats
                 with self.stats_lock:
                     self.stats["iq_chunks_in"] += 1
@@ -320,6 +328,9 @@ class SSBDemodulator(threading.Thread):
 
                 if samples is None or len(samples) == 0:
                     continue
+
+                processing_started = self.timing.start()
+                input_duration_seconds = len(samples) / max(float(sdr_sample_rate or 0), 1.0)
 
                 # Update sample count
                 with self.stats_lock:
@@ -443,7 +454,9 @@ class SSBDemodulator(threading.Thread):
                     )
                     continue
 
+                translation_started = self.timing.start()
                 translated = self._frequency_translate(samples, offset_freq, sdr_sample_rate)
+                self.timing.record_since("translation", translation_started)
 
                 # Step 2: Decimate and filter to bandwidth (sideband selection done by filter)
                 iir_coeffs, decimation = self.decimation_filter
@@ -453,8 +466,10 @@ class SSBDemodulator(threading.Thread):
                     # Initialize filter state on first run
                     decimation_state = signal.lfilter_zi(b, a) * translated[0]
 
+                decimation_started = self.timing.start()
                 filtered, decimation_state = signal.lfilter(b, a, translated, zi=decimation_state)
                 decimated = filtered[::decimation]
+                self.timing.record_since("decimation", decimation_started)
 
                 # Measure RF signal power for squelch AFTER filtering
                 # Calculate on every chunk for accurate squelch operation
@@ -474,7 +489,9 @@ class SSBDemodulator(threading.Thread):
                 intermediate_rate = sdr_sample_rate / decimation
 
                 # Step 3: SSB demodulation
+                demodulation_started = self.timing.start()
                 demodulated = self._ssb_demodulate(decimated)
+                self.timing.record_since("demodulation", demodulation_started)
 
                 # Step 4: Audio filtering
                 if audio_filter_state is None:
@@ -490,7 +507,9 @@ class SSBDemodulator(threading.Thread):
                     len(audio_filtered) * self.audio_sample_rate / intermediate_rate
                 )
                 if num_output_samples > 0:
+                    resample_started = self.timing.start()
                     audio = signal.resample(audio_filtered, num_output_samples)
+                    self.timing.record_since("resample", resample_started)
 
                     # Apply amplification based on VFO volume setting
                     # Get volume from VFO state if available, otherwise use default
@@ -573,6 +592,12 @@ class SSBDemodulator(threading.Thread):
                             "vfo_number": self.vfo_number,  # Add VFO number for multi-VFO support
                             "rf_power_db": self.last_rf_power_db,  # Include latest power measurement
                         }
+                        pipeline_started_at_ns = iq_message.get("pipeline_started_at_ns")
+                        if pipeline_started_at_ns is not None:
+                            audio_message["pipeline_started_at_ns"] = pipeline_started_at_ns
+                        audio_enqueued_at_ns = timestamp_ns()
+                        if audio_enqueued_at_ns is not None:
+                            audio_message["audio_enqueued_at_ns"] = audio_enqueued_at_ns
 
                         # Always output audio (UI handles muting, transcription always active)
                         # Put audio chunk in queue (single output point)
@@ -593,6 +618,8 @@ class SSBDemodulator(threading.Thread):
                         except Exception as e:
                             logger.warning(f"Could not queue audio: {str(e)}")
                             break
+
+                self.timing.record_since("processing", processing_started, input_duration_seconds)
 
             except Exception as e:
                 if self.running:

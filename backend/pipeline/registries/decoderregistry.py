@@ -14,53 +14,75 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
+import logging
 from dataclasses import dataclass
-from typing import List, Optional, Type
+from typing import Dict, List, Optional, Type
+
+logger = logging.getLogger("decoder-registry")
+unavailable_decoder_reasons: Dict[str, str] = {}
 
 # Import decoder classes
 try:
     from demodulators.aprsdecoder import APRSDecoder
-except Exception:
+except Exception as error:
+    logger.warning("APRS decoder is unavailable: %s", error)
+    unavailable_decoder_reasons["aprs"] = f"{type(error).__name__}: {error}"
     APRSDecoder = None
 
 try:
     from demodulators.bpskdecoder import BPSKDecoder
-except Exception:
+except Exception as error:
+    logger.warning("BPSK decoder is unavailable: %s", error)
+    unavailable_decoder_reasons["bpsk"] = f"{type(error).__name__}: {error}"
     BPSKDecoder = None
 
 try:
     from demodulators.fskdecoder import FSKDecoder
-except Exception:
+except Exception as error:
+    logger.warning("FSK decoder is unavailable: %s", error)
+    unavailable_decoder_reasons["fsk"] = f"{type(error).__name__}: {error}"
     FSKDecoder = None
 
 try:
     from demodulators.gfskdecoder import GFSKDecoder
-except Exception:
+except Exception as error:
+    logger.warning("GFSK decoder is unavailable: %s", error)
+    unavailable_decoder_reasons["gfsk"] = f"{type(error).__name__}: {error}"
     GFSKDecoder = None
 
 try:
     from demodulators.gmskdecoder import GMSKDecoder
-except Exception:
+except Exception as error:
+    logger.warning("GMSK decoder is unavailable: %s", error)
+    unavailable_decoder_reasons["gmsk"] = f"{type(error).__name__}: {error}"
     GMSKDecoder = None
 
 try:
     from demodulators.morsedecoder import MorseDecoder
-except Exception:
+except Exception as error:
+    logger.warning("Morse decoder is unavailable: %s", error)
+    unavailable_decoder_reasons["morse"] = f"{type(error).__name__}: {error}"
     MorseDecoder = None
 
 try:
     from demodulators.sstvdecoder import SSTVDecoder
-except Exception:
+except Exception as error:
+    logger.warning("SSTV decoder is unavailable: %s", error)
+    unavailable_decoder_reasons["sstv"] = f"{type(error).__name__}: {error}"
     SSTVDecoder = None
 
 try:
     from demodulators.geoscanimage import GeoscanImageDecoder
-except Exception:
+except Exception as error:
+    logger.warning("Geoscan image decoder is unavailable: %s", error)
+    unavailable_decoder_reasons["geoscanimage"] = f"{type(error).__name__}: {error}"
     GeoscanImageDecoder = None
 
 try:
     from demodulators.gnsssdrdecoder import GNSSSdrDecoder
-except Exception:
+except Exception as error:
+    logger.warning("GNSS decoder is unavailable: %s", error)
+    unavailable_decoder_reasons["gnss"] = f"{type(error).__name__}: {error}"
     GNSSSdrDecoder = None
 
 
@@ -251,6 +273,10 @@ class DecoderRegistry:
         """Get decoder class by name"""
         caps = self.get_capabilities(decoder_name)
         return caps.decoder_class if caps else None
+
+    def get_unavailable_reason(self, decoder_name: str) -> Optional[str]:
+        """Return the recorded module-import error for an unavailable decoder."""
+        return unavailable_decoder_reasons.get(decoder_name)
 
     def is_raw_iq_decoder(self, decoder_name: str) -> bool:
         """Check if decoder works on raw IQ samples"""

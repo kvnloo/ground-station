@@ -22,12 +22,13 @@ import numpy as np
 import psutil
 
 from fft.averager import FFTAverager
+from monitoring.timing import TimingCollector, bind_enabled_event
 from workers.common import window_functions
 
 logger = logging.getLogger("fft-processor")
 
 
-def fft_processor_process(iq_queue, data_queue, stop_event, client_id):
+def fft_processor_process(iq_queue, data_queue, stop_event, client_id, timing_enabled_event=None):
     """
     Separate process that consumes IQ data and produces FFT results.
 
@@ -39,9 +40,13 @@ def fft_processor_process(iq_queue, data_queue, stop_event, client_id):
         data_queue: Queue for sending FFT results back to the main process
         stop_event: Event to signal the process to stop
         client_id: Client identifier for this processing session
+        timing_enabled_event: Shared event that enables detailed timings on demand
     """
 
     logger.info(f"FFT processor started for client {client_id}")
+    if timing_enabled_event is not None:
+        bind_enabled_event(timing_enabled_event)
+    timing = TimingCollector()
 
     # Configuration state
     fft_size = 16384
@@ -107,6 +112,12 @@ def fft_processor_process(iq_queue, data_queue, stop_event, client_id):
                 # Update stats
                 stats["iq_chunks_in"] += 1
                 stats["last_activity"] = time.time()
+
+                captured_at_ns = iq_message.get("pipeline_captured_at_ns")
+                if captured_at_ns is not None:
+                    timing.record_duration(
+                        "queue_age", (time.perf_counter_ns() - captured_at_ns) / 1_000_000.0
+                    )
 
                 # Handle configuration updates
                 if "config" in iq_message:
@@ -176,12 +187,21 @@ def fft_processor_process(iq_queue, data_queue, stop_event, client_id):
                 # Update sample count
                 stats["iq_samples_in"] += len(samples)
 
+                processing_started = timing.start()
+                input_duration_seconds = len(samples) / max(
+                    float(iq_message.get("sample_rate") or 0), 1.0
+                )
+
                 # Calculate the number of samples needed for the FFT
                 actual_fft_size = fft_size
 
                 # Apply window function
+                window_started = timing.start()
                 window_func = window_functions.get(fft_window.lower(), np.hanning)
                 window = window_func(actual_fft_size)
+                timing.record_since("window", window_started)
+
+                transform_started = timing.start()
 
                 # When UI FFT averaging is "None" (factor=1), avoid heavy hidden
                 # intra-block smoothing. Still honor overlap so the toggle has
@@ -293,6 +313,7 @@ def fft_processor_process(iq_queue, data_queue, stop_event, client_id):
 
                 # Convert to Float32 for efficiency in transmission
                 fft_result = fft_result.astype(np.float32)
+                timing.record_since("transform", transform_started)
 
                 # Add FFT to averager and send only when ready
                 averaged_fft = fft_averager.add_fft(fft_result)
@@ -333,10 +354,13 @@ def fft_processor_process(iq_queue, data_queue, stop_event, client_id):
                         logger.debug(f"Failed to send FFT data to queue: {e}")
                         stats["queue_timeouts"] += 1
 
+                timing.record_since("processing", processing_started, input_duration_seconds)
+
                 # Periodically send stats to main process
                 current_time = time.time()
                 if current_time - last_stats_send >= stats_send_interval:
                     try:
+                        stats["timing"] = timing.snapshot()
                         data_queue.put(
                             {
                                 "type": "stats",

@@ -26,6 +26,7 @@ from common.constants import DictKeys, QueueMessageTypes, SocketEvents
 from common.sdrconfig import SDRConfig
 from fft.processor import fft_processor_process
 from handlers.entities.filebrowser import emit_file_browser_state
+from monitoring.timing import TimestampedQueue, get_enabled_event
 from pipeline.orchestration.gnssfix import derive_gnss_fix_status_from_output, gnss_fix_stream_key
 from pipeline.orchestration.gnsssatelliteresolver import GnssSatelliteResolver
 from pipeline.streaming.iqbroadcaster import IQBroadcaster
@@ -557,9 +558,26 @@ class ProcessLifecycleManager:
 
             # Create and start the process with a descriptive name
             # Pass both IQ queues so SDR can broadcast to both consumers
+            timing_enabled_event = get_enabled_event()
+            timed_iq_queue_fft = (
+                TimestampedQueue(iq_queue_fft, timing_enabled_event)
+                if iq_queue_fft is not None
+                else None
+            )
+            timed_iq_queue_demod = (
+                TimestampedQueue(iq_queue_demod, timing_enabled_event)
+                if iq_queue_demod is not None
+                else None
+            )
             process = multiprocessing.Process(
                 target=named_worker,
-                args=(config_queue, data_queue, stop_event, iq_queue_fft, iq_queue_demod),
+                args=(
+                    config_queue,
+                    data_queue,
+                    stop_event,
+                    timed_iq_queue_fft,
+                    timed_iq_queue_demod,
+                ),
                 name=process_name,
                 daemon=True,
             )
@@ -574,7 +592,7 @@ class ProcessLifecycleManager:
             fft_named_worker = _create_named_worker_process(fft_processor_process, fft_process_name)
             fft_process = multiprocessing.Process(
                 target=fft_named_worker,
-                args=(iq_queue_fft, data_queue, stop_event, client_id),
+                args=(iq_queue_fft, data_queue, stop_event, client_id, get_enabled_event()),
                 name=fft_process_name,
                 daemon=True,
             )

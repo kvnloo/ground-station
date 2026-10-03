@@ -77,7 +77,7 @@ const truncateId = (id, length = 8) => {
     return id.substring(0, length) + '...';
 };
 
-const MetricRow = ({ label, value, unit }) => (
+const MetricRow = ({ label, value, unit, valueColor = 'text.primary' }) => (
     <Box sx={{ display: 'flex', justifyContent: 'space-between', my: 0.2, alignItems: 'baseline' }}>
         <Typography 
             variant="caption" 
@@ -98,12 +98,94 @@ const MetricRow = ({ label, value, unit }) => (
                 letterSpacing: '0.02em',
                 minWidth: '60px',
                 textAlign: 'right',
+                color: valueColor,
             }}
         >
             {value} {unit && <span style={{ fontSize: '0.85em', opacity: 0.6, fontFamily: 'inherit' }}>{unit}</span>}
         </Typography>
     </Box>
 );
+
+const formatMilliseconds = (milliseconds) => {
+    if (milliseconds === null || milliseconds === undefined) return 'N/A';
+    if (milliseconds >= 1000) return `${(milliseconds / 1000).toFixed(2)}s`;
+    if (milliseconds >= 100) return `${milliseconds.toFixed(0)}ms`;
+    return `${milliseconds.toFixed(1)}ms`;
+};
+
+const getTimingStages = (component) => (
+    component?.timing?.stages || component?.stats?.timing?.stages || {}
+);
+
+const getProcessingColor = (rtf) => {
+    if (rtf === undefined) return 'text.primary';
+    if (rtf >= 1) return 'error.main';
+    if (rtf >= 0.5) return 'warning.main';
+    return 'success.main';
+};
+
+const getLatencyColor = (milliseconds) => {
+    if (milliseconds === undefined) return 'text.primary';
+    if (milliseconds >= 500) return 'error.main';
+    if (milliseconds >= 100) return 'warning.main';
+    return 'success.main';
+};
+
+const getInputQueueAge = (component) => {
+    const stages = getTimingStages(component);
+    return stages.queue_age || stages.source_queue_age;
+};
+
+const ProcessingMetrics = ({ component }) => {
+    const stages = getTimingStages(component);
+    // Broadcasters have fan-out work rather than a DSP processing stage.
+    const processing = stages.processing || stages.fanout;
+    const pipelineAge = stages.pipeline_age;
+
+    if (!processing && !pipelineAge) return null;
+
+    const rtf = processing?.p95_rtf;
+    const processingColor = getProcessingColor(rtf);
+    const details = Object.entries(stages)
+        .map(([name, summary]) => {
+            const rtfSuffix = summary.p95_rtf === undefined ? '' : `, RTF ${summary.p95_rtf.toFixed(2)}`;
+            return `${name}: p95 ${formatMilliseconds(summary.p95_ms)}${rtfSuffix}`;
+        })
+        .join('\n');
+
+    return (
+        <Box>
+            <Tooltip title={<span style={{ whiteSpace: 'pre-line' }}>{details}</span>} arrow>
+                <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 0.5, fontSize: '0.7rem', opacity: 0.75, textTransform: 'uppercase', letterSpacing: '0.05em', cursor: 'help' }}>
+                    Processing
+                </Typography>
+            </Tooltip>
+            <Stack spacing={0.25}>
+                {processing && (
+                    <MetricRow
+                        label="P95"
+                        value={formatMilliseconds(processing.p95_ms)}
+                        valueColor={processingColor}
+                    />
+                )}
+                {rtf !== undefined && (
+                    <MetricRow
+                        label="P95 RTF"
+                        value={rtf.toFixed(2)}
+                        valueColor={processingColor}
+                    />
+                )}
+                {pipelineAge && (
+                    <MetricRow
+                        label="E2E"
+                        value={formatMilliseconds(pipelineAge.p95_ms)}
+                        valueColor={getLatencyColor(pipelineAge.p95_ms)}
+                    />
+                )}
+            </Stack>
+        </Box>
+    );
+};
 
 const CpuMemoryBars = ({ cpuPercent, memoryMb, memoryPercent }) => {
     const hasCpu = cpuPercent !== null && cpuPercent !== undefined;
@@ -216,6 +298,12 @@ export const ComponentNode = ({ data }) => {
     const isTracker = type === 'tracker';
     const isIQBroadcaster = type === 'broadcaster' && component.broadcaster_type === 'iq';
     const isAudioBroadcaster = type === 'broadcaster' && component.broadcaster_type === 'audio';
+    const timingStages = getTimingStages(component);
+    const hasProcessingMetrics = (
+        ['broadcaster', 'fft', 'demodulator', 'streamer'].includes(type)
+        && Boolean(timingStages.processing || timingStages.fanout || timingStages.pipeline_age)
+    );
+    const hasInputQueueAge = Boolean(getInputQueueAge(component));
     const isIQDecoder = (
         type === 'decoder' && (
             component.type === 'BPSKDecoder' ||
@@ -268,7 +356,9 @@ export const ComponentNode = ({ data }) => {
                 elevation={1}
                 sx={{
                     p: 0,
-                    minWidth: (type === 'fft' || type === 'worker' || type === 'tracker' || type === 'decoder') ? 380 : 280,
+                    minWidth: hasProcessingMetrics
+                        ? (type === 'fft' ? 500 : 390)
+                        : (type === 'fft' || type === 'worker' || type === 'tracker' || type === 'decoder') ? 380 : 280,
                     backgroundColor: (theme) => theme.palette.background?.paper || theme.palette.background.paper,
                     // Remove outside border entirely
                     border: 0,
@@ -358,10 +448,16 @@ export const ComponentNode = ({ data }) => {
 
                 <Divider sx={{ opacity: 0.6 }} />
 
-                {/* Metrics - Two or Three column layout with dividers */}
+                {/* Processing timing gets its own column between pipeline input and output. */}
                 <Box sx={{
                     display: 'grid',
-                    gridTemplateColumns: (type === 'fft' || type === 'worker' || type === 'tracker' || type === 'decoder') ? 'minmax(85px, 1fr) auto 90px auto minmax(85px, 1fr)' : '1fr auto 1fr',
+                    gridTemplateColumns: hasProcessingMetrics
+                        ? (type === 'fft'
+                            ? 'minmax(85px, 1fr) auto minmax(95px, 1fr) auto 90px auto minmax(85px, 1fr)'
+                            : 'minmax(85px, 1fr) auto minmax(95px, 1fr) auto minmax(85px, 1fr)')
+                        : (type === 'fft' || type === 'worker' || type === 'tracker' || type === 'decoder')
+                            ? 'minmax(85px, 1fr) auto 90px auto minmax(85px, 1fr)'
+                            : '1fr auto 1fr',
                     gap: 0.75,
                     p: 1,
                     backgroundColor: (theme) => theme.palette.background?.paper || theme.palette.background.paper,
@@ -499,6 +595,13 @@ export const ComponentNode = ({ data }) => {
                                         label="Queue"
                                         value={formatQueueSize(component.source_queue_size, component.source_queue_maxsize)}
                                     />
+                                    {hasInputQueueAge && (
+                                        <MetricRow
+                                            label="Queue age"
+                                            value={formatMilliseconds(getInputQueueAge(component).p95_ms)}
+                                            valueColor={getLatencyColor(getInputQueueAge(component).p95_ms)}
+                                        />
+                                    )}
                                     <MetricRow
                                         label="Msgs"
                                         value={formatNumber(component.stats?.messages_in || component.stats?.messages_received)}
@@ -512,6 +615,12 @@ export const ComponentNode = ({ data }) => {
                             </Box>
                             {/* Vertical divider */}
                             <Divider orientation="vertical" flexItem sx={{ opacity: 0.4 }} />
+                            {hasProcessingMetrics && (
+                                <>
+                                    <ProcessingMetrics component={component} />
+                                    <Divider orientation="vertical" flexItem sx={{ opacity: 0.4 }} />
+                                </>
+                            )}
                             {/* Right column - Output */}
                             <Box>
                                 <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 0.5, fontSize: '0.7rem', opacity: 0.75, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -531,6 +640,12 @@ export const ComponentNode = ({ data }) => {
                                         value={formatRate(component.rates?.messages_broadcast_per_sec)}
                                         unit="/s"
                                     />
+                                    {component.stats?.messages_dropped !== undefined && (
+                                        <MetricRow
+                                            label="Drops"
+                                            value={formatNumber(component.stats.messages_dropped)}
+                                        />
+                                    )}
                                 </Stack>
                             </Box>
                         </>
@@ -549,6 +664,13 @@ export const ComponentNode = ({ data }) => {
                                         label="Queue"
                                         value={formatQueueSize(component.input_queue_size, component.input_queue_maxsize)}
                                     />
+                                    {hasInputQueueAge && (
+                                        <MetricRow
+                                            label="Queue age"
+                                            value={formatMilliseconds(getInputQueueAge(component).p95_ms)}
+                                            valueColor={getLatencyColor(getInputQueueAge(component).p95_ms)}
+                                        />
+                                    )}
                                     <MetricRow
                                         label="IQ"
                                         value={formatNumber(component.stats?.iq_chunks_in)}
@@ -562,6 +684,12 @@ export const ComponentNode = ({ data }) => {
                             </Box>
                             {/* Vertical divider */}
                             <Divider orientation="vertical" flexItem sx={{ opacity: 0.4 }} />
+                            {hasProcessingMetrics && (
+                                <>
+                                    <ProcessingMetrics component={component} />
+                                    <Divider orientation="vertical" flexItem sx={{ opacity: 0.4 }} />
+                                </>
+                            )}
                             {/* Middle column - CPU & Memory Bars */}
                             <Box>
                                 <CpuMemoryBars
@@ -609,6 +737,13 @@ export const ComponentNode = ({ data }) => {
                                         label="Queue"
                                         value={formatQueueSize(component.input_queue_size, component.input_queue_maxsize)}
                                     />
+                                    {hasInputQueueAge && (
+                                        <MetricRow
+                                            label="Queue age"
+                                            value={formatMilliseconds(getInputQueueAge(component).p95_ms)}
+                                            valueColor={getLatencyColor(getInputQueueAge(component).p95_ms)}
+                                        />
+                                    )}
                                     <MetricRow
                                         label="IQ"
                                         value={formatNumber(component.stats?.iq_chunks_in)}
@@ -637,6 +772,12 @@ export const ComponentNode = ({ data }) => {
                             </Box>
                             {/* Vertical divider */}
                             <Divider orientation="vertical" flexItem sx={{ opacity: 0.4 }} />
+                            {hasProcessingMetrics && (
+                                <>
+                                    <ProcessingMetrics component={component} />
+                                    <Divider orientation="vertical" flexItem sx={{ opacity: 0.4 }} />
+                                </>
+                            )}
                             {/* Right column - Output */}
                             <Box>
                                 <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 0.5, fontSize: '0.7rem', opacity: 0.75, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -656,6 +797,12 @@ export const ComponentNode = ({ data }) => {
                                         value={formatRate(component.rates?.audio_chunks_out_per_sec)}
                                         unit="/s"
                                     />
+                                    {component.stats?.pending_emits !== undefined && (
+                                        <MetricRow
+                                            label="Pending"
+                                            value={formatNumber(component.stats.pending_emits)}
+                                        />
+                                    )}
                                 </Stack>
                             </Box>
                         </>
@@ -870,6 +1017,13 @@ export const ComponentNode = ({ data }) => {
                                         label="Queue"
                                         value={component.input_queue_size || 0}
                                     />
+                                    {hasInputQueueAge && (
+                                        <MetricRow
+                                            label="Queue age"
+                                            value={formatMilliseconds(getInputQueueAge(component).p95_ms)}
+                                            valueColor={getLatencyColor(getInputQueueAge(component).p95_ms)}
+                                        />
+                                    )}
                                     <MetricRow
                                         label="Audio"
                                         value={formatNumber(component.stats?.audio_chunks_in)}
@@ -883,6 +1037,12 @@ export const ComponentNode = ({ data }) => {
                             </Box>
                             {/* Vertical divider */}
                             <Divider orientation="vertical" flexItem sx={{ opacity: 0.4 }} />
+                            {hasProcessingMetrics && (
+                                <>
+                                    <ProcessingMetrics component={component} />
+                                    <Divider orientation="vertical" flexItem sx={{ opacity: 0.4 }} />
+                                </>
+                            )}
                             {/* Right column - Output */}
                             <Box>
                                 <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 0.5, fontSize: '0.7rem', opacity: 0.75, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -898,11 +1058,23 @@ export const ComponentNode = ({ data }) => {
                                         value={formatRate(component.rates?.messages_emitted_per_sec)}
                                         unit="/s"
                                     />
+                                    {component.stats?.pending_emits !== undefined && (
+                                        <MetricRow
+                                            label="Pending"
+                                            value={formatNumber(component.stats.pending_emits)}
+                                        />
+                                    )}
+                                    {component.stats?.emit_errors !== undefined && (
+                                        <MetricRow
+                                            label="Emit errors"
+                                            value={formatNumber(component.stats.emit_errors)}
+                                        />
+                                    )}
                                 </Stack>
                             </Box>
                             {/* Active sessions - full width */}
                             {component.active_sessions && Object.keys(component.active_sessions).length > 0 && (
-                                <Box sx={{ gridColumn: '1 / 4', mt: 1 }}>
+                                <Box sx={{ gridColumn: '1 / -1', mt: 1 }}>
                                     <Divider sx={{ mb: 0.5 }} />
                                     <Typography variant="caption" sx={{ fontWeight: 'bold', color: 'text.secondary', display: 'block', mb: 0.5 }}>
                                         Active Sessions
@@ -986,7 +1158,7 @@ export const ComponentNode = ({ data }) => {
                     {/* Browser metrics */}
                     {type === 'browser' && (
                         <>
-                            <Box sx={{ gridColumn: '1 / 4' }}>
+                            <Box sx={{ gridColumn: '1 / -1' }}>
                                 <Typography variant="caption" sx={{ fontWeight: 'bold', color: 'text.secondary', display: 'block', mb: 0.5 }}>
                                     Connection Info
                                 </Typography>
@@ -1028,7 +1200,7 @@ export const ComponentNode = ({ data }) => {
                                     )}
                                 </Stack>
                             </Box>
-                            <Box sx={{ gridColumn: '1 / 4', mt: 1 }}>
+                            <Box sx={{ gridColumn: '1 / -1', mt: 1 }}>
                                 <Divider sx={{ mb: 0.5 }} />
                                 <Typography variant="caption" sx={{ fontWeight: 'bold', color: 'text.secondary', display: 'block', mb: 0.5 }}>
                                     Received
@@ -1058,7 +1230,7 @@ export const ComponentNode = ({ data }) => {
 
                     {/* Show errors if any - full width */}
                     {component.stats?.errors > 0 && (
-                        <Box sx={{ gridColumn: (type === 'fft' || type === 'worker' || type === 'tracker' || type === 'decoder') ? '1 / 6' : '1 / 4' }}>
+                        <Box sx={{ gridColumn: '1 / -1' }}>
                             <Divider sx={{ my: 0.5 }} />
                             <MetricRow
                                 label="Errors"

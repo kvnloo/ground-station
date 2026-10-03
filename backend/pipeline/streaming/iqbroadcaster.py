@@ -23,6 +23,7 @@ import time
 from dataclasses import asdict
 from typing import Any, Dict, Optional, Union
 
+from monitoring.timing import TimingCollector, timestamp_ns
 from vfos.state import VFOManager
 
 
@@ -67,6 +68,7 @@ class IQBroadcaster(threading.Thread):
             "errors": 0,
         }
         self.stats_lock = threading.Lock()
+        self.timing = TimingCollector()
 
     def subscribe(
         self,
@@ -286,6 +288,17 @@ class IQBroadcaster(threading.Thread):
                     continue
 
                 # Broadcast to all subscribers
+                fanout_started = self.timing.start()
+                captured_at_ns = iq_message.get("pipeline_captured_at_ns")
+                if captured_at_ns is not None:
+                    self.timing.record_duration(
+                        "source_queue_age", (time.perf_counter_ns() - captured_at_ns) / 1_000_000.0
+                    )
+                pipeline_started_ns = captured_at_ns or timestamp_ns()
+                if pipeline_started_ns is not None:
+                    # This marks the first in-process handoff. Workers run in
+                    # separate processes, so this is the earliest common clock.
+                    iq_message["pipeline_started_at_ns"] = pipeline_started_ns
                 with self.lock:
                     dead_subscribers = []
                     for subscription_key, subscriber_info in self.subscribers.items():
@@ -307,6 +320,9 @@ class IQBroadcaster(threading.Thread):
                             enriched_message["vfo_states"] = {}
 
                         try:
+                            enqueued_at_ns = timestamp_ns()
+                            if enqueued_at_ns is not None:
+                                enriched_message["iq_enqueued_at_ns"] = enqueued_at_ns
                             # Handle both threading and multiprocessing queues
                             if is_process_queue:
                                 # Multiprocessing queue - use block=False
@@ -339,6 +355,8 @@ class IQBroadcaster(threading.Thread):
                     for dead_key in dead_subscribers:
                         del self.subscribers[dead_key]
                         self.logger.info(f"Removed dead subscriber {dead_key}")
+
+                self.timing.record_since("fanout", fanout_started)
 
             except Exception as e:
                 if self.running:

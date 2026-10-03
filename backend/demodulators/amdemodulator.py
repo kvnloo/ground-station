@@ -25,6 +25,7 @@ import numpy as np
 from scipy import signal
 
 from common.audio_queue_config import get_audio_queue_config
+from monitoring.timing import TimingCollector, timestamp_ns
 from vfos.state import VFOManager
 
 logger = logging.getLogger("am-demodulator")
@@ -102,6 +103,7 @@ class AMDemodulator(threading.Thread):
             "is_sleeping": False,
         }
         self.stats_lock = threading.Lock()
+        self.timing = TimingCollector()
 
         # Track sleeping state (mirror in stats["is_sleeping"])
         self.is_sleeping = False
@@ -297,6 +299,12 @@ class AMDemodulator(threading.Thread):
 
                 iq_message = self.iq_queue.get(timeout=0.1)
 
+                iq_enqueued_at_ns = iq_message.get("iq_enqueued_at_ns")
+                if iq_enqueued_at_ns is not None:
+                    self.timing.record_duration(
+                        "queue_age", (time.perf_counter_ns() - iq_enqueued_at_ns) / 1_000_000.0
+                    )
+
                 # Update stats
                 with self.stats_lock:
                     self.stats["iq_chunks_in"] += 1
@@ -322,6 +330,9 @@ class AMDemodulator(threading.Thread):
 
                 if samples is None or len(samples) == 0:
                     continue
+
+                processing_started = self.timing.start()
+                input_duration_seconds = len(samples) / max(float(sdr_sample_rate or 0), 1.0)
 
                 # Update sample count and ingest accumulators
                 with self.stats_lock:
@@ -405,7 +416,9 @@ class AMDemodulator(threading.Thread):
 
                 offset_freq = vfo_state.center_freq - sdr_center_freq
 
+                translation_started = self.timing.start()
                 translated = self._frequency_translate(samples, offset_freq, sdr_sample_rate)
+                self.timing.record_since("translation", translation_started)
 
                 # Step 2: Decimate and filter to bandwidth
                 iir_coeffs, decimation = self.decimation_filter
@@ -415,8 +428,10 @@ class AMDemodulator(threading.Thread):
                     # Initialize filter state on first run
                     decimation_state = signal.lfilter_zi(b, a) * translated[0]
 
+                decimation_started = self.timing.start()
                 filtered, decimation_state = signal.lfilter(b, a, translated, zi=decimation_state)
                 decimated = filtered[::decimation]
+                self.timing.record_since("decimation", decimation_started)
 
                 # Measure RF signal power for squelch AFTER filtering
                 # Calculate on every chunk for accurate squelch operation
@@ -436,7 +451,9 @@ class AMDemodulator(threading.Thread):
                 intermediate_rate = sdr_sample_rate / decimation
 
                 # Step 3: AM demodulation (envelope detection)
+                demodulation_started = self.timing.start()
                 demodulated = self._am_demodulate(decimated)
+                self.timing.record_since("demodulation", demodulation_started)
 
                 # Step 4: DC blocking
                 b, a = self.dc_blocker  # type: ignore[misc]
@@ -463,7 +480,9 @@ class AMDemodulator(threading.Thread):
                     len(audio_filtered) * self.audio_sample_rate / intermediate_rate
                 )
                 if num_output_samples > 0:
+                    resample_started = self.timing.start()
                     audio = signal.resample(audio_filtered, num_output_samples)
+                    self.timing.record_since("resample", resample_started)
 
                     # Apply amplification to boost low audio levels
                     # Adjust this gain factor if audio is still too quiet or too loud
@@ -522,14 +541,19 @@ class AMDemodulator(threading.Thread):
                         # Put audio chunk in queue - use put_nowait to avoid blocking
                         # If queue is full, skip this chunk to prevent buffer buildup
                         try:
-                            self.audio_queue.put_nowait(
-                                {
-                                    "session_id": self.session_id,
-                                    "audio": chunk,
-                                    "vfo_number": self.vfo_number,  # Tag audio with VFO number
-                                    "rf_power_db": self.last_rf_power_db,  # Include latest power measurement
-                                }
-                            )
+                            audio_message = {
+                                "session_id": self.session_id,
+                                "audio": chunk,
+                                "vfo_number": self.vfo_number,  # Tag audio with VFO number
+                                "rf_power_db": self.last_rf_power_db,  # Include latest power measurement
+                            }
+                            pipeline_started_at_ns = iq_message.get("pipeline_started_at_ns")
+                            if pipeline_started_at_ns is not None:
+                                audio_message["pipeline_started_at_ns"] = pipeline_started_at_ns
+                            audio_enqueued_at_ns = timestamp_ns()
+                            if audio_enqueued_at_ns is not None:
+                                audio_message["audio_enqueued_at_ns"] = audio_enqueued_at_ns
+                            self.audio_queue.put_nowait(audio_message)
                             # Update stats
                             with self.stats_lock:
                                 self.stats["audio_chunks_out"] += 1
@@ -543,6 +567,8 @@ class AMDemodulator(threading.Thread):
                         except Exception as e:
                             logger.warning(f"Could not queue audio: {str(e)}")
                             break
+
+                self.timing.record_since("processing", processing_started, input_duration_seconds)
 
             except Exception as e:
                 if self.running:

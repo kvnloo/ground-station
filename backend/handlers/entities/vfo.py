@@ -641,8 +641,22 @@ async def handle_vfo_decoder_state(vfo_state, session_id, logger, force_restart=
             logger.info(f"Stopped decoder for session {session_id} VFO {vfo_number} (VFO inactive)")
         return
 
-    # If decoder is "none" or not registered, stop this VFO's decoder if it exists
-    if requested_decoder == "none" or not decoder_class:
+    # Treat an unavailable decoder differently from an explicit "none" request.
+    # Optional decoder imports can fail when a development environment is missing
+    # one dependency; silently treating that as "none" makes the UI failure opaque.
+    if requested_decoder != "none" and not decoder_class:
+        logger.error(
+            "Decoder '%s' is unavailable for session %s VFO %s: %s. Available decoders: %s",
+            requested_decoder,
+            session_id,
+            vfo_number,
+            decoder_registry.get_unavailable_reason(requested_decoder) or "not registered",
+            ", ".join(decoder_registry.list_decoders()),
+        )
+        return
+
+    # An explicit "none" request stops this VFO's current decoder.
+    if requested_decoder == "none":
         if current_decoder:
             process_manager.stop_decoder(sdr_id, session_id, vfo_number)
             logger.info(f"Stopped decoder for session {session_id} VFO {vfo_number}")
