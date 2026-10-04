@@ -348,6 +348,7 @@ export default function FileBrowserMain() {
 
     const [selectedItem, setSelectedItem] = useState(null);
     const [detailsOpen, setDetailsOpen] = useState(false);
+    const [timeTick, setTimeTick] = useState(0);
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [itemToDelete, setItemToDelete] = useState(null);
     const [batchDeleteDialogOpen, setBatchDeleteDialogOpen] = useState(false);
@@ -382,6 +383,24 @@ export default function FileBrowserMain() {
             dispatch(markFileBrowserVisited());
         }
     }, [dispatch, filesLoading, files.length]);
+
+    // Relative card labels and active recording durations depend on the clock,
+    // not on a new inventory response. Tick at each minute boundary so an open
+    // File Browser stays current without repeatedly querying the backend.
+    useEffect(() => {
+        let intervalId;
+        const refreshTimeLabels = () => setTimeTick((previous) => previous + 1);
+        const millisecondsToNextMinute = 60_000 - (Date.now() % 60_000);
+        const timeoutId = window.setTimeout(() => {
+            refreshTimeLabels();
+            intervalId = window.setInterval(refreshTimeLabels, 60_000);
+        }, millisecondsToNextMinute);
+
+        return () => {
+            window.clearTimeout(timeoutId);
+            if (intervalId) window.clearInterval(intervalId);
+        };
+    }, []);
 
     // Query one server-side page whenever its query parameters change.
     useEffect(() => {
@@ -427,7 +446,7 @@ export default function FileBrowserMain() {
     // local because it is purely presentational.
     const displayItems = useMemo(() => {
         return files.map(item => buildFileBrowserDisplayItem(item, formatDuration));
-    }, [files]);
+    }, [files, timeTick]);
 
     // Group files by day for table view
     const filesByDay = useMemo(() => {
