@@ -20,6 +20,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { Box, IconButton, Tooltip, Fade, ToggleButtonGroup, ToggleButton, Grid } from '@mui/material';
+import { darken } from '@mui/material/styles';
 import {
     clearTranscriptions,
     increaseFontSize,
@@ -151,6 +152,7 @@ const VFOSubtitle = ({
     locale
 }) => {
     const [lines, setLines] = useState([]);
+    const subtitleColor = darken(vfoColor || '#000000', 0.32);
 
     // Individual position state per VFO
     const [position, setPosition] = useState(() => {
@@ -453,7 +455,7 @@ const VFOSubtitle = ({
                         onPointerCancel={finishDrag}
                         onLostPointerCapture={finishDrag}
                         sx={{
-                            backgroundColor: vfoColor,
+                            backgroundColor: subtitleColor,
                             padding: { xs: '4px 6px', sm: '6px 10px' },
                             display: 'flex',
                             alignItems: 'center',
@@ -641,7 +643,7 @@ const VFOSubtitle = ({
                             backgroundColor: '#000000',
                             padding: { xs: '8px 12px', sm: '10px 16px' },
                             textAlign: textAlignment,
-                            border: `1px solid ${vfoColor}`,
+                            border: `1px solid ${subtitleColor}`,
                             borderTop: 'none',
                             borderBottomLeftRadius: '8px',
                             borderBottomRightRadius: '8px',
