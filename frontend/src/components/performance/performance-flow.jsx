@@ -17,7 +17,7 @@
  *
  */
 
-import React, { useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useCallback, useState } from 'react';
 import ReactFlow, {
     Background,
     Controls,
@@ -30,7 +30,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { Box, Button, Typography } from '@mui/material';
 import { ComponentNode } from './flow-node.jsx';
-import { createFlowFromMetrics, applyDagreLayout } from './flow-layout.js';
+import { createFlowFromMetrics, applyDagreLayout, preserveNodePositions } from './flow-layout.js';
 
 const nodeTypes = {
     componentNode: ComponentNode,
@@ -39,6 +39,7 @@ const nodeTypes = {
 const FlowContent = ({ metrics, onAutoArrangeCallback }) => {
     const [nodes, setNodes, onNodesChange] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+    const [graphUnlocked, setGraphUnlocked] = useState(false);
     const fitViewCalledRef = useRef(false);
     const { fitView } = useReactFlow();
 
@@ -48,11 +49,16 @@ const FlowContent = ({ metrics, onAutoArrangeCallback }) => {
         return createFlowFromMetrics(metrics);
     }, [metrics]);
 
-    // Update nodes and edges when metrics change - always use fresh layout from createFlowFromMetrics
+    // Locked graphs follow the generated layout. When the user unlocks the graph,
+    // metric updates must retain any positions they have dragged nodes to.
     useEffect(() => {
-        setNodes(flowNodes);
+        setNodes((currentNodes) => (
+            graphUnlocked
+                ? preserveNodePositions(flowNodes, currentNodes)
+                : flowNodes
+        ));
         setEdges(flowEdges);
-    }, [flowNodes, flowEdges, setNodes, setEdges]);
+    }, [flowNodes, flowEdges, graphUnlocked, setNodes, setEdges]);
 
     // Fit view after nodes are rendered (only on first load)
     useEffect(() => {
@@ -149,7 +155,7 @@ const FlowContent = ({ metrics, onAutoArrangeCallback }) => {
                     gap={16}
                     variant="dots"
                 />
-                <Controls />
+                <Controls onInteractiveChange={setGraphUnlocked} />
                 <Panel position="top-left" style={{ zIndex: 1 }}>
                     <Box
                         sx={{

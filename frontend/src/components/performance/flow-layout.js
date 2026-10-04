@@ -131,6 +131,21 @@ const getEdgeColor = (dataType, queueUtilization = 0, isAnimated = true) => {
 };
 
 /**
+ * Apply fresh metric data without discarding positions the user set manually.
+ * Nodes which appear for the first time retain their generated default position.
+ */
+export const preserveNodePositions = (nextNodes, currentNodes) => {
+    const positionsByNodeId = new Map(
+        currentNodes.map(({ id, position }) => [id, position])
+    );
+
+    return nextNodes.map((node) => {
+        const position = positionsByNodeId.get(node.id);
+        return position ? { ...node, position } : node;
+    });
+};
+
+/**
  * Apply Dagre layout with rank constraints to organize nodes hierarchically
  * @param {Array} nodes - ReactFlow nodes
  * @param {Array} edges - ReactFlow edges
