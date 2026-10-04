@@ -112,11 +112,12 @@ def test_inventory_filters_a_single_observation_session(inventory):
     assert [item["id"] for item in by_observation["items"]] == ["decoded:packet.bin"]
 
 
-def test_observation_summary_includes_the_visible_artifact_count(inventory):
+def test_observation_summary_includes_the_visible_artifact_count_and_size(inventory):
     page = inventory.query()
     observation = next(item for item in page["items"] if item["id"] == "observation:NOAA.gsobs")
 
     assert observation["artifact_count"] == 2
+    assert observation["size"] == 13
 
 
 def test_observation_detail_uses_waterfall_previews_and_groups_recording_files(inventory):
