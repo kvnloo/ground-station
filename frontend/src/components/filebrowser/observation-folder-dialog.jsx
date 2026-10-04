@@ -352,7 +352,7 @@ export default function ObservationFolderDialog({
                         Observation artifacts
                         <Box component="span" sx={{ mx: 1, color: 'text.disabled' }}>·</Box>
                         <Box component="span" sx={{ color: 'text.secondary', fontSize: '0.875rem', fontWeight: 400 }}>
-                            Select an item to open it in its dedicated viewer.
+                            Select an item to open it in its dedicated viewer
                         </Box>
                     </Typography>
                 </Box>
