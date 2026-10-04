@@ -120,6 +120,19 @@ def test_observation_summary_includes_the_visible_artifact_count_and_size(invent
     assert observation["size"] == 13
 
 
+def test_inventory_deletes_a_decoded_folder(inventory):
+    folder = inventory.roots.decoded / "METEOR_M2.satdump_meteor_m2-x_lrpt"
+    _write(folder / "image.png", b"image")
+    inventory.rebuild()
+
+    result = inventory.delete(["decoded_folder:METEOR_M2.satdump_meteor_m2-x_lrpt"])
+
+    assert result["results"] == [
+        {"id": "decoded_folder:METEOR_M2.satdump_meteor_m2-x_lrpt", "success": True}
+    ]
+    assert not folder.exists()
+
+
 def test_observation_detail_uses_waterfall_previews_and_groups_recording_files(inventory):
     folder = inventory.roots.observations / "NOAA.gsobs"
     recording_root = folder / "recordings"

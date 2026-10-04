@@ -702,6 +702,7 @@ class LibraryInventory:
             "recording": self.roots.recordings,
             "snapshot": self.roots.snapshots,
             "decoded": self.roots.decoded,
+            "decoded_folder": self.roots.decoded,
             "audio": self.roots.audio,
             "transcription": self.roots.transcriptions,
         }
