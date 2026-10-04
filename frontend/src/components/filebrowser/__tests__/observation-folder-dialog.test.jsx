@@ -45,6 +45,36 @@ const telemetryArtifact = {
     recording_name: null,
 };
 
+const audioArtifact = {
+    name: 'downlink.wav',
+    path: 'audio/downlink.wav',
+    url: `/observations/${BUNDLE}/audio/downlink.wav`,
+    size: 512,
+    kind: 'audio',
+    file_type: '.wav',
+    recording_name: null,
+};
+
+const transcriptArtifact = {
+    name: 'downlink.txt',
+    path: 'transcriptions/downlink.txt',
+    url: `/observations/${BUNDLE}/transcriptions/downlink.txt`,
+    size: 64,
+    kind: 'transcriptions',
+    file_type: '.txt',
+    recording_name: null,
+};
+
+const partialArtifact = {
+    name: 'capture.part',
+    path: 'snapshots/capture.part',
+    url: `/observations/${BUNDLE}/snapshots/capture.part`,
+    size: 32,
+    kind: 'snapshots',
+    file_type: '.part',
+    recording_name: null,
+};
+
 const decodedImage = {
     name: 'preview.png',
     path: 'decoded/preview.png',
@@ -61,7 +91,7 @@ const folder = {
     foldername: BUNDLE,
     satellite_name: '239ALFEROV RS61S',
     size: 6336,
-    artifact_count: groupedArtifacts.length + 2,
+    artifact_count: groupedArtifacts.length + 5,
     recording_count: 1,
     download_url: `/api/observations/${BUNDLE}/download`,
     metadata: {
@@ -74,7 +104,7 @@ const folder = {
         sessions: [{ session_id: 'internal:obs-1234:sdr-1' }],
     },
     recordings: [recording],
-    artifacts: [...groupedArtifacts, telemetryArtifact, decodedImage],
+    artifacts: [...groupedArtifacts, telemetryArtifact, audioArtifact, transcriptArtifact, partialArtifact, decodedImage],
     images: [
         { ...groupedArtifacts[2] },
         { ...groupedArtifacts[3] },
@@ -146,6 +176,18 @@ describe('ObservationFolderDialog', () => {
         // Unrelated artifacts keep their own entries.
         expect(screen.getByText('preview.png')).toBeInTheDocument();
         expect(screen.getByText('telemetry.bin')).toBeInTheDocument();
+    });
+
+    it('groups each artifact type in its own section', () => {
+        renderWithProviders(
+            <ObservationFolderDialog open onClose={vi.fn()} folder={folder} onOpenArtifact={vi.fn()} />
+        );
+
+        expect(screen.getByText('Decoded data')).toBeInTheDocument();
+        expect(screen.getByText('Audio recordings')).toBeInTheDocument();
+        expect(screen.getByText('Transcripts')).toBeInTheDocument();
+        expect(screen.getByText('Other files')).toBeInTheDocument();
+        expect(screen.queryByText('Supporting files')).not.toBeInTheDocument();
     });
 
     it('uses the waterfall thumbnail as the recording card preview', () => {

@@ -80,7 +80,7 @@ function artifactLabel(artifact) {
     if (IMAGE_FILE_TYPES.includes(artifact.file_type)) return 'Image';
     if (artifact.file_type === '.sigmf-data') return 'IQ recording';
     if (artifact.kind === 'audio') return 'Audio recording';
-    if (artifact.kind === 'transcription') return 'Transcript';
+    if (artifact.kind === 'transcription' || artifact.kind === 'transcriptions') return 'Transcript';
     if (artifact.kind === 'decoded') return 'Decoded data';
     return 'Supporting file';
 }
@@ -139,7 +139,19 @@ export default function ObservationFolderDialog({
     const nonImageArtifacts = artifacts.filter(
         (artifact) => !artifact.recording_name && !IMAGE_FILE_TYPES.includes(artifact.file_type)
     );
-    const hasSupportingFiles = nonImageArtifacts.length > 0;
+    const artifactSections = [
+        { id: 'decoded', title: 'Decoded data', artifacts: nonImageArtifacts.filter((artifact) => artifact.kind === 'decoded') },
+        { id: 'audio', title: 'Audio recordings', artifacts: nonImageArtifacts.filter((artifact) => artifact.kind === 'audio') },
+        { id: 'transcriptions', title: 'Transcripts', artifacts: nonImageArtifacts.filter((artifact) => artifact.kind === 'transcriptions' || artifact.kind === 'transcription') },
+        {
+            id: 'other',
+            title: 'Other files',
+            artifacts: nonImageArtifacts.filter(
+                (artifact) => !['decoded', 'audio', 'transcription', 'transcriptions'].includes(artifact.kind)
+            ),
+        },
+    ].filter((section) => section.artifacts.length > 0);
+    const hasArtifacts = recordings.length > 0 || images.length > 0 || artifactSections.length > 0;
     const openArtifact = (artifact) => {
         if (onOpenArtifact) {
             onOpenArtifact(artifact);
@@ -398,32 +410,35 @@ export default function ObservationFolderDialog({
                         <Divider sx={{ mb: 2 }} />
                     </>
                 )}
-                {hasSupportingFiles && (
-                    <Typography variant="subtitle2" sx={{ mb: 1.25 }}>Supporting files</Typography>
-                )}
-                <List disablePadding sx={{ display: 'grid', gap: 1 }}>
-                    {nonImageArtifacts.map((artifact) => (
-                        <Paper
-                            key={artifact.path}
-                            variant="outlined"
-                            sx={{ borderRadius: 2, overflow: 'hidden', '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover' } }}
-                        >
-                            <ListItemButton onClick={() => openArtifact(artifact)} sx={{ py: 1.1 }}>
-                                <ListItemIcon sx={{ minWidth: 44 }}>{artifactIcon(artifact)}</ListItemIcon>
-                                <ListItemText
-                                    primary={artifact.name}
-                                    secondary={`${artifactLabel(artifact)} · ${formatBytes(artifact.size)} · ${artifact.path}`}
-                                    primaryTypographyProps={{ noWrap: true, fontWeight: 600 }}
-                                    secondaryTypographyProps={{ noWrap: true }}
-                                />
-                                <Tooltip title="Open in dedicated viewer">
-                                    <IconButton edge="end" onClick={(event) => { event.stopPropagation(); openArtifact(artifact); }}><DownloadIcon /></IconButton>
-                                </Tooltip>
-                            </ListItemButton>
-                        </Paper>
-                    ))}
-                    {artifacts.length === 0 && <Typography color="text.secondary">No files were produced by this observation.</Typography>}
-                </List>
+                {artifactSections.map((section) => (
+                    <React.Fragment key={section.id}>
+                        <Typography variant="subtitle2" sx={{ mb: 1.25 }}>{section.title}</Typography>
+                        <List disablePadding sx={{ display: 'grid', gap: 1, mb: 3 }}>
+                            {section.artifacts.map((artifact) => (
+                                <Paper
+                                    key={artifact.path}
+                                    variant="outlined"
+                                    sx={{ borderRadius: 2, overflow: 'hidden', '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover' } }}
+                                >
+                                    <ListItemButton onClick={() => openArtifact(artifact)} sx={{ py: 1.1 }}>
+                                        <ListItemIcon sx={{ minWidth: 44 }}>{artifactIcon(artifact)}</ListItemIcon>
+                                        <ListItemText
+                                            primary={artifact.name}
+                                            secondary={`${artifactLabel(artifact)} · ${formatBytes(artifact.size)} · ${artifact.path}`}
+                                            primaryTypographyProps={{ noWrap: true, fontWeight: 600 }}
+                                            secondaryTypographyProps={{ noWrap: true }}
+                                        />
+                                        <Tooltip title="Open in dedicated viewer">
+                                            <IconButton edge="end" onClick={(event) => { event.stopPropagation(); openArtifact(artifact); }}><DownloadIcon /></IconButton>
+                                        </Tooltip>
+                                    </ListItemButton>
+                                </Paper>
+                            ))}
+                        </List>
+                        <Divider sx={{ mb: 2 }} />
+                    </React.Fragment>
+                ))}
+                {!hasArtifacts && <Typography color="text.secondary">No files were produced by this observation.</Typography>}
             </DialogContent>
             <DialogActions disableSpacing sx={{
                 bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'grey.900' : 'grey.100'),
