@@ -9,6 +9,15 @@ export const VFO_AUDIO_STATUS = Object.freeze({
     PLAYING: 'playing',
 });
 
+// Keep every VFO surface visually consistent: the waterfall marker, VFO tabs,
+// and toolbar popover all use these colors for the same audio state.
+export const VFO_AUDIO_STATUS_COLORS = Object.freeze({
+    [VFO_AUDIO_STATUS.NO_AUDIO]: '#888888',
+    [VFO_AUDIO_STATUS.MUTED]: '#00ff00',
+    [VFO_AUDIO_STATUS.SQUELCHED]: '#ffb300',
+    [VFO_AUDIO_STATUS.PLAYING]: '#00ff00',
+});
+
 /**
  * Resolve the UI audio state for a VFO.
  *

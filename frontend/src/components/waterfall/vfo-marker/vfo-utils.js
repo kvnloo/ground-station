@@ -28,7 +28,7 @@ import {
     getDemodulatorConfig,
     getDecoderConfig
 } from './vfo-config.js';
-import { resolveVfoAudioStatus, VFO_AUDIO_STATUS } from '../vfo-audio-status.js';
+import { resolveVfoAudioStatus, VFO_AUDIO_STATUS, VFO_AUDIO_STATUS_COLORS } from '../vfo-audio-status.js';
 
 /**
  * Drawing utilities for VFO markers on the waterfall canvas
@@ -154,13 +154,7 @@ export const canvasDrawingUtils = {
             isMuted,
             isSquelchOpen: null,
         });
-        const iconColorByStatus = {
-            [VFO_AUDIO_STATUS.NO_AUDIO]: '#888888',
-            [VFO_AUDIO_STATUS.MUTED]: '#00ff00',
-            [VFO_AUDIO_STATUS.SQUELCHED]: '#ffb300',
-            [VFO_AUDIO_STATUS.PLAYING]: '#00ff00',
-        };
-        const iconColor = iconColorByStatus[resolvedAudioStatus] || '#888888';
+        const iconColor = VFO_AUDIO_STATUS_COLORS[resolvedAudioStatus] || VFO_AUDIO_STATUS_COLORS[VFO_AUDIO_STATUS.NO_AUDIO];
 
         // Draw speaker body (same for all states)
         ctx.fillStyle = iconColor;

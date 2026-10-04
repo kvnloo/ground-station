@@ -10,13 +10,19 @@ import { Badge, Box, Divider, IconButton, Popover, Slider, Stack, Tooltip, Typog
 import { alpha } from '@mui/material/styles';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
+import VolumeMuteIcon from '@mui/icons-material/VolumeMute';
 import { useDispatch, useSelector } from 'react-redux';
 import { useTranslation } from 'react-i18next';
 import { useAudio } from './audio-provider.jsx';
 import { setVFOProperty } from '../waterfall/vfo-marker/vfo-slice.jsx';
 import { DecoderStatusDisplay } from '../waterfall/vfo-settings/vfo-decoder-status.jsx';
-import { resolveVfoAudioStatus } from '../waterfall/vfo-audio-status.js';
+import {
+    resolveVfoAudioStatus,
+    VFO_AUDIO_STATUS,
+    VFO_AUDIO_STATUS_COLORS,
+} from '../waterfall/vfo-audio-status.js';
 import VFOAudioRecorderButton from '../waterfall/vfo-settings/vfo-audio-recorder-button.jsx';
+import { useVfoSquelchState } from '../waterfall/vfo-settings/vfo-hooks.js';
 import { humanizeFrequency } from '../common/common.jsx';
 
 const MAX_VFO_NUMBER = 4;
@@ -37,6 +43,18 @@ const getBufferColor = (bufferMilliseconds) => {
     if (bufferMilliseconds < 100) return 'warning.main';
     if (bufferMilliseconds <= 1000) return 'success.main';
     return 'error.main';
+};
+
+const getAudioStatusIcon = (audioStatus, fontSize = undefined) => {
+    const iconProps = fontSize ? { fontSize } : undefined;
+
+    if (audioStatus === VFO_AUDIO_STATUS.PLAYING) {
+        return <VolumeUpIcon {...iconProps} />;
+    }
+    if (audioStatus === VFO_AUDIO_STATUS.SQUELCHED) {
+        return <VolumeOffIcon {...iconProps} />;
+    }
+    return <VolumeMuteIcon {...iconProps} />;
 };
 
 function useVfoAudioMetrics(vfoNumber, enabled) {
@@ -68,7 +86,7 @@ function useVfoAudioMetrics(vfoNumber, enabled) {
     return metrics;
 }
 
-function VfoAudioRow({ decoderInfo, isPopoverOpen, muted, streaming, vfo, vfoColor, vfoNumber }) {
+function VfoAudioRow({ decoderInfo, isPopoverOpen, muted, streaming, squelchOpen, vfo, vfoColor, vfoNumber }) {
     const dispatch = useDispatch();
     const { t } = useTranslation('dashboard');
     const { setVfoMute } = useAudio();
@@ -76,7 +94,7 @@ function VfoAudioRow({ decoderInfo, isPopoverOpen, muted, streaming, vfo, vfoCol
     const { decibels, percentage: levelPercentage, color: levelColor } = getAudioLevelDetails(audioLevel);
     const bufferMilliseconds = bufferLength * 1000;
     const volume = clamp(Number(vfo?.volume ?? 50), 0, 100);
-    const audioStatus = resolveVfoAudioStatus({ isStreaming: streaming, isMuted: muted });
+    const audioStatus = resolveVfoAudioStatus({ isStreaming: streaming, isMuted: muted, isSquelchOpen: squelchOpen });
     const formattedFrequency = Number.isFinite(vfo?.frequency)
         ? humanizeFrequency(vfo.frequency, 3)
         : '—';
@@ -118,9 +136,9 @@ function VfoAudioRow({ decoderInfo, isPopoverOpen, muted, streaming, vfo, vfoCol
                             aria-label={muted ? t('vfo_audio.unmute') : t('vfo_audio.mute')}
                             onClick={handleMuteToggle}
                             size="small"
-                            sx={{ color: muted ? 'warning.main' : 'text.secondary' }}
+                            sx={{ color: VFO_AUDIO_STATUS_COLORS[audioStatus] }}
                         >
-                            {muted ? <VolumeOffIcon fontSize="small" /> : <VolumeUpIcon fontSize="small" />}
+                            {getAudioStatusIcon(audioStatus, 'small')}
                         </IconButton>
                     </Tooltip>
                 </Stack>
@@ -200,6 +218,7 @@ function VfoAudioRow({ decoderInfo, isPopoverOpen, muted, streaming, vfo, vfoCol
 function VfoAudioPopover() {
     const { t } = useTranslation('dashboard');
     const { setVfoMute } = useAudio();
+    const { vfoSquelchOpen } = useVfoSquelchState();
     const vfoActive = useSelector((state) => state.vfo.vfoActive || {});
     const vfoMarkers = useSelector((state) => state.vfo.vfoMarkers || {});
     const vfoMuted = useSelector((state) => state.vfo.vfoMuted || {});
@@ -215,24 +234,27 @@ function VfoAudioPopover() {
     ), [vfoActive]);
     const areAllActiveVfosMuted = activeVfoNumbers.length > 0
         && activeVfoNumbers.every((vfoNumber) => Boolean(vfoMuted[vfoNumber]));
-    const hasAudibleAudio = activeVfoNumbers.some((vfoNumber) => (
-        streamingVFOs.includes(vfoNumber) && !vfoMuted[vfoNumber]
-    ));
-    // The toolbar summarizes playback availability, while each popover row
-    // keeps its own VFO identity color. Mute is intentional attention, not a
-    // transport failure, so it remains amber rather than error red.
+    const audioStatus = React.useMemo(() => {
+        const statuses = activeVfoNumbers.map((vfoNumber) => resolveVfoAudioStatus({
+            isStreaming: streamingVFOs.includes(vfoNumber),
+            isMuted: Boolean(vfoMuted[vfoNumber]),
+            isSquelchOpen: vfoSquelchOpen[vfoNumber],
+        }));
+
+        if (statuses.includes(VFO_AUDIO_STATUS.PLAYING)) return VFO_AUDIO_STATUS.PLAYING;
+        if (statuses.includes(VFO_AUDIO_STATUS.MUTED)) return VFO_AUDIO_STATUS.MUTED;
+        if (statuses.includes(VFO_AUDIO_STATUS.SQUELCHED)) return VFO_AUDIO_STATUS.SQUELCHED;
+        return VFO_AUDIO_STATUS.NO_AUDIO;
+    }, [activeVfoNumbers, streamingVFOs, vfoMuted, vfoSquelchOpen]);
+
+    // The toolbar summarizes the strongest active audio state, using the
+    // same color and glyph vocabulary as the waterfall marker and VFO tabs.
     const audioIndicator = React.useMemo(() => {
-        if (activeVfoNumbers.length === 0) {
-            return { color: 'action.disabled', icon: <VolumeOffIcon /> };
-        }
-        if (areAllActiveVfosMuted) {
-            return { color: 'warning.main', icon: <VolumeOffIcon /> };
-        }
-        if (hasAudibleAudio) {
-            return { color: 'success.main', icon: <VolumeUpIcon /> };
-        }
-        return { color: 'text.secondary', icon: <VolumeUpIcon /> };
-    }, [activeVfoNumbers.length, areAllActiveVfosMuted, hasAudibleAudio]);
+        return {
+            color: VFO_AUDIO_STATUS_COLORS[audioStatus],
+            icon: getAudioStatusIcon(audioStatus),
+        };
+    }, [audioStatus]);
     const open = Boolean(anchorEl);
 
     const handleOpen = (event) => setAnchorEl(event.currentTarget);
@@ -335,6 +357,7 @@ function VfoAudioPopover() {
                                 isPopoverOpen={open}
                                 muted={Boolean(vfoMuted[vfoNumber])}
                                 streaming={streamingVFOs.includes(vfoNumber)}
+                                squelchOpen={vfoSquelchOpen[vfoNumber]}
                                 vfo={vfoMarkers[vfoNumber]}
                                 vfoColor={vfoColors[vfoNumber - 1] || 'primary.main'}
                                 vfoNumber={vfoNumber}

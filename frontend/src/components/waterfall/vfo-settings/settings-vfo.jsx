@@ -16,7 +16,7 @@ import { useTranslation } from 'react-i18next';
 import { VfoTabPanel } from './vfo-tab-panel.jsx';
 import { TranscriptionParamsDialog } from './vfo-dialogs.jsx';
 import DecoderParamsDialog from '../decoder-params-dialog.jsx';
-import { resolveVfoAudioStatus, VFO_AUDIO_STATUS } from '../vfo-audio-status.js';
+import { resolveVfoAudioStatus, VFO_AUDIO_STATUS, VFO_AUDIO_STATUS_COLORS } from '../vfo-audio-status.js';
 import {
     useVfoAudioState,
     useVfoDecoderInfo,
@@ -148,7 +148,7 @@ const VfoAccordion = ({
                                                 right: -6,
                                                 fontSize: '0.75rem',
                                                 pointerEvents: 'none',
-                                                color: '#888888',
+                                                color: VFO_AUDIO_STATUS_COLORS[VFO_AUDIO_STATUS.NO_AUDIO],
                                             }}
                                         />
                                     )}
@@ -160,7 +160,7 @@ const VfoAccordion = ({
                                                 right: -6,
                                                 fontSize: '0.75rem',
                                                 pointerEvents: 'none',
-                                                color: '#00ff00',
+                                                color: VFO_AUDIO_STATUS_COLORS[VFO_AUDIO_STATUS.MUTED],
                                             }}
                                         />
                                     )}
@@ -172,7 +172,7 @@ const VfoAccordion = ({
                                                 right: -6,
                                                 fontSize: '0.75rem',
                                                 pointerEvents: 'none',
-                                                color: 'warning.main',
+                                                color: VFO_AUDIO_STATUS_COLORS[VFO_AUDIO_STATUS.SQUELCHED],
                                             }}
                                         />
                                     )}
@@ -184,7 +184,7 @@ const VfoAccordion = ({
                                                 right: -6,
                                                 fontSize: '0.75rem',
                                                 pointerEvents: 'none',
-                                                color: '#00ff00',
+                                                color: VFO_AUDIO_STATUS_COLORS[VFO_AUDIO_STATUS.PLAYING],
                                             }}
                                         />
                                     )}
