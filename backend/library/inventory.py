@@ -495,6 +495,18 @@ class LibraryInventory:
             thumbnail = next(
                 (path for path in (folder / "recordings").glob("*_waterfall_thumb.png")), None
             )
+            # Observation cards need this value before their detail dialog is
+            # opened. Count only files that the dialog presents as artifacts;
+            # manifests, sidecars, and thumbnails are implementation metadata.
+            manifest_path = folder / "manifest.json"
+            artifact_count = sum(
+                1
+                for path in folder.rglob("*")
+                if path.is_file()
+                and path != manifest_path
+                and path.suffix.lower() != ".json"
+                and "thumbnails" not in path.relative_to(folder).parent.parts
+            )
             self._add(
                 items,
                 {
@@ -518,6 +530,7 @@ class LibraryInventory:
                     "satellite_id": satellite.get("norad_id"),
                     "observation_status": manifest.get("status", "unknown"),
                     "observation_in_progress": bool(manifest.get("in_progress", False)),
+                    "artifact_count": artifact_count,
                 },
                 folder,
             )

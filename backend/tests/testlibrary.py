@@ -53,6 +53,11 @@ def inventory(tmp_path):
         backend / "data" / "observations" / "NOAA.gsobs" / "manifest.json",
         json.dumps({"satellite": {"name": "NOAA 19"}, "status": "complete"}),
     )
+    _write(backend / "data" / "observations" / "NOAA.gsobs" / "decoded" / "image.png", b"png")
+    _write(
+        backend / "data" / "observations" / "NOAA.gsobs" / "transcriptions" / "voice.txt",
+        "transcript",
+    )
     result = LibraryInventory(backend)
     result.rebuild()
     return result
@@ -105,6 +110,13 @@ def test_inventory_filters_a_single_observation_session(inventory):
 
     by_observation = inventory.query(observation_id="packet")
     assert [item["id"] for item in by_observation["items"]] == ["decoded:packet.bin"]
+
+
+def test_observation_summary_includes_the_visible_artifact_count(inventory):
+    page = inventory.query()
+    observation = next(item for item in page["items"] if item["id"] == "observation:NOAA.gsobs")
+
+    assert observation["artifact_count"] == 2
 
 
 def test_rebuild_only_advances_revision_when_filesystem_changes(inventory):
