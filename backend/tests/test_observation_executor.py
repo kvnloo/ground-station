@@ -82,6 +82,34 @@ def _load_executor_module(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_finalizing_bundle_notifies_library_immediately(monkeypatch, tmp_path):
+    executor_module = _load_executor_module(monkeypatch)
+    bundle_dir = create_observation_bundle("obs-1", {"name": "ISS"}, tmp_path)
+    artifact = bundle_dir / "decoded" / "image.png"
+    artifact.write_bytes(b"image")
+    notifications = []
+
+    async def _notify(_sio, state, _logger):
+        notifications.append(state)
+
+    monkeypatch.setattr(executor_module, "emit_file_browser_state", _notify)
+    executor = executor_module.ObservationExecutor(
+        process_manager=types.SimpleNamespace(), sio=object()
+    )
+
+    retained = await executor._finalize_bundle("obs-1", bundle_dir, "completed")
+
+    assert retained is True
+    assert notifications == [
+        {
+            "action": "observation-bundle-finalized",
+            "observation_id": "obs-1",
+            "retained": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_start_observation_starts_tracker_before_session_tasks(monkeypatch, tmp_path):
     executor_module = _load_executor_module(monkeypatch)
     observation = _build_observation()

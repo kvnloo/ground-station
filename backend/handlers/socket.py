@@ -11,6 +11,7 @@ from handlers.entities import (
     filebrowser,
     groups,
     hardware,
+    library,
     locations,
     orbitalsources,
     preferences,
@@ -51,6 +52,7 @@ def _register_all_handlers():
     celestial.register_handlers(handler_registry)
     sdr.register_handlers(handler_registry)
     filebrowser.register_handlers(handler_registry)
+    library.register_handlers(handler_registry)
     control.register_handlers(handler_registry)
 
 

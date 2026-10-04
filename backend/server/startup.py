@@ -27,6 +27,7 @@ from db import AsyncSessionLocal, engine
 from db.migrations import run_migrations
 from db.models import Locations
 from handlers.entities.control import restore_full_backup_file
+from library.inventory import get_inventory
 from observations import events as obs_events
 from observations.bundle import prune_finalized_empty_observation_bundles
 from observations.events import emit_scheduled_observations_changed as _emit
@@ -89,6 +90,27 @@ runtimestate.audio_queue = audio_queue
 # Background task manager (initialized after sio is created)
 background_task_manager: BackgroundTaskManager = None
 runtimestate.process_manager = process_manager
+_LIBRARY_RECONCILIATION_SECONDS = 60
+
+
+async def _reconcile_library_periodically() -> None:
+    """Repair the in-memory inventory after out-of-process filesystem changes."""
+    inventory = get_inventory()
+    try:
+        while True:
+            await asyncio.sleep(_LIBRARY_RECONCILIATION_SECONDS)
+            previous_revision = inventory.revision
+            revision = await asyncio.to_thread(inventory.rebuild)
+            if revision != previous_revision:
+                await sio.emit(
+                    "library.changed",
+                    {"revision": revision, "changes": [{"operation": "reconciled", "id": "*"}]},
+                    room=authsvc.AUTHENTICATED_SOCKET_ROOM,
+                )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Filesystem library reconciliation stopped unexpectedly")
 
 
 @asynccontextmanager
@@ -111,6 +133,17 @@ async def lifespan(fastapiapp: FastAPI):
     except Exception:
         # Observation cleanup must not prevent the station from starting.
         logger.exception("Failed to prune finalized empty observation bundles at startup")
+
+    # The filesystem remains the durable library.  Build its process-local,
+    # rebuildable query index after startup filesystem maintenance so browser
+    # requests never need a cold scan or receive a stale pruned bundle.
+    try:
+        library_revision = await asyncio.to_thread(get_inventory().rebuild)
+        logger.info("Filesystem library inventory ready at revision %s", library_revision)
+    except Exception:
+        logger.exception("Failed to build filesystem library inventory at startup")
+    library_reconciler = asyncio.create_task(_reconcile_library_periodically())
+    background_tasks.add(library_reconciler)
 
     # Set socketio instance for observations events
     set_socketio_instance(sio)

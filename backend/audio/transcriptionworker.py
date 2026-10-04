@@ -41,6 +41,8 @@ from typing import Any, Dict, List, Optional, TextIO
 import numpy as np
 from scipy import signal
 
+from handlers.entities.filebrowser import emit_file_browser_state
+
 # Configure logging
 logger = logging.getLogger("transcription")
 
@@ -311,11 +313,29 @@ class TranscriptionWorker(ABC, threading.Thread):
 
             self.transcription_file_created = True
             logger.info(f"Transcription file created: {self.transcription_file_path}")
+            self._notify_library_file_created()
 
         except Exception as e:
             logger.error(f"Failed to create transcription file: {e}", exc_info=True)
             self.transcription_file = None
             self.transcription_file_path = None
+
+    def _notify_library_file_created(self) -> None:
+        """Refresh library listings when lazy transcription output first exists."""
+        if not self.sio or not self.loop or self.loop.is_closed():
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(
+                emit_file_browser_state(
+                    self.sio,
+                    {"action": "transcription-file-created"},
+                    logger,
+                ),
+                self.loop,
+            )
+        except RuntimeError:
+            # Shutdown can close the main loop while this worker is finishing.
+            logger.debug("Could not announce transcription file creation during shutdown")
 
     def _write_to_file(self, text: str, timestamp: Optional[float] = None, is_final: bool = True):
         """

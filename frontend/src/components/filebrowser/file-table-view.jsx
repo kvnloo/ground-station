@@ -681,10 +681,8 @@ export default function FileTableView({
                                 </TableHead>
                                 <TableBody>
                                     {dayGroup.files.map((item) => {
-                                        const isRecording = item.type === 'recording';
-                                        const isFolder = item.type === 'decoded_folder';
-                                        const key = isRecording ? item.name : (isFolder ? item.foldername : item.filename);
-                                        const isSelected = selectedItems.includes(key);
+                                        const key = item.id;
+                                        const isSelected = selectedItems.includes(item.id);
 
                                         return (
                                             <FileTableRow

@@ -27,6 +27,7 @@ from crud import trackingstate
 from crud.hardware import fetch_sdr
 from crud.scheduledobservations import fetch_scheduled_observations
 from db import AsyncSessionLocal
+from handlers.entities.filebrowser import emit_file_browser_state
 from observations import events as observation_events
 from observations.bundle import (
     add_bundle_session,
@@ -119,6 +120,29 @@ class ObservationExecutor:
             self._vfo_manager = VFOManager()
         return self._vfo_manager
 
+    async def _publish_bundle_change(self, action: str, observation_id: str, **state: Any) -> None:
+        """Update the library after an observation changes bundle storage."""
+        if not self.sio:
+            return
+        await emit_file_browser_state(
+            self.sio,
+            {"action": action, "observation_id": observation_id, **state},
+            logger,
+        )
+
+    async def _finalize_bundle(self, observation_id: str, bundle_dir: Path, status: str) -> bool:
+        """Finalize a bundle and publish its final filesystem state once.
+
+        Individual workers normally announce their completed files. The bundle
+        boundary is still authoritative: it captures manifest-only changes and
+        artifacts from a worker that could not publish its own completion event.
+        """
+        retained: bool = bool(finalize_observation_bundle(bundle_dir, status))
+        await self._publish_bundle_change(
+            "observation-bundle-finalized", observation_id, retained=retained
+        )
+        return retained
+
     def _get_observations_lock(self) -> asyncio.Lock:
         """Lazy-load asyncio.Lock to avoid event loop issues during initialization."""
         if self._observations_lock is None:
@@ -201,16 +225,22 @@ class ObservationExecutor:
 
             bundle_dir = self._bundle_dirs.pop(observation_id, None)
             if should_finalize and bundle_dir and bundle_dir.exists():
-                finalize_observation_bundle(bundle_dir, "failed")
+                await self._finalize_bundle(observation_id, bundle_dir, "failed")
 
             # A fresh process has no in-memory bundle map. Recover matching
             # bundles by their persisted manifest so the UI does not show them
             # as in progress forever after a restart.
             if should_finalize:
                 try:
-                    finalize_interrupted_observation_bundles(
+                    finalized_count = finalize_interrupted_observation_bundles(
                         observation_id, Path(__file__).parents[1]
                     )
+                    if finalized_count:
+                        await self._publish_bundle_change(
+                            "observation-bundle-finalized",
+                            observation_id,
+                            recovered=finalized_count,
+                        )
                 except Exception:
                     logger.exception(
                         "Failed to finalize interrupted bundle for observation %s",
@@ -542,6 +572,7 @@ class ObservationExecutor:
                     bundle_dir,
                     {"observation_name": observation.get("name")},
                 )
+                await self._publish_bundle_change("observation-bundle-created", observation_id)
             else:
                 logger.info(
                     "Observation %s has only disposable SatDump IQ captures; skipping bundle creation",
@@ -624,7 +655,7 @@ class ObservationExecutor:
             self._running_observations.discard(observation_id)
             bundle_dir = self._bundle_dirs.pop(observation_id, None)
             if bundle_dir:
-                finalize_observation_bundle(bundle_dir, "failed")
+                await self._finalize_bundle(observation_id, bundle_dir, "failed")
 
             await update_observation_status(self.sio, observation_id, STATUS_FAILED, str(e))
             # Remove scheduled stop job on error
@@ -710,7 +741,8 @@ class ObservationExecutor:
             self._running_observations.discard(observation_id)
             bundle_dir = self._bundle_dirs.pop(observation_id, None)
             if bundle_dir:
-                retained_bundle = finalize_observation_bundle(
+                retained_bundle = await self._finalize_bundle(
+                    observation_id,
                     bundle_dir,
                     "completed" if not stop_errors else "completed_with_warnings",
                 )
@@ -733,7 +765,7 @@ class ObservationExecutor:
             self._running_observations.discard(observation_id)
             bundle_dir = self._bundle_dirs.pop(observation_id, None)
             if bundle_dir:
-                finalize_observation_bundle(bundle_dir, "failed")
+                await self._finalize_bundle(observation_id, bundle_dir, "failed")
 
             # Mark observation as failed since stop encountered a critical error
             try:
@@ -793,7 +825,7 @@ class ObservationExecutor:
             if bundle_dir:
                 # Cancellation can stop an active observation before LOS. Do
                 # not leave a bundle permanently marked as in progress.
-                finalize_observation_bundle(bundle_dir, "cancelled")
+                await self._finalize_bundle(observation_id, bundle_dir, "cancelled")
 
             logger.info(f"Observation {observation_id} cancelled successfully")
             return {"success": True}

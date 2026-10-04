@@ -30,6 +30,7 @@ from urllib.parse import quote
 
 from PIL import Image
 
+from common import auth as authsvc
 from common.decoded_thumbnails import get_decoded_thumbnail_url
 from common.thumbnails import (
     THUMBNAIL_DIRECTORY,
@@ -37,6 +38,34 @@ from common.thumbnails import (
     get_image_thumbnail_path,
     get_image_thumbnail_url,
 )
+from library.inventory import get_inventory
+
+# Existing producers still use ``file_browser_state`` to announce storage
+# lifecycle changes.  Keep that compatibility event, but update the single
+# process-local library catalogue once here instead of making every browser
+# scan storage independently.
+_LIBRARY_MUTATION_ACTIONS = {
+    "recording-started",
+    "recording-stopped",
+    "snapshot-saved",
+    "audio-recording-started",
+    "audio-recording-stopped",
+    "transcription-started",
+    "transcription-file-created",
+    "transcription-stopped",
+    "decoded-saved",
+    "waterfall-generated",
+    "satdump-completed",
+    "observation-bundle-created",
+    "observation-bundle-finalized",
+    "delete-recording",
+    "delete-snapshot",
+    "delete-decoded",
+    "delete-observation-bundle",
+    "delete-audio",
+    "delete-transcription",
+    "delete-batch",
+}
 
 
 def get_disk_usage(path: Path) -> Dict[str, Union[int, str]]:
@@ -256,8 +285,18 @@ async def emit_file_browser_state(sio, state_data, logger, room=None):
         room: Optional Socket.IO room/session id target
     """
     try:
+        action = state_data.get("action")
+        if action in _LIBRARY_MUTATION_ACTIONS:
+            revision = await asyncio.to_thread(get_inventory().rebuild)
+            # This event carries only a revision.  Clients request their
+            # current page through the acknowledged query command.
+            await sio.emit(
+                "library.changed",
+                {"revision": revision, "changes": [{"operation": "reconciled", "id": "*"}]},
+                room=authsvc.AUTHENTICATED_SOCKET_ROOM,
+            )
         await sio.emit("file_browser_state", state_data, room=room)
-        logger.debug(f"Emitted file_browser_state: {state_data.get('action', 'unknown')}")
+        logger.debug(f"Emitted file_browser_state: {action or 'unknown'}")
     except Exception as e:
         logger.error(f"Error emitting file_browser_state: {str(e)}")
 
@@ -1897,6 +1936,7 @@ def register_handlers(registry):
         "list-snapshots",
         "delete-snapshot",
         "delete-decoded",
+        "delete-observation-bundle",
         "delete-audio",
         "delete-transcription",
         "delete-batch",

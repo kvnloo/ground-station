@@ -86,19 +86,14 @@ import BuildIcon from '@mui/icons-material/Build';
 import { useSocket } from '../common/socket.jsx';
 import {
     fetchFiles,
-    handleFileChange,
-    deleteRecording,
-    deleteSnapshot,
-    deleteDecoded,
-    deleteObservationBundle,
-    deleteAudio,
-    deleteTranscription,
-    deleteBatch,
+    fetchFileDetails,
+    deleteLibraryItems,
     startBackgroundTask,
     setSortBy,
     toggleSortOrder,
     toggleFilter,
     setPage,
+    setPageSize,
     toggleItemSelection,
     selectAllItems,
     clearSelection,
@@ -345,6 +340,12 @@ export default function FileBrowserMain() {
         return 10;
     }, [viewMode, isSmallScreen, isMediumScreen]);
 
+    // Keep the persisted query state in sync with responsive presentation so
+    // socket-driven page refreshes request the same page size as this view.
+    useEffect(() => {
+        dispatch(setPageSize(pageSize));
+    }, [dispatch, pageSize]);
+
     const [selectedItem, setSelectedItem] = useState(null);
     const [detailsOpen, setDetailsOpen] = useState(false);
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -381,19 +382,19 @@ export default function FileBrowserMain() {
         }
     }, [dispatch, filesLoading, files.length]);
 
-    // Fetch data when filters change (not pagination/sorting - those are handled in UI)
+    // Query one server-side page whenever its query parameters change.
     useEffect(() => {
         if (socket) {
             dispatch(fetchFiles({
                 socket,
-                showRecordings: filters.showRecordings,
-                showSnapshots: filters.showSnapshots,
-                showDecoded: filters.showDecoded,
-                showAudio: filters.showAudio,
-                showTranscriptions: filters.showTranscriptions,
+                filters,
+                sortBy,
+                sortOrder,
+                page,
+                pageSize,
             }));
         }
-    }, [socket, dispatch, filters.showRecordings, filters.showSnapshots, filters.showDecoded, filters.showAudio, filters.showTranscriptions]);
+    }, [socket, dispatch, filters, sortBy, sortOrder, page, pageSize]);
 
     // Listen for file browser state updates for local-only actions (global handler in useSocketEventHandlers.jsx handles file list refresh)
     useEffect(() => {
@@ -421,72 +422,11 @@ export default function FileBrowserMain() {
         };
     }, [socket, t]);
 
-    // Legacy: Listen for file change events from backend
-    useEffect(() => {
-        if (!socket) return;
-
-        const handleFileChangeEvent = (data) => {
-            console.log('File change event received:', data);
-            dispatch(handleFileChange(data));
-
-            // Refresh the unified list using current filter state from Redux
-            dispatch(fetchFiles({
-                socket,
-                showRecordings: filters.showRecordings,
-                showSnapshots: filters.showSnapshots,
-                showDecoded: filters.showDecoded,
-                showAudio: filters.showAudio,
-                showTranscriptions: filters.showTranscriptions,
-            }));
-        };
-
-        socket.on('file_change', handleFileChangeEvent);
-
-        return () => {
-            socket.off('file_change', handleFileChangeEvent);
-        };
-    }, [socket, dispatch, filters.showRecordings, filters.showSnapshots, filters.showDecoded, filters.showAudio]);
-
-    // Sort, paginate, and format files in the frontend
+    // The inventory already sorted and paged this response.  Formatting stays
+    // local because it is purely presentational.
     const displayItems = useMemo(() => {
-        // First, add display properties
-        let processedFiles = files.map(item => buildFileBrowserDisplayItem(item, formatDuration));
-
-        // Apply sorting
-        const reverse = sortOrder === 'desc';
-        processedFiles.sort((a, b) => {
-            let aVal, bVal;
-
-            if (sortBy === 'name') {
-                aVal = a.displayName;
-                bVal = b.displayName;
-                return reverse
-                    ? bVal.localeCompare(aVal)
-                    : aVal.localeCompare(bVal);
-            } else if (sortBy === 'size') {
-                aVal = a.data_size || a.size || 0;
-                bVal = b.data_size || b.size || 0;
-            } else if (sortBy === 'created') {
-                aVal = new Date(a.created).getTime();
-                bVal = new Date(b.created).getTime();
-            } else if (sortBy === 'modified') {
-                aVal = new Date(a.modified).getTime();
-                bVal = new Date(b.modified).getTime();
-            } else if (sortBy === 'sample_rate') {
-                aVal = a.metadata?.sample_rate || 0;
-                bVal = b.metadata?.sample_rate || 0;
-            } else {
-                return 0;
-            }
-
-            return reverse ? bVal - aVal : aVal - bVal;
-        });
-
-        // Apply pagination
-        const startIdx = (page - 1) * pageSize;
-        const endIdx = startIdx + pageSize;
-        return processedFiles.slice(startIdx, endIdx);
-    }, [files, sortBy, sortOrder, page, pageSize]);
+        return files.map(item => buildFileBrowserDisplayItem(item, formatDuration));
+    }, [files]);
 
     // Group files by day for table view
     const filesByDay = useMemo(() => {
@@ -530,11 +470,11 @@ export default function FileBrowserMain() {
         if (socket) {
             dispatch(fetchFiles({
                 socket,
-                showRecordings: filters.showRecordings,
-                showSnapshots: filters.showSnapshots,
-                showDecoded: filters.showDecoded,
-                showAudio: filters.showAudio,
-                showTranscriptions: filters.showTranscriptions,
+                filters,
+                sortBy,
+                sortOrder,
+                page,
+                pageSize,
             }));
         }
     };
@@ -544,24 +484,33 @@ export default function FileBrowserMain() {
     };
 
     const handleShowDetails = async (item) => {
-        // Route to appropriate dialog based on item type
-        if (item.type === 'decoded_folder') {
-            if (item.folder_kind === 'observation') {
-                setObservationFolder(item);
-                setObservationFolderDialogOpen(true);
-            } else if (item.pipeline === 'meteor_hrpt') {
-                handleViewMeteorHrptFolder(item);
-            } else {
-                handleViewMeteorM2xLrptFolder(item);
+        let detail = item;
+        if (socket && item.id) {
+            try {
+                detail = await dispatch(fetchFileDetails({ socket, id: item.id })).unwrap();
+            } catch (error) {
+                toast.error(t('toast.details_failed', 'Failed to load file details: {{error}}', { error }));
+                return;
             }
-        } else if (item.type === 'decoded') {
-            await handleViewTelemetry(item);
-        } else if (item.type === 'audio') {
-            await handleViewAudio(item);
-        } else if (item.type === 'transcription') {
-            await handleViewTranscription(item);
+        }
+        // Route to appropriate dialog based on item type
+        if (detail.type === 'decoded_folder') {
+            if (detail.folder_kind === 'observation') {
+                setObservationFolder(detail);
+                setObservationFolderDialogOpen(true);
+            } else if (detail.pipeline === 'meteor_hrpt') {
+                handleViewMeteorHrptFolder(detail);
+            } else {
+                handleViewMeteorM2xLrptFolder(detail);
+            }
+        } else if (detail.type === 'decoded') {
+            await handleViewTelemetry(detail);
+        } else if (detail.type === 'audio') {
+            await handleViewAudio(detail);
+        } else if (detail.type === 'transcription') {
+            await handleViewTranscription(detail);
         } else {
-            setSelectedItem(item);
+            setSelectedItem(detail);
             setDetailsOpen(true);
         }
     };
@@ -574,31 +523,7 @@ export default function FileBrowserMain() {
     const confirmDelete = async () => {
         if (itemToDelete && socket) {
             try {
-                if (itemToDelete.type === 'recording') {
-                    await dispatch(deleteRecording({ socket, name: itemToDelete.name })).unwrap();
-                    // Success toast will be shown by socket event listener
-                } else if (itemToDelete.type === 'snapshot') {
-                    await dispatch(deleteSnapshot({ socket, filename: itemToDelete.filename })).unwrap();
-                    // Success toast will be shown by socket event listener
-                } else if (itemToDelete.type === 'decoded') {
-                    await dispatch(deleteDecoded({ socket, filename: itemToDelete.filename })).unwrap();
-                    // Success toast will be shown by socket event listener
-                } else if (itemToDelete.type === 'decoded_folder') {
-                    if (itemToDelete.folder_kind === 'observation') {
-                        await dispatch(deleteObservationBundle({ socket, foldername: itemToDelete.foldername })).unwrap();
-                    } else {
-                        await dispatch(deleteDecoded({ socket, foldername: itemToDelete.foldername, is_folder: true })).unwrap();
-                    }
-                    // Success toast will be shown by socket event listener
-                } else if (itemToDelete.type === 'audio') {
-                    await dispatch(deleteAudio({ socket, filename: itemToDelete.filename })).unwrap();
-                    // Success toast will be shown by socket event listener
-                } else if (itemToDelete.type === 'transcription') {
-                    await dispatch(deleteTranscription({ socket, filename: itemToDelete.filename })).unwrap();
-                    // Success toast will be shown by socket event listener
-                }
-
-                // No need to refetch - socket event will trigger refetch automatically
+                await dispatch(deleteLibraryItems({ socket, ids: [itemToDelete.id] })).unwrap();
 
                 setDeleteDialogOpen(false);
                 setItemToDelete(null);
@@ -864,15 +789,11 @@ export default function FileBrowserMain() {
     };
 
     const handleToggleSelection = (item) => {
-        const key = item.type === 'recording' ? item.name : (item.type === 'decoded_folder' ? item.foldername : item.filename);
-        dispatch(toggleItemSelection(key));
+        dispatch(toggleItemSelection(item.id));
     };
 
     const handleSelectAll = () => {
-        const allKeys = displayItems.map(item =>
-            item.type === 'recording' ? item.name : (item.type === 'decoded_folder' ? item.foldername : item.filename)
-        );
-        dispatch(selectAllItems(allKeys));
+        dispatch(selectAllItems(displayItems.map(item => item.id)));
     };
 
     const handleClearSelection = () => {
@@ -892,20 +813,7 @@ export default function FileBrowserMain() {
     const confirmBatchDelete = async () => {
         if (selectedItems.length > 0 && socket) {
             try {
-                // Build items array from selected keys
-                const itemsToDelete = files
-                    .filter(f => {
-                        const key = f.type === 'recording' ? f.name : (f.type === 'decoded_folder' ? f.foldername : f.filename);
-                        return selectedItems.includes(key);
-                    })
-                    .map(f => ({
-                        type: f.folder_kind === 'observation' ? 'observation_bundle' : f.type,
-                        name: f.type === 'recording' ? f.name : undefined,
-                        filename: (f.type === 'snapshot' || f.type === 'decoded' || f.type === 'audio' || f.type === 'transcription') ? f.filename : undefined,
-                        foldername: f.type === 'decoded_folder' ? f.foldername : undefined,
-                    }));
-
-                await dispatch(deleteBatch({ socket, items: itemsToDelete })).unwrap();
+                await dispatch(deleteLibraryItems({ socket, ids: selectedItems })).unwrap();
                 setBatchDeleteDialogOpen(false);
             } catch (error) {
                 toast.error(t('toast.batch_delete_failed', 'Failed to delete items: {{error}}', { error }));
@@ -1222,8 +1130,8 @@ export default function FileBrowserMain() {
                         const isRecording = item.type === 'recording';
                         const isAprsDecodedFile = item.type === 'decoded'
                             && String(item.decoder_type || '').toLowerCase() === 'aprs';
-                        const key = isRecording ? item.name : (item.type === 'decoded_folder' ? item.foldername : item.filename);
-                        const isSelected = selectedItems.includes(key);
+                        const key = item.id;
+                        const isSelected = selectedItems.includes(item.id);
 
                         return (
                             <Card

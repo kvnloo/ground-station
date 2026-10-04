@@ -335,22 +335,22 @@ export const useSocketEventHandlers = (socket, enabled = true) => {
             store.dispatch(setTrackerInstances(data));
         });
 
-        // File browser state updates (pub/sub model)
+        const refreshLibraryPage = () => {
+            const browser = store.getState().filebrowser;
+            store.dispatch(fetchFiles({
+                socket,
+                filters: browser.filters,
+                sortBy: browser.sortBy,
+                sortOrder: browser.sortOrder,
+                page: browser.page,
+                pageSize: browser.pageSize,
+            }));
+        };
+
+        // Legacy producer events still announce that storage changed.  Listing
+        // itself is now an acknowledged request, not a broadcast payload.
         const handleFileBrowserState = (state) => {
             switch (state.action) {
-                case 'list-files':
-                    // Manually dispatch fulfilled action with actual data (not pending)
-                    // Backend now returns all files, frontend handles pagination
-                    store.dispatch({
-                        type: 'filebrowser/fetchFiles/fulfilled',
-                        payload: {
-                            items: state.items,
-                            diskUsage: state.diskUsage,
-                            pending: false,
-                        },
-                    });
-                    break;
-
                 case 'list-recordings':
                     // SigMF playback owns an unfiltered recording list. Do not
                     // let File Browser filter changes empty the SDR selector.
@@ -370,19 +370,15 @@ export const useSocketEventHandlers = (socket, enabled = true) => {
                 case 'audio-recording-started':
                 case 'audio-recording-stopped':
                 case 'transcription-started':
+                case 'transcription-file-created':
                 case 'transcription-stopped':
                 case 'decoded-saved':
                 case 'waterfall-generated':
                 case 'satdump-completed':
-                    // Trigger global file list refresh
-                    store.dispatch(fetchFiles({
-                        socket,
-                        showRecordings: store.getState().filebrowser.filters.showRecordings,
-                        showSnapshots: store.getState().filebrowser.filters.showSnapshots,
-                        showDecoded: store.getState().filebrowser.filters.showDecoded,
-                        showAudio: store.getState().filebrowser.filters.showAudio,
-                        showTranscriptions: store.getState().filebrowser.filters.showTranscriptions,
-                    }));
+                case 'observation-bundle-created':
+                case 'observation-bundle-finalized':
+                    // The producer has also emitted a compact library.changed
+                    // event after updating the shared in-memory catalogue.
                     break;
 
                 default:
@@ -390,6 +386,10 @@ export const useSocketEventHandlers = (socket, enabled = true) => {
             }
         };
         socket.on("file_browser_state", handleFileBrowserState);
+
+        // A library mutation is compact and includes stable IDs; refetching
+        // just the current server-side page also handles sort-position moves.
+        socket.on("library.changed", refreshLibraryPage);
 
         // File browser errors
         socket.on("file_browser_error", (errorData) => {
@@ -1035,6 +1035,7 @@ export const useSocketEventHandlers = (socket, enabled = true) => {
             window.clearInterval(commandTimer);
             socket.off("tracker-instances");
             socket.off("file_browser_state", handleFileBrowserState);
+            socket.off("library.changed", refreshLibraryPage);
             socket.off("file_browser_error");
             socket.off("recording_state");
             socket.off("vfo-states");

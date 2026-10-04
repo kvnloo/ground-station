@@ -118,53 +118,26 @@ const ObservationDataDialog = ({ open, onClose, observation }) => {
 
         setLoading(true);
 
-        // Listen for file browser response
-        const handleFileBrowserState = (state) => {
-            if (state.action === 'list-files') {
-                console.log('Observation ID:', observation.id);
-                console.log('Total files received:', state.items?.length || 0);
-
-                // Try to match files by observation ID
-                const sessionId = `internal:${observation.id}`;
-
-                const matchingFiles = state.items.filter(file => {
-                    // Check if session_id matches (backend should set this for scheduled observations)
-                    if (file.session_id === sessionId) return true;
-
-                    // Check if observation_id field exists and matches
-                    if (file.observation_id === observation.id) return true;
-
-                    // Check if metadata has observation_id
-                    if (file.metadata?.observation_id === observation.id) return true;
-
-                    // Check if filename contains observation ID
-                    const filename = file.name || file.filename || '';
-                    if (filename.includes(observation.id)) return true;
-
-                    return false;
-                });
-
-                setFiles(matchingFiles);
-                setLoading(false);
-            }
-        };
-
-        socket.on('file_browser_state', handleFileBrowserState);
-
-        // Request all files
-        socket.emit("api.call", {
-  cmd: "filebrowser.list-files",
-  data: {
-    showRecordings: true,
-    showSnapshots: true,
-    showDecoded: true,
-    showAudio: true,
-    showTranscriptions: true
-  }
-});
+        // Request only this observation's compact page.  The File Browser no
+        // longer broadcasts its complete storage inventory to every dialog.
+        let cancelled = false;
+        socket.emit('api.call', {
+            cmd: 'filebrowser.query',
+            data: {
+                sessionId: `internal:${observation.id}`,
+                observationId: observation.id,
+                pageSize: 100,
+                sortBy: 'created',
+                sortOrder: 'desc',
+            },
+        }, (result) => {
+            if (cancelled) return;
+            setFiles(result?.success ? result.data?.items || [] : []);
+            setLoading(false);
+        });
 
         return () => {
-            socket.off('file_browser_state', handleFileBrowserState);
+            cancelled = true;
         };
     }, [open, observation?.id, socket]);
 

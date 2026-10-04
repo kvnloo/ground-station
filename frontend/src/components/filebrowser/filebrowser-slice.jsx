@@ -19,30 +19,46 @@
 
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 
-// Unified async thunk to fetch all files (recordings, snapshots, decoded, audio, and transcriptions)
-// Note: This now uses pub/sub model - it sends a request and the response comes via socket event
-// Backend returns ALL files, frontend handles sorting and pagination
-export const fetchFiles = createAsyncThunk(
-    'filebrowser/fetchFiles',
-    async ({ socket, showRecordings = true, showSnapshots = true, showDecoded = true, showAudio = true, showTranscriptions = true }, { rejectWithValue }) => {
-        try {
-            // Emit request without callback - response will come via 'file_browser_state' event
-            // No pagination or sorting params - backend returns all files
-            socket.emit("api.call", {
-  cmd: "filebrowser.list-files",
-  data: {
-    showRecordings,
-    showSnapshots,
-    showDecoded,
-    showAudio,
-    showTranscriptions
-  }
+const callLibrary = (socket, cmd, data) => new Promise((resolve, reject) => {
+    if (!socket?.connected) {
+        reject(new Error('Not connected to server'));
+        return;
+    }
+    socket.emit('api.call', { cmd, data }, (result) => {
+        if (result?.success) {
+            resolve(result.data);
+        } else {
+            reject(new Error(result?.error || 'Library request failed'));
+        }
+    });
 });
 
-            // Return pending state - actual data will be updated via socket listener
-            return { pending: true };
+// The backend owns filtering, sorting and pagination.  This keeps the browser
+// response bounded even when the storage library contains many artifacts.
+export const fetchFiles = createAsyncThunk(
+    'filebrowser/fetchFiles',
+    async ({ socket, filters, sortBy = 'created', sortOrder = 'desc', page = 1, pageSize = 25 }, { rejectWithValue }) => {
+        try {
+            return await callLibrary(socket, 'filebrowser.query', {
+                filters,
+                sortBy,
+                sortOrder,
+                page,
+                pageSize,
+            });
         } catch (error) {
             return rejectWithValue(error.message || 'Failed to fetch files');
+        }
+    }
+);
+
+export const fetchFileDetails = createAsyncThunk(
+    'filebrowser/fetchFileDetails',
+    async ({ socket, id }, { rejectWithValue }) => {
+        try {
+            return await callLibrary(socket, 'filebrowser.item', { id });
+        } catch (error) {
+            return rejectWithValue(error.message || 'Failed to fetch file details');
         }
     }
 );
@@ -213,6 +229,24 @@ export const deleteBatch = createAsyncThunk(
     }
 );
 
+// Mutations use the command acknowledgement, rather than a later broadcast,
+// so failed deletions cannot disappear from the initiating browser.
+export const deleteLibraryItems = createAsyncThunk(
+    'filebrowser/deleteLibraryItems',
+    async ({ socket, ids }, { rejectWithValue }) => {
+        try {
+            const result = await callLibrary(socket, 'filebrowser.delete', { ids });
+            const failures = result.results?.filter((entry) => !entry.success) || [];
+            if (failures.length) {
+                throw new Error(failures.map((entry) => entry.error || entry.id).join(', '));
+            }
+            return result;
+        } catch (error) {
+            return rejectWithValue(error.message || 'Failed to delete library items');
+        }
+    }
+);
+
 // Async thunk to start a background task via Socket.IO
 export const startBackgroundTask = createAsyncThunk(
     'filebrowser/startBackgroundTask',
@@ -293,6 +327,13 @@ const fileBrowserSlice = createSlice({
         setPage: (state, action) => {
             state.page = action.payload;
         },
+        setPageSize: (state, action) => {
+            const size = Number(action.payload);
+            if (Number.isFinite(size) && size > 0 && state.pageSize !== size) {
+                state.pageSize = size;
+                state.page = 1;
+            }
+        },
         setFilter: (state, action) => {
             const { filter, value } = action.payload;
             state.filters[filter] = value;
@@ -351,22 +392,16 @@ const fileBrowserSlice = createSlice({
         },
     },
     extraReducers: (builder) => {
-        // Unified fetchFiles
+        // Server-side paged query
         builder.addCase(fetchFiles.pending, (state) => {
             state.filesLoading = true;
             state.filesError = null;
         });
         builder.addCase(fetchFiles.fulfilled, (state, action) => {
-            // If this is just a pending state (pub/sub model), don't update data
-            if (action.payload.pending) {
-                // Keep loading true, actual data will come via socket event
-                return;
-            }
-
             state.filesLoading = false;
             state.files = action.payload.items || [];
-            // Total is now the count of all files received
-            state.total = (action.payload.items || []).length;
+            state.total = action.payload.total || 0;
+            state.page = action.payload.page || state.page;
             state.diskUsage = action.payload.diskUsage || { total: 0, used: 0, available: 0 };
 
             // Check if there are new files since last visit
@@ -392,6 +427,17 @@ const fileBrowserSlice = createSlice({
         builder.addCase(fetchPlaybackRecordings.rejected, (state, action) => {
             state.playbackRecordingsLoading = false;
             state.playbackRecordingsError = action.payload || 'Failed to fetch playback recordings';
+        });
+
+        builder.addCase(deleteLibraryItems.fulfilled, (state, action) => {
+            const deletedIds = new Set(
+                (action.payload.results || [])
+                    .filter((entry) => entry.success)
+                    .map((entry) => entry.id)
+            );
+            state.files = state.files.filter((file) => !deletedIds.has(file.id));
+            state.total = Math.max(0, state.total - deletedIds.size);
+            state.selectedItems = state.selectedItems.filter((id) => !deletedIds.has(id));
         });
 
         // Delete recording - optimistic update
@@ -479,6 +525,7 @@ export const {
     setSortBy,
     toggleSortOrder,
     setPage,
+    setPageSize,
     setFilter,
     toggleFilter,
     handleFileChange,
