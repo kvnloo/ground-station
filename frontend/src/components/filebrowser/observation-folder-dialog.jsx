@@ -96,6 +96,16 @@ export default function ObservationFolderDialog({
 
     const artifacts = folder.artifacts || [];
     const recordings = folder.recordings || [];
+    const declaredSize = Number(folder.size);
+    // Compact observation cards deliberately avoid walking every file and use
+    // size: 0. The detail payload already carries every visible artifact size,
+    // so use it when that compact value reaches the dialog unchanged.
+    const observationSize = Number.isFinite(declaredSize) && declaredSize > 0
+        ? declaredSize
+        : artifacts.reduce((total, artifact) => {
+            const size = Number(artifact.size);
+            return total + (Number.isFinite(size) && size > 0 ? size : 0);
+        }, 0);
     const metadata = folder.metadata || {};
     const satellite = metadata.satellite && typeof metadata.satellite === 'object'
         ? metadata.satellite
@@ -207,7 +217,7 @@ export default function ObservationFolderDialog({
                             />
                         )}
                         <Chip label={`${folder.artifact_count || 0} files`} size="small" color="info" />
-                        <Chip label={formatBytes(folder.size)} size="small" variant="outlined" />
+                        <Chip label={formatBytes(observationSize)} size="small" variant="outlined" />
                     </Box>
                 </Box>
             </DialogTitle>
@@ -338,8 +348,13 @@ export default function ObservationFolderDialog({
                     </Paper>
                 )}
                 <Box sx={{ mt: 1, mb: 2 }}>
-                    <Typography variant="subtitle1" fontWeight={700}>Observation artifacts</Typography>
-                    <Typography variant="body2" color="text.secondary">Select an item to open it in its dedicated viewer.</Typography>
+                    <Typography variant="subtitle1" fontWeight={700}>
+                        Observation artifacts
+                        <Box component="span" sx={{ mx: 1, color: 'text.disabled' }}>·</Box>
+                        <Box component="span" sx={{ color: 'text.secondary', fontSize: '0.875rem', fontWeight: 400 }}>
+                            Select an item to open it in its dedicated viewer.
+                        </Box>
+                    </Typography>
                 </Box>
                 {recordings.length > 0 && (
                     <>

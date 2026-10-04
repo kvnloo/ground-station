@@ -190,6 +190,19 @@ describe('ObservationFolderDialog', () => {
         expect(screen.queryByText('Supporting files')).not.toBeInTheDocument();
     });
 
+    it('derives the bundle size from detail artifacts when the compact card size is zero', () => {
+        renderWithProviders(
+            <ObservationFolderDialog
+                open
+                onClose={vi.fn()}
+                folder={{ ...folder, size: 0 }}
+                onOpenArtifact={vi.fn()}
+            />
+        );
+
+        expect(screen.getByText('8.78 KB')).toBeInTheDocument();
+    });
+
     it('uses the waterfall thumbnail as the recording card preview', () => {
         renderWithProviders(
             <ObservationFolderDialog open onClose={vi.fn()} folder={folder} onOpenArtifact={vi.fn()} />
