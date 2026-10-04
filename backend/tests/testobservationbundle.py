@@ -6,6 +6,7 @@ from observations.bundle import (
     create_observation_bundle,
     finalize_interrupted_observation_bundles,
     finalize_observation_bundle,
+    observation_snapshot,
     prune_finalized_empty_observation_bundles,
 )
 
@@ -51,6 +52,41 @@ def test_finalize_observation_bundle_retains_artifacts_and_metadata(tmp_path):
     assert manifest["status"] == "completed"
     assert manifest["in_progress"] is False
     assert manifest["finalized_at"]
+
+
+def test_observation_snapshot_persists_schedule_and_final_status(tmp_path):
+    observation = {
+        "name": "NOAA 19 morning pass",
+        "enabled": True,
+        "status": "running",
+        "satellite": {"name": "NOAA 19", "norad_id": 33591, "group_id": "weather"},
+        "pass": {
+            "event_start": "2026-08-16T12:13:00+00:00",
+            "event_end": "2026-08-16T12:19:00+00:00",
+            "peak_altitude": 47.25,
+        },
+        "task_start": "2026-08-16T12:12:45+00:00",
+        "task_end": "2026-08-16T12:19:15+00:00",
+        "task_start_elevation": 10,
+        "sessions": [{"sdr": {"id": "sdr-1"}, "tasks": [{"type": "iq_recording"}]}],
+    }
+    bundle_dir = create_observation_bundle(
+        "observation-artifact", observation["satellite"], tmp_path
+    )
+    (bundle_dir / "decoded" / "image.png").write_bytes(b"image")
+    manifest_path = bundle_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["scheduled_observation"] = observation_snapshot(observation)
+    manifest_path.write_text(json.dumps(manifest))
+
+    finalize_observation_bundle(bundle_dir, "completed")
+
+    manifest = json.loads(manifest_path.read_text())
+    snapshot = manifest["scheduled_observation"]
+    assert snapshot["pass"]["peak_altitude"] == 47.25
+    assert snapshot["task_start_elevation"] == 10
+    assert snapshot["sessions"] == observation["sessions"]
+    assert snapshot["status"] == "completed"
 
 
 def test_finalize_interrupted_observation_bundles_uses_manifest_identity(tmp_path):

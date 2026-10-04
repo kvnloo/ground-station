@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Efstratios Goudelis
 
 import importlib
+import json
 import sys
 import types
 
@@ -27,6 +28,14 @@ def _build_observation(rotator=None):
         "enabled": True,
         "status": "scheduled",
         "satellite": {"name": "ISS", "norad_id": 25544, "group_id": "grp-1"},
+        "pass": {
+            "event_start": "2026-08-16T12:13:00+00:00",
+            "event_end": "2026-08-16T12:19:00+00:00",
+            "peak_altitude": 47.25,
+        },
+        "task_start": "2026-08-16T12:12:45+00:00",
+        "task_end": "2026-08-16T12:19:15+00:00",
+        "task_start_elevation": 10,
         "rotator": rotator or {},
         "sessions": [
             {
@@ -144,6 +153,11 @@ async def test_start_observation_starts_tracker_before_session_tasks(monkeypatch
     assert result["success"] is True
     assert events == ["running", "tracker", "session"]
     assert executor._tracker_context_by_observation["obs-1"]["tracker_id"] == "target-1"
+    bundle = next((tmp_path / "data" / "observations").glob("*.gsobs"))
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    assert manifest["scheduled_observation"]["status"] == "running"
+    assert manifest["scheduled_observation"]["pass"]["peak_altitude"] == 47.25
+    assert manifest["scheduled_observation"]["task_start_elevation"] == 10
 
 
 @pytest.mark.asyncio

@@ -365,6 +365,7 @@ export default function FileBrowserMain() {
     const [meteorHrptFolder, setMeteorHrptFolder] = useState(null);
     const [observationFolderDialogOpen, setObservationFolderDialogOpen] = useState(false);
     const [observationFolder, setObservationFolder] = useState(null);
+    const [returnToObservationFolder, setReturnToObservationFolder] = useState(false);
     const [processingDialogOpen, setProcessingDialogOpen] = useState(false);
     const [processingRecording, setProcessingRecording] = useState(null);
     const [processingMenuAnchorEl, setProcessingMenuAnchorEl] = useState(null);
@@ -520,6 +521,16 @@ export default function FileBrowserMain() {
         setDeleteDialogOpen(true);
     };
 
+    const handleDeleteObservation = () => {
+        if (!observationFolder?.id) return;
+        handleDelete(observationFolder);
+    };
+
+    const handleCloseDeleteDialog = () => {
+        setDeleteDialogOpen(false);
+        setItemToDelete(null);
+    };
+
     const confirmDelete = async () => {
         if (itemToDelete && socket) {
             try {
@@ -527,6 +538,10 @@ export default function FileBrowserMain() {
 
                 setDeleteDialogOpen(false);
                 setItemToDelete(null);
+                if (itemToDelete.folder_kind === 'observation') {
+                    setObservationFolderDialogOpen(false);
+                    setObservationFolder(null);
+                }
             } catch (error) {
                 // Error will be shown by socket error event listener, but show local toast too
                 toast.error(t('toast.delete_failed', 'Failed to delete: {{error}}', { error }));
@@ -618,6 +633,10 @@ export default function FileBrowserMain() {
         // Grouped IQ captures already arrive as complete recording payloads, so
         // they open the standalone Recording Details dialog as-is.
         if (artifact.type === 'recording') {
+            // The observation dialog is rendered after RecordingDialog. Close it
+            // first so its modal backdrop cannot cover the waterfall viewer.
+            setObservationFolderDialogOpen(false);
+            setReturnToObservationFolder(true);
             setSelectedItem({ ...artifact, displayName: artifact.name });
             setDetailsOpen(true);
             return;
@@ -707,6 +726,14 @@ export default function FileBrowserMain() {
         }
 
         window.open(artifact.url, '_blank', 'noopener,noreferrer');
+    };
+
+    const handleCloseRecordingDetails = () => {
+        setDetailsOpen(false);
+        if (returnToObservationFolder) {
+            setReturnToObservationFolder(false);
+            setObservationFolderDialogOpen(true);
+        }
     };
 
     const handleOpenProcessing = (item) => {
@@ -2119,7 +2146,7 @@ export default function FileBrowserMain() {
             {selectedItem?.type === 'recording' && (
                 <RecordingDialog
                     open={detailsOpen}
-                    onClose={() => setDetailsOpen(false)}
+                    onClose={handleCloseRecordingDetails}
                     recording={selectedItem}
                 />
             )}
@@ -2445,9 +2472,10 @@ export default function FileBrowserMain() {
             {/* Delete Confirmation Dialog */}
             <Dialog
                 open={deleteDialogOpen}
-                onClose={() => setDeleteDialogOpen(false)}
+                onClose={handleCloseDeleteDialog}
                 maxWidth="sm"
                 fullWidth
+                sx={{ zIndex: (theme) => theme.zIndex.modal + 1 }}
                 PaperProps={{
                     sx: {
                         bgcolor: 'background.paper',
@@ -2520,6 +2548,7 @@ export default function FileBrowserMain() {
                             </Typography>
                             <Typography variant="body2" sx={{ fontSize: '0.813rem', color: 'text.primary' }}>
                                 {itemToDelete?.type === 'recording' ? 'Recording' :
+                                 itemToDelete?.folder_kind === 'observation' ? 'Observation Folder' :
                                  itemToDelete?.type === 'decoded_folder' ? 'Decoded Folder' :
                                  itemToDelete?.type === 'decoded' ? 'Decoded File' :
                                  itemToDelete?.type === 'audio' ? 'Audio Recording' :
@@ -2545,6 +2574,11 @@ export default function FileBrowserMain() {
                                 {t('recording.delete_message', 'This will delete the data file, metadata file, and snapshot.')}
                             </Typography>
                         )}
+                        {itemToDelete?.folder_kind === 'observation' && (
+                            <Typography variant="body2" sx={{ mt: 2, fontSize: '0.813rem', color: 'warning.main', fontStyle: 'italic' }}>
+                                This will delete the observation and every recording, image, and artifact it contains.
+                            </Typography>
+                        )}
                     </Box>
                 </DialogContent>
                 <DialogActions
@@ -2557,7 +2591,7 @@ export default function FileBrowserMain() {
                     }}
                 >
                     <Button
-                        onClick={() => setDeleteDialogOpen(false)}
+                        onClick={handleCloseDeleteDialog}
                         variant="outlined"
                         color="inherit"
                         sx={{
@@ -2770,6 +2804,7 @@ export default function FileBrowserMain() {
                 onClose={() => setObservationFolderDialogOpen(false)}
                 folder={observationFolder}
                 onOpenArtifact={handleObservationArtifact}
+                onDelete={handleDeleteObservation}
             />
 
             {/* Processing Dialog */}

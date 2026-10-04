@@ -12,6 +12,39 @@ BUNDLE_SUFFIX = ".gsobs"
 ARTIFACT_DIRECTORIES = ("recordings", "audio", "decoded", "transcriptions", "snapshots")
 
 
+def observation_snapshot(observation: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the durable scheduler metadata stored with a produced observation."""
+    satellite = observation.get("satellite") or {}
+    pass_details = observation.get("pass") or {}
+
+    # Keep the bundle self-contained after scheduler retention removes the
+    # source row, while avoiding transient execution logs and unrelated state.
+    return {
+        "name": observation.get("name"),
+        "status": observation.get("status"),
+        "enabled": observation.get("enabled"),
+        "satellite": {
+            "name": satellite.get("name"),
+            "norad_id": satellite.get("norad_id"),
+            "group_id": satellite.get("group_id"),
+        },
+        "pass": {
+            "event_start": pass_details.get("event_start"),
+            "event_end": pass_details.get("event_end"),
+            "peak_altitude": pass_details.get("peak_altitude"),
+        },
+        "task_start": observation.get("task_start"),
+        "task_end": observation.get("task_end"),
+        "task_start_elevation": observation.get("task_start_elevation"),
+        "rotator": observation.get("rotator") or {},
+        "rig": observation.get("rig") or {},
+        "transmitter": observation.get("transmitter") or {},
+        "sessions": observation.get("sessions") or [],
+        "created_at": observation.get("created_at"),
+        "updated_at": observation.get("updated_at"),
+    }
+
+
 def create_observation_bundle(
     observation_id: str, satellite: Dict[str, Any], backend_dir: Path
 ) -> Path:
@@ -39,7 +72,7 @@ def create_observation_bundle(
         (bundle_dir / directory).mkdir(exist_ok=True)
 
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "observation_id": observation_id,
         "satellite": {
             "name": satellite.get("name"),
@@ -102,13 +135,28 @@ def finalize_observation_bundle(bundle_dir: Path, status: str) -> bool:
     Returns ``True`` when the finalized bundle remains on disk and ``False`` when
     it was removed as empty.
     """
+    manifest_path = bundle_dir / "manifest.json"
+    try:
+        manifest: Dict[str, Any] = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
+    snapshot = manifest.get("scheduled_observation")
+    if isinstance(snapshot, dict):
+        # The snapshot starts as the scheduled configuration. Its terminal
+        # status must follow the bundle because the scheduler row is temporary.
+        snapshot = {**snapshot, "status": status}
+
+    values = {
+        "status": status,
+        "in_progress": False,
+        "finalized_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if snapshot is not None:
+        values["scheduled_observation"] = snapshot
+
     write_bundle_manifest(
         bundle_dir,
-        {
-            "status": status,
-            "in_progress": False,
-            "finalized_at": datetime.now(timezone.utc).isoformat(),
-        },
+        values,
     )
     if bundle_has_artifacts(bundle_dir):
         return True

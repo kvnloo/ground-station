@@ -119,6 +119,31 @@ def test_observation_summary_includes_the_visible_artifact_count(inventory):
     assert observation["artifact_count"] == 2
 
 
+def test_observation_detail_uses_waterfall_previews_and_groups_recording_files(inventory):
+    folder = inventory.roots.observations / "NOAA.gsobs"
+    recording_root = folder / "recordings"
+    _write(recording_root / "capture.sigmf-data", b"iq")
+    _write(recording_root / "capture.sigmf-meta", json.dumps({"global": {}}))
+    _write(recording_root / "capture.png", b"full waterfall")
+    _write(recording_root / "capture_waterfall_thumb.png", b"waterfall preview")
+    _write(folder / "decoded" / "product.png", b"full image")
+    _write(folder / "decoded" / "thumbnails" / "product.jpg", b"image preview")
+    inventory.rebuild()
+
+    detail = inventory.detail("observation:NOAA.gsobs")
+    recording = detail["recordings"][0]
+    artifacts = {artifact["path"]: artifact for artifact in detail["artifacts"]}
+    product = next(image for image in detail["images"] if image["path"] == "decoded/product.png")
+
+    assert recording["snapshot"]["thumbnail_url"].endswith(
+        "/recordings/capture_waterfall_thumb.png"
+    )
+    assert artifacts["recordings/capture.png"]["recording_name"] == "capture"
+    assert artifacts["recordings/capture_waterfall_thumb.png"]["recording_name"] == "capture"
+    assert artifacts["recordings/capture.sigmf-data"]["recording_name"] == "capture"
+    assert product["thumbnail_url"].endswith("/decoded/thumbnails/product.jpg")
+
+
 def test_rebuild_only_advances_revision_when_filesystem_changes(inventory):
     revision = inventory.revision
 

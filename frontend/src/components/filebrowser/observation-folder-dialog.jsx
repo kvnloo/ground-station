@@ -20,6 +20,7 @@ import {
 } from '@mui/material';
 import AudioFileIcon from '@mui/icons-material/AudioFile';
 import DescriptionIcon from '@mui/icons-material/Description';
+import DeleteIcon from '@mui/icons-material/Delete';
 import DownloadIcon from '@mui/icons-material/Download';
 import ImageIcon from '@mui/icons-material/Image';
 import RadioIcon from '@mui/icons-material/Radio';
@@ -47,6 +48,12 @@ function formatSampleRate(sampleRateHz) {
     return sampleRateHz >= 1e6
         ? `${Math.round((sampleRateHz / 1e6) * 100) / 100} Msps`
         : `${Math.round(sampleRateHz / 1e3)} ksps`;
+}
+
+function formatObservationTime(timestamp) {
+    if (!timestamp) return null;
+    const date = new Date(timestamp);
+    return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString();
 }
 
 /** Summary line for a grouped recording card: size, frequency and sample rate. */
@@ -78,11 +85,53 @@ function artifactLabel(artifact) {
     return 'Supporting file';
 }
 
-export default function ObservationFolderDialog({ open, onClose, folder, onOpenArtifact }) {
+export default function ObservationFolderDialog({
+    open,
+    onClose,
+    folder,
+    onOpenArtifact,
+    onDelete,
+}) {
     if (!folder) return null;
 
     const artifacts = folder.artifacts || [];
     const recordings = folder.recordings || [];
+    const metadata = folder.metadata || {};
+    const satellite = metadata.satellite && typeof metadata.satellite === 'object'
+        ? metadata.satellite
+        : {};
+    const observationStatus = metadata.status || folder.observation_status;
+    const sessionCount = Array.isArray(metadata.sessions) ? metadata.sessions.length : 0;
+    const observationDetails = [
+        { label: 'Observation ID', value: metadata.observation_id, mono: true },
+        { label: 'Target', value: satellite.name || folder.satellite_name },
+        { label: 'NORAD ID', value: satellite.norad_id || folder.satellite_id, mono: true },
+        { label: 'Started', value: formatObservationTime(metadata.created_at) },
+        { label: 'Finished', value: formatObservationTime(metadata.finalized_at) },
+        { label: 'Sessions', value: sessionCount ? `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}` : null },
+    ].filter((detail) => detail.value !== null && detail.value !== undefined && detail.value !== '');
+    const scheduledObservation = metadata.scheduled_observation;
+    const scheduledDetails = scheduledObservation ? [
+        { label: 'Planned AOS', value: formatObservationTime(scheduledObservation.pass?.event_start) },
+        { label: 'Planned LOS', value: formatObservationTime(scheduledObservation.pass?.event_end) },
+        {
+            label: 'Peak elevation',
+            value: Number.isFinite(Number(scheduledObservation.pass?.peak_altitude))
+                ? `${Number(scheduledObservation.pass.peak_altitude).toFixed(1)}°`
+                : null,
+        },
+        { label: 'Task start', value: formatObservationTime(scheduledObservation.task_start) },
+        { label: 'Task end', value: formatObservationTime(scheduledObservation.task_end) },
+        { label: 'Actual start', value: formatObservationTime(scheduledObservation.actual_start_time) },
+        { label: 'Actual end', value: formatObservationTime(scheduledObservation.actual_end_time) },
+    ].filter((detail) => detail.value !== null && detail.value !== undefined && detail.value !== '') : [];
+    const statusColor = observationStatus === 'completed'
+        ? 'success'
+        : observationStatus === 'failed' || observationStatus === 'cancelled'
+            ? 'error'
+            : observationStatus === 'in_progress' || folder.observation_in_progress
+                ? 'warning'
+                : 'info';
     // An IQ capture owns several files (SigMF pair, waterfall, thumbnail). The
     // backend tags them with the owning recording so each capture appears once,
     // as a single card, instead of once per file.
@@ -158,6 +207,124 @@ export default function ObservationFolderDialog({ open, onClose, folder, onOpenA
                 pt: '32px !important',
                 pb: 3,
             }}>
+                {(metadata.observation_name || observationStatus || observationDetails.length > 0 || scheduledObservation) && (
+                    <Paper
+                        variant="outlined"
+                        data-testid="observation-details-summary"
+                        sx={{
+                            mb: 3,
+                            overflow: 'hidden',
+                            borderRadius: 2,
+                            bgcolor: 'background.paper',
+                        }}
+                    >
+                        <Box
+                            sx={{
+                                px: 2.25,
+                                py: 1.5,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 2,
+                                borderBottom: observationDetails.length ? '1px solid' : 0,
+                                borderColor: 'divider',
+                                bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'grey.900' : 'grey.50'),
+                            }}
+                        >
+                            <Box sx={{ minWidth: 0 }}>
+                                <Typography variant="subtitle2" fontWeight={700}>Observation details</Typography>
+                                {metadata.observation_name && (
+                                    <Typography variant="body2" color="text.secondary" noWrap>
+                                        {metadata.observation_name}
+                                    </Typography>
+                                )}
+                            </Box>
+                            {observationStatus && (
+                                <Chip
+                                    label={observationStatus.replace(/_/g, ' ')}
+                                    size="small"
+                                    color={statusColor}
+                                    sx={{ textTransform: 'capitalize', flexShrink: 0 }}
+                                />
+                            )}
+                        </Box>
+                        {observationDetails.length > 0 && (
+                            <Box
+                                sx={{
+                                    display: 'grid',
+                                    gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', md: 'repeat(3, minmax(0, 1fr))' },
+                                    rowGap: 0,
+                                    columnGap: 0,
+                                }}
+                            >
+                                {observationDetails.map((detail) => (
+                                    <Box
+                                        key={detail.label}
+                                        sx={{
+                                            px: 2.25,
+                                            py: 1.25,
+                                            minWidth: 0,
+                                            borderBottom: { xs: '1px solid', md: 0 },
+                                            borderColor: 'divider',
+                                            '&:last-child': { borderBottom: 0 },
+                                        }}
+                                    >
+                                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                                            {detail.label}
+                                        </Typography>
+                                        <Tooltip title={String(detail.value)} placement="top-start">
+                                            <Typography variant="body2" noWrap sx={{ fontFamily: detail.mono ? 'monospace' : 'inherit', fontWeight: 600 }}>
+                                                {detail.value}
+                                            </Typography>
+                                        </Tooltip>
+                                    </Box>
+                                ))}
+                            </Box>
+                        )}
+                        {scheduledObservation && (
+                            <Box sx={{ borderTop: '1px solid', borderColor: 'divider' }}>
+                                <Box
+                                    sx={{
+                                        px: 2.25,
+                                        py: 1.25,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        gap: 2,
+                                        bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.03)' : 'grey.50'),
+                                    }}
+                                >
+                                    <Typography variant="subtitle2" fontWeight={700}>Scheduled pass</Typography>
+                                </Box>
+                                {scheduledDetails.length > 0 && (
+                                    <Box
+                                        sx={{
+                                            display: 'grid',
+                                            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', md: 'repeat(3, minmax(0, 1fr))' },
+                                        }}
+                                    >
+                                        {scheduledDetails.map((detail) => (
+                                            <Box key={detail.label} sx={{ px: 2.25, py: 1.25, minWidth: 0 }}>
+                                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                                                    {detail.label}
+                                                </Typography>
+                                                <Tooltip title={String(detail.value)} placement="top-start">
+                                                    <Typography variant="body2" noWrap fontWeight={600}>{detail.value}</Typography>
+                                                </Tooltip>
+                                            </Box>
+                                        ))}
+                                    </Box>
+                                )}
+                                {scheduledObservation.error_message && (
+                                    <Box sx={{ mx: 2.25, mb: 1.5, px: 1.25, py: 1, borderRadius: 1, bgcolor: 'error.lighter', color: 'error.dark' }}>
+                                        <Typography variant="caption" sx={{ display: 'block', fontWeight: 700, textTransform: 'uppercase' }}>Scheduler error{scheduledObservation.error_count ? ` (${scheduledObservation.error_count})` : ''}</Typography>
+                                        <Typography variant="body2">{scheduledObservation.error_message}</Typography>
+                                    </Box>
+                                )}
+                            </Box>
+                        )}
+                    </Paper>
+                )}
                 <Box sx={{ mt: 1, mb: 2 }}>
                     <Typography variant="subtitle1" fontWeight={700}>Observation artifacts</Typography>
                     <Typography variant="body2" color="text.secondary">Select an item to open it in its dedicated viewer.</Typography>
@@ -219,7 +386,7 @@ export default function ObservationFolderDialog({ open, onClose, folder, onOpenA
                                         onClick={() => openArtifact(image)}
                                         sx={{ cursor: 'pointer', border: 1, borderColor: 'divider', borderRadius: 2, overflow: 'hidden', transition: 'all 160ms ease', '&:hover': { borderColor: 'primary.main', transform: 'translateY(-2px)', boxShadow: 3 } }}
                                     >
-                                        <Box component="img" src={image.url} alt={image.name} loading="lazy" sx={{ display: 'block', width: '100%', height: 164, objectFit: 'contain', bgcolor: 'grey.900' }} />
+                                        <Box component="img" src={image.thumbnail_url || image.url} alt={image.name} loading="lazy" decoding="async" sx={{ display: 'block', width: '100%', height: 164, objectFit: 'contain', bgcolor: 'grey.900' }} />
                                         <Box sx={{ p: 1.25 }}>
                                             <Typography variant="body2" noWrap fontWeight={600}>{image.name}</Typography>
                                             <Typography variant="caption" color="text.secondary">{formatBytes(image.size)} · Open image viewer</Typography>
@@ -265,6 +432,9 @@ export default function ObservationFolderDialog({ open, onClose, folder, onOpenA
                 py: 2.5,
                 gap: 1,
             }}>
+                <Button onClick={onDelete} color="error" variant="outlined" startIcon={<DeleteIcon />} disabled={!onDelete}>
+                    Delete
+                </Button>
                 <Button onClick={onClose} variant="outlined">Close</Button>
             </DialogActions>
         </Dialog>

@@ -34,6 +34,7 @@ from observations.bundle import (
     create_observation_bundle,
     finalize_interrupted_observation_bundles,
     finalize_observation_bundle,
+    observation_snapshot,
     write_bundle_manifest,
 )
 from observations.constants import (
@@ -570,7 +571,12 @@ class ObservationExecutor:
                 self._bundle_dirs[observation_id] = bundle_dir
                 write_bundle_manifest(
                     bundle_dir,
-                    {"observation_name": observation.get("name")},
+                    {
+                        "observation_name": observation.get("name"),
+                        "scheduled_observation": observation_snapshot(
+                            {**observation, "status": STATUS_RUNNING}
+                        ),
+                    },
                 )
                 await self._publish_bundle_change("observation-bundle-created", observation_id)
             else:

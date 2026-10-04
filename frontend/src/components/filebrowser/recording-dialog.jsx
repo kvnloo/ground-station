@@ -27,10 +27,13 @@ import {
     DialogTitle,
     DialogContent,
     DialogActions,
+    IconButton,
     Stack,
+    Tooltip,
 } from '@mui/material';
+import GraphicEqIcon from '@mui/icons-material/GraphicEq';
 import DownloadIcon from '@mui/icons-material/Download';
-import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
+import DescriptionIcon from '@mui/icons-material/Description';
 import ImageIcon from '@mui/icons-material/Image';
 import { useSelector } from 'react-redux';
 import WaterfallViewer from './waterfall-viewer.jsx';
@@ -222,7 +225,7 @@ export default function RecordingDialog({ open, onClose, recording }) {
                         <Typography variant="subtitle2" gutterBottom>
                             Recording
                         </Typography>
-                        <Box sx={sectionSx}>
+                        <Box sx={{ ...sectionSx, mb: 1.5 }}>
                             <Box sx={rowSx}>
                                 <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
                                     Name
@@ -231,34 +234,73 @@ export default function RecordingDialog({ open, onClose, recording }) {
                                     {recording.name}
                                 </Typography>
                             </Box>
-                            <Box sx={rowSx}>
-                                <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                                    Files
-                                </Typography>
-                                <Box sx={{ display: 'grid', gap: 1 }}>
-                                    {associatedFiles.map((file) => (
+                        </Box>
+
+                        <Box
+                            sx={{
+                                mb: 2,
+                                border: '1px solid',
+                                borderColor: 'divider',
+                                borderRadius: 2,
+                                overflow: 'hidden',
+                                bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'grey.900' : 'common.white'),
+                            }}
+                        >
+                            <Box
+                                sx={{
+                                    px: 2,
+                                    py: 1.5,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    gap: 2,
+                                    borderBottom: '1px solid',
+                                    borderColor: 'divider',
+                                    bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'grey.800' : 'grey.50'),
+                                }}
+                            >
+                                <Box>
+                                    <Typography variant="subtitle2" fontWeight={700}>Recording files</Typography>
+                                    <Typography variant="caption" color="text.secondary">Source data and generated visual products</Typography>
+                                </Box>
+                                <Chip label={`${associatedFiles.length} files`} size="small" variant="outlined" />
+                            </Box>
+                            <Box sx={{ p: 1 }}>
+                                {associatedFiles.map((file) => {
+                                    const isImage = file.key === 'snapshot' || file.key === 'thumbnail';
+                                    const fileIcon = file.key === 'data'
+                                        ? <GraphicEqIcon />
+                                        : file.key === 'metadata'
+                                            ? <DescriptionIcon />
+                                            : <ImageIcon />;
+                                    const accentColor = file.key === 'data'
+                                        ? 'primary.main'
+                                        : file.key === 'metadata'
+                                            ? 'info.main'
+                                            : 'success.main';
+
+                                    return (
                                         <Box
                                             key={file.key}
                                             sx={{
                                                 display: 'grid',
-                                                gridTemplateColumns: { xs: '48px 1fr', sm: '56px 1fr auto' },
+                                                gridTemplateColumns: { xs: '52px minmax(0, 1fr) auto', sm: '64px minmax(0, 1fr) auto' },
                                                 alignItems: 'center',
-                                                gap: 1.25,
-                                                p: 1,
-                                                border: '1px solid',
-                                                borderColor: 'divider',
-                                                borderRadius: 1,
-                                                bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'grey.800' : 'common.white'),
+                                                gap: { xs: 1.25, sm: 1.5 },
+                                                p: 1.25,
+                                                borderRadius: 1.5,
+                                                '&:hover': { bgcolor: 'action.hover' },
                                             }}
                                         >
                                             <Box
                                                 sx={{
-                                                    width: { xs: 48, sm: 56 },
-                                                    height: { xs: 36, sm: 42 },
-                                                    borderRadius: 1,
-                                                    bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'grey.900' : 'grey.100'),
+                                                    width: { xs: 52, sm: 64 },
+                                                    height: { xs: 42, sm: 48 },
+                                                    borderRadius: 1.25,
+                                                    bgcolor: isImage ? 'grey.900' : 'action.selected',
+                                                    color: accentColor,
                                                     border: '1px solid',
-                                                    borderColor: 'divider',
+                                                    borderColor: isImage ? 'divider' : 'transparent',
                                                     display: 'flex',
                                                     alignItems: 'center',
                                                     justifyContent: 'center',
@@ -266,66 +308,38 @@ export default function RecordingDialog({ open, onClose, recording }) {
                                                 }}
                                             >
                                                 {file.previewUrl ? (
-                                                    <Box
-                                                        component="img"
-                                                        src={file.previewUrl}
-                                                        alt={`${file.type} preview`}
-                                                        sx={{
-                                                            width: '100%',
-                                                            height: '100%',
-                                                            objectFit: 'cover',
-                                                            display: 'block',
-                                                        }}
-                                                    />
-                                                ) : file.type === 'Waterfall Snapshot' || file.type === 'Thumbnail' ? (
-                                                    <ImageIcon sx={{ color: 'primary.main', fontSize: 24 }} />
-                                                ) : (
-                                                    <InsertDriveFileIcon sx={{ color: 'text.secondary', fontSize: 24 }} />
-                                                )}
+                                                    <Box component="img" src={file.previewUrl} alt={`${file.type} preview`} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                                                ) : fileIcon}
                                             </Box>
                                             <Box sx={{ minWidth: 0 }}>
-                                                <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                                                <Typography variant="caption" sx={{ color: accentColor, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
                                                     {file.type}
                                                 </Typography>
-                                                <Typography variant="body2" sx={{ fontFamily: 'monospace', wordBreak: 'break-word' }}>
-                                                    {file.filename}
+                                                <Tooltip title={file.filename} placement="top-start">
+                                                    <Typography variant="body2" noWrap sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                                                        {file.filename}
+                                                    </Typography>
+                                                </Tooltip>
+                                                <Typography variant="caption" color="text.secondary" component="div">
+                                                    {formatBytes(file.size)}{file.dimensions ? ` · ${file.dimensions}` : ''}
                                                 </Typography>
                                             </Box>
-                                            <Box
-                                                sx={{
-                                                    display: 'flex',
-                                                    flexDirection: { xs: 'row', sm: 'column' },
-                                                    alignItems: { xs: 'center', sm: 'flex-end' },
-                                                    justifyContent: 'center',
-                                                    gap: 0.5,
-                                                    justifySelf: { xs: 'start', sm: 'end' },
-                                                    gridColumn: { xs: '2', sm: 'auto' },
-                                                }}
-                                            >
-                                                {file.dimensions && (
-                                                    <Chip
-                                                        label={file.dimensions}
+                                            <Tooltip title={`Download ${file.type}`}>
+                                                <span>
+                                                    <IconButton
+                                                        aria-label={`Download ${file.type}`}
                                                         size="small"
-                                                        sx={{
-                                                            height: '22px',
-                                                            fontSize: '0.7rem',
-                                                            '& .MuiChip-label': { px: 0.85 },
-                                                        }}
-                                                    />
-                                                )}
-                                                <Chip
-                                                    label={formatBytes(file.size)}
-                                                    size="small"
-                                                    sx={{
-                                                        height: '22px',
-                                                        fontSize: '0.7rem',
-                                                        '& .MuiChip-label': { px: 0.85 },
-                                                    }}
-                                                />
-                                            </Box>
+                                                        color="primary"
+                                                        disabled={!file.url}
+                                                        onClick={() => window.open(file.url, '_blank', 'noopener,noreferrer')}
+                                                    >
+                                                        <DownloadIcon fontSize="small" />
+                                                    </IconButton>
+                                                </span>
+                                            </Tooltip>
                                         </Box>
-                                    ))}
-                                </Box>
+                                    );
+                                })}
                             </Box>
                         </Box>
 

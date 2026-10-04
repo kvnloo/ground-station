@@ -64,6 +64,15 @@ const folder = {
     artifact_count: groupedArtifacts.length + 2,
     recording_count: 1,
     download_url: `/api/observations/${BUNDLE}/download`,
+    metadata: {
+        observation_id: 'obs-1234',
+        observation_name: '239ALFEROV RS61S morning pass',
+        status: 'completed',
+        created_at: '2026-08-16T12:12:42Z',
+        finalized_at: '2026-08-16T12:20:05Z',
+        satellite: { name: '239ALFEROV RS61S', norad_id: 61785 },
+        sessions: [{ session_id: 'internal:obs-1234:sdr-1' }],
+    },
     recordings: [recording],
     artifacts: [...groupedArtifacts, telemetryArtifact, decodedImage],
     images: [
@@ -74,6 +83,51 @@ const folder = {
 };
 
 describe('ObservationFolderDialog', () => {
+    it('shows observation metadata before its artifacts', () => {
+        renderWithProviders(
+            <ObservationFolderDialog open onClose={vi.fn()} folder={folder} onOpenArtifact={vi.fn()} />
+        );
+
+        expect(screen.getByTestId('observation-details-summary')).toBeInTheDocument();
+        expect(screen.getByText('239ALFEROV RS61S morning pass')).toBeInTheDocument();
+        expect(screen.getByText('obs-1234')).toBeInTheDocument();
+        expect(screen.getByText('61785')).toBeInTheDocument();
+        expect(screen.getByText('1 session')).toBeInTheDocument();
+        expect(screen.getByText('completed')).toBeInTheDocument();
+    });
+
+    it('shows the scheduled-observation snapshot stored in the bundle manifest', () => {
+        const folderWithSchedule = {
+            ...folder,
+            metadata: {
+                ...folder.metadata,
+                scheduled_observation: {
+                    pass: {
+                        event_start: '2026-08-16T12:13:00Z',
+                        event_end: '2026-08-16T12:19:00Z',
+                        peak_altitude: 47.25,
+                    },
+                    task_start: '2026-08-16T12:12:45Z',
+                    task_end: '2026-08-16T12:19:15Z',
+                    actual_start_time: '2026-08-16T12:12:48Z',
+                    actual_end_time: '2026-08-16T12:19:08Z',
+                },
+            },
+        };
+        renderWithProviders(
+            <ObservationFolderDialog
+                open
+                onClose={vi.fn()}
+                folder={folderWithSchedule}
+            />
+        );
+
+        expect(screen.getByText('Scheduled pass')).toBeInTheDocument();
+        expect(screen.getByText('47.3°')).toBeInTheDocument();
+        expect(screen.getByText('Planned AOS')).toBeInTheDocument();
+        expect(screen.getByText('Actual end')).toBeInTheDocument();
+    });
+
     it('collapses each IQ capture into a single card', () => {
         renderWithProviders(
             <ObservationFolderDialog open onClose={vi.fn()} folder={folder} onOpenArtifact={vi.fn()} />
@@ -112,6 +166,17 @@ describe('ObservationFolderDialog', () => {
 
         expect(onOpenArtifact).toHaveBeenCalledTimes(1);
         expect(onOpenArtifact).toHaveBeenCalledWith(recording);
+    });
+
+    it('offers deletion from the observation dialog footer', async () => {
+        const onDelete = vi.fn();
+        renderWithProviders(
+            <ObservationFolderDialog open onClose={vi.fn()} folder={folder} onDelete={onDelete} />
+        );
+
+        await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        expect(onDelete).toHaveBeenCalledTimes(1);
     });
 
     it('falls back to per-file entries when the payload has no grouped recordings', () => {

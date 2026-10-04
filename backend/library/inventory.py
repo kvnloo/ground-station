@@ -538,12 +538,23 @@ class LibraryInventory:
     def _snapshot_info(self, path: Path, mount: str, thumbnail: Path) -> Optional[Dict[str, Any]]:
         if not path.is_file():
             return None
+
+        # WaterfallGenerator writes this preview beside the full-resolution
+        # waterfall. Prefer it because older observation bundles do not have a
+        # generated JPEG cache, and falling back to ``path`` would make the UI
+        # decode the original multi-megapixel PNG just to fill a small card.
+        waterfall_thumbnail = path.with_name(f"{path.stem}_waterfall_thumb.png")
+        if waterfall_thumbnail.is_file():
+            thumbnail_url = f"{mount}/{quote(waterfall_thumbnail.name)}"
+        elif thumbnail.is_file():
+            thumbnail_url = f"{mount}/thumbnails/{quote(thumbnail.name)}"
+        else:
+            thumbnail_url = None
+
         return {
             "filename": path.name,
             "url": f"{mount}/{quote(path.name)}",
-            "thumbnail_url": (
-                f"{mount}/thumbnails/{quote(thumbnail.name)}" if thumbnail.is_file() else None
-            ),
+            "thumbnail_url": thumbnail_url,
             "size": path.stat().st_size,
         }
 
@@ -583,6 +594,28 @@ class LibraryInventory:
         artifacts: List[Dict[str, Any]] = []
         images: List[Dict[str, Any]] = []
         total_size = 0
+        recording_root = folder / "recordings"
+        recording_owner_by_path: Dict[str, str] = {}
+
+        # Recordings are represented by one card each. Keep their individual
+        # data, metadata, waterfall, and waterfall preview out of the generic
+        # artifact/image grids, where the full waterfall would otherwise be
+        # requested and decoded a second time during dialog scrolling.
+        if recording_root.is_dir():
+            for meta in recording_root.glob("*.sigmf-meta"):
+                data = meta.with_suffix(".sigmf-data")
+                if not data.is_file():
+                    continue
+                name = meta.stem
+                for member in (
+                    data,
+                    meta,
+                    recording_root / f"{name}.png",
+                    recording_root / f"{name}_waterfall_thumb.png",
+                ):
+                    if member.is_file():
+                        recording_owner_by_path[member.relative_to(folder).as_posix()] = name
+
         for path in folder.rglob("*"):
             if not path.is_file() or path == manifest_path or path.suffix.lower() == ".json":
                 continue
@@ -590,21 +623,28 @@ class LibraryInventory:
             if "thumbnails" in relative.parent.parts:
                 continue
             stat = path.stat()
+            relative_path = relative.as_posix()
+            generated_thumbnail = path.parent / "thumbnails" / f"{path.stem}.jpg"
             artifact = {
                 "name": path.name,
-                "path": relative.as_posix(),
-                "url": f"/observations/{quote(folder.name)}/{quote(relative.as_posix())}",
+                "path": relative_path,
+                "url": f"/observations/{quote(folder.name)}/{quote(relative_path)}",
                 "size": stat.st_size,
                 "kind": relative.parts[0] if relative.parts else "file",
                 "file_type": path.suffix.lower(),
+                "recording_name": recording_owner_by_path.get(relative_path),
             }
+            if path.suffix.lower() in IMAGE_EXTENSIONS and generated_thumbnail.is_file():
+                thumbnail_relative = generated_thumbnail.relative_to(folder).as_posix()
+                artifact["thumbnail_url"] = (
+                    f"/observations/{quote(folder.name)}/{quote(thumbnail_relative)}"
+                )
             artifacts.append(artifact)
             total_size += stat.st_size
             if path.suffix.lower() in IMAGE_EXTENSIONS:
                 images.append(artifact)
 
         recordings: List[Dict[str, Any]] = []
-        recording_root = folder / "recordings"
         if recording_root.is_dir():
             for meta in recording_root.glob("*.sigmf-meta"):
                 data = meta.with_suffix(".sigmf-data")

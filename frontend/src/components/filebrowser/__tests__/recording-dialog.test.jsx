@@ -59,12 +59,11 @@ describe('RecordingDialog', () => {
         expect(screen.getByText('Waterfall Snapshot')).toBeInTheDocument();
         expect(screen.getByText('NOAA_apt_20260101_120000.png')).toBeInTheDocument();
         expect(screen.getAllByText('640×360').length).toBeGreaterThan(0);
-        expect(screen.getByText('2 KB')).toBeInTheDocument();
+        expect(screen.getByText('2 KB · 640×360')).toBeInTheDocument();
 
         expect(screen.getByText('Thumbnail')).toBeInTheDocument();
         expect(screen.getByText('NOAA_apt_20260101_120000.jpg')).toBeInTheDocument();
-        expect(screen.getByText('320×180')).toBeInTheDocument();
-        expect(screen.getByText('512 Bytes')).toBeInTheDocument();
+        expect(screen.getByText('512 Bytes · 320×180')).toBeInTheDocument();
         expect(screen.getAllByAltText('Thumbnail preview')).toHaveLength(1);
     });
 });
