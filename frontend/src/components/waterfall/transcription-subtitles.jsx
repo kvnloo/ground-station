@@ -462,6 +462,8 @@ const VFOSubtitle = ({
                             justifyContent: 'space-between',
                             gap: 2,
                             cursor: 'grab',
+                            // Claim touch gestures before the browser starts scrolling the page.
+                            touchAction: 'none',
                             '&:active': {
                                 cursor: 'grabbing',
                             },
