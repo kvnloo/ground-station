@@ -35,6 +35,7 @@ import {useDopplerNeighbors} from '../../hooks/useDopplerNeighbors.jsx';
 
 const PLAYBACK_COUNTDOWN_UPDATE_MS = 250;
 const INTERACTION_IDLE_MS = 120;
+const FAST_ZOOM_INTERACTION_IDLE_MS = 80;
 const TOUCH_INTERACTION_MEASURE_MS = 200;
 
 const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
@@ -226,7 +227,7 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
 
     }, [handleResize]);
 
-    const markTransformInteraction = useCallback(() => {
+    const markTransformInteraction = useCallback((idleMs = INTERACTION_IDLE_MS) => {
         if (!interactionActiveRef.current) {
             interactionActiveRef.current = true;
             setIsTransformInteracting(true);
@@ -240,7 +241,7 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
             interactionIdleTimerRef.current = null;
             interactionActiveRef.current = false;
             setIsTransformInteracting(false);
-        }, INTERACTION_IDLE_MS);
+        }, idleMs);
     }, []);
 
     const startTouchMeasureLoop = useCallback(() => {
@@ -313,7 +314,7 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
     }, []);
 
     // Zoom functionality
-    const zoomOnXAxisOnly = useCallback((deltaScale, centerX) => {
+    const zoomOnXAxisOnly = useCallback((deltaScale, centerX, interactionIdleMs = INTERACTION_IDLE_MS) => {
         const prevScale = scaleRef.current;
         const safePrevPositionX = Number.isFinite(positionXRef.current) ? positionXRef.current : 0;
         const newScale = Math.max(minZoom, Math.min(maxZoom, prevScale + deltaScale));
@@ -357,7 +358,7 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
         // Update refs
         scaleRef.current = newScale;
         positionXRef.current = newPositionX;
-        markTransformInteraction();
+        markTransformInteraction(interactionIdleMs);
 
         // Apply the transform immediately
         applyTransform();
@@ -431,7 +432,7 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
                 return;
             }
             const deltaScale = -e.deltaY * 0.01;
-            zoomOnXAxisOnly(deltaScale, e.offsetX);
+            zoomOnXAxisOnly(deltaScale, e.offsetX, FAST_ZOOM_INTERACTION_IDLE_MS);
         };
 
         // Mouse events for panning
@@ -509,7 +510,7 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
 
                 pinchCenterXRef.current = (touch1.clientX + touch2.clientX) / 2;
 
-                zoomOnXAxisOnly(deltaScale, pinchCenterXRef.current);
+                zoomOnXAxisOnly(deltaScale, pinchCenterXRef.current, FAST_ZOOM_INTERACTION_IDLE_MS);
                 e.preventDefault();
             }
         };
