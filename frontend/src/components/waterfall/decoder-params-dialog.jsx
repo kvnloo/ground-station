@@ -100,6 +100,49 @@ const DecoderParamsDialog = ({
         : null;
     const suggestionSatellite = lockTrackerSatelliteDetails || activeSatelliteDetails;
 
+    const handleApplySuggestedConfig = (config) => {
+        const parameters = { ...vfo.parameters };
+
+        // Keep this mapping aligned with scheduler tasks so a suggested
+        // configuration produces the same decoder settings in either workflow.
+        if (['gmsk', 'gfsk', 'fsk'].includes(decoder)) {
+            if (config.baudrate) parameters[`${decoder}_baudrate`] = config.baudrate;
+            if (config.framing) parameters[`${decoder}_framing`] = config.framing;
+            if (config.deviation !== null && config.deviation !== undefined) {
+                parameters[`${decoder}_deviation`] = config.deviation;
+            }
+            if (config.framing === 'geoscan' && config.framing_params?.frame_size) {
+                parameters[`${decoder}_geoscan_frame_size`] = config.framing_params.frame_size;
+            }
+        } else if (decoder === 'bpsk') {
+            if (config.baudrate) parameters.bpsk_baudrate = config.baudrate;
+            if (config.framing) parameters.bpsk_framing = config.framing;
+            if (config.differential !== null && config.differential !== undefined) {
+                parameters.bpsk_differential = config.differential;
+            }
+            if (config.framing === 'geoscan' && config.framing_params?.frame_size) {
+                parameters.bpsk_geoscan_frame_size = config.framing_params.frame_size;
+            }
+        } else if (decoder === 'geoscanimage') {
+            if (config.baudrate) parameters.geoscanimage_baudrate = config.baudrate;
+            if (config.deviation !== null && config.deviation !== undefined) parameters.geoscanimage_deviation = config.deviation;
+            if (config.framing_params?.frame_size) parameters.geoscanimage_frame_size = config.framing_params.frame_size;
+            if (config.framing_params?.syncword_threshold !== undefined) parameters.geoscanimage_syncword_threshold = config.framing_params.syncword_threshold;
+            if (config.framing_params?.satellite_id !== undefined) parameters.geoscanimage_satellite_id = config.framing_params.satellite_id;
+        } else if (decoder === 'aprs') {
+            if (config.baudrate) parameters.aprs_baudrate = config.baudrate;
+            if (config.deviation !== null && config.deviation !== undefined) parameters.aprs_deviation = config.deviation;
+            if (config.af_carrier) parameters.aprs_af_carrier = config.af_carrier;
+        } else if (decoder === 'lora') {
+            if (config.sf) parameters.lora_sf = config.sf;
+            if (config.bw) parameters.lora_bw = config.bw;
+            if (config.cr) parameters.lora_cr = config.cr;
+        }
+
+        // Suggested values must be active for the decoder to consume them.
+        onVFOPropertyChange(vfoIndex, { parameters, parametersEnabled: true });
+    };
+
     return (
         <Dialog
             open={open}
@@ -130,7 +173,7 @@ const DecoderParamsDialog = ({
                         satellite={suggestionSatellite?.norad_id ? suggestionSatellite : null}
                         transmitter={lockedTransmitter}
                         show={isLocked && !!lockedTransmitter}
-                        onApply={null}
+                        onApply={handleApplySuggestedConfig}
                     />
 
                     {/* Master Enable/Disable Checkbox */}
