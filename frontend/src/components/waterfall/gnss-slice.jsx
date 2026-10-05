@@ -229,6 +229,11 @@ export const gnssSlice = createSlice({
         setGnssSatellitesSortModel: (state, action) => {
             state.gnssSatellitesSortModel = action.payload;
         },
+        clearGnssInsightsHistory: (state) => {
+            // Clear displayed GNSS history without interrupting the active receiver/fix lifecycle.
+            state.gnssSatellitesById = {};
+            state.gnssFixQualityTimeline = [];
+        },
         resetGnssFixLifecycle: (state) => {
             // Reset live GNSS runtime state for a fresh streaming/decoder session.
             state.receiverSnapshot = {
@@ -585,6 +590,7 @@ export const gnssSlice = createSlice({
 export const {
     setDecodedInsightsActiveTab,
     setGnssSatellitesSortModel,
+    clearGnssInsightsHistory,
     resetGnssFixLifecycle,
     updateGnssFixLifecycleFromStatus,
     updateGnssFixLifecycleFromOutput,

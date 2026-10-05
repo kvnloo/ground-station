@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import reducer, {
+    clearGnssInsightsHistory,
     resetGnssFixLifecycle,
     updateGnssFixLifecycleFromOutput,
     updateGnssFixLifecycleFromStatus,
@@ -177,6 +178,57 @@ describe('waterfall gnss fix lifecycle', () => {
         });
         expect(state.gnssFixQualityTimeline).toEqual([]);
         expect(state.gnssSatellitesById).toEqual({});
+    });
+
+    it('clears GNSS history while an active receiver continues collecting events', () => {
+        let state = reducer(undefined, { type: '@@INIT' });
+        state = reducer(state, updateGnssFixLifecycleFromStatus({
+            decoder_type: 'gnss',
+            session_id: 'session-live',
+            vfo: 1,
+            status: 'starting',
+            timestamp: 99,
+        }));
+        state = reducer(state, updateGnssFixLifecycleFromOutput({
+            decoder_type: 'gnss',
+            session_id: 'session-live',
+            vfo: 1,
+            timestamp: 100,
+            output: {
+                event: 'nmea_gga',
+                satellite_system: 'G',
+                satellite_prn: 12,
+                fix_quality: '5',
+                latitude: 40.1,
+                longitude: 22.9,
+            },
+        }));
+
+        expect(state.gnssSatellitesById['GPS-12']).toBeDefined();
+        expect(state.gnssFixQualityTimeline).toHaveLength(1);
+
+        state = reducer(state, clearGnssInsightsHistory());
+
+        expect(state.gnssSatellitesById).toEqual({});
+        expect(state.gnssFixQualityTimeline).toEqual([]);
+        expect(state.gnssFixLifecycle.activeSessionId).toBe('session-live');
+        expect(state.gnssFixLifecycle.currentStatus).toBe('FIX');
+        expect(state.receiverSnapshot.latitude).toBe(40.1);
+
+        state = reducer(state, updateGnssFixLifecycleFromOutput({
+            decoder_type: 'gnss',
+            session_id: 'session-live',
+            vfo: 1,
+            timestamp: 120,
+            output: {
+                event: 'tracking',
+                satellite_system: 'G',
+                satellite_prn: 12,
+                fix_quality: '5',
+            },
+        }));
+        expect(state.gnssSatellitesById['GPS-12'].eventCount).toBe(1);
+        expect(state.gnssFixQualityTimeline).toHaveLength(1);
     });
 
     it('keeps previous closed-fix acquisition after a new fix starts', () => {

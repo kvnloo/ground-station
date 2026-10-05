@@ -18,8 +18,9 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Box, Chip, Tooltip, Typography, useTheme } from '@mui/material';
+import { Box, Chip, IconButton, Tooltip, Typography, useTheme } from '@mui/material';
 import { DataGrid, gridClasses } from '@mui/x-data-grid';
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import { alpha } from '@mui/material/styles';
 import { shallowEqual, useDispatch, useSelector } from 'react-redux';
 import {
@@ -27,6 +28,7 @@ import {
     AntTabs,
     getClassNamesBasedOnGridEditing,
     humanizeFutureDateInMinutes,
+    islandTitleBarCompactSx,
     TitleBar,
     WaterfallStatusBarPaper,
 } from '../common/common.jsx';
@@ -35,7 +37,9 @@ import GnssFixQualityTimeline from './gnss-fix-quality-timeline.jsx';
 import { DevRenderProfiler } from './render-profiler.jsx';
 import { useUserTimeSettings } from '../../hooks/useUserTimeSettings.jsx';
 import { formatDateTime, formatTime } from '../../utils/date-time.js';
+import { clearDecoderOutputs } from '../decoders/decoders-slice.jsx';
 import {
+    clearGnssInsightsHistory,
     setDecodedInsightsActiveTab,
     setGnssSatellitesSortModel,
 } from './gnss-slice.jsx';
@@ -126,6 +130,12 @@ const DecodedInsightsIsland = React.memo(function DecodedInsightsIsland() {
     );
     const activeTab = decodedInsightsActiveTab === 'gnss' ? 'gnss' : 'packets';
     const gnssSortModel = gnssSatellitesSortModel;
+
+    const handleClearAll = useCallback(() => {
+        dispatch(clearDecoderOutputs());
+        dispatch(clearGnssInsightsHistory());
+        setSelectedSatelliteId(null);
+    }, [dispatch]);
 
     const formatTimestamp = useCallback((value) => {
         if (!value) return '-';
@@ -511,10 +521,26 @@ const DecodedInsightsIsland = React.memo(function DecodedInsightsIsland() {
         <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <TitleBar
                 className={getClassNamesBasedOnGridEditing(gridEditable, ['window-title-bar'])}
+                sx={islandTitleBarCompactSx}
             >
-                <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
-                    Decoded
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', height: '100%' }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
+                        Decoded
+                    </Typography>
+                    <Tooltip title="Clear decoded packets and GNSS history">
+                        <span>
+                            <IconButton
+                                size="small"
+                                onClick={handleClearAll}
+                                disabled={outputs.length === 0 && satelliteRows.length === 0 && gnssFixQualityTimeline.length === 0}
+                                aria-label="Clear all decoded history"
+                                sx={{ p: '2px' }}
+                            >
+                                <DeleteSweepIcon fontSize="small" />
+                            </IconButton>
+                        </span>
+                    </Tooltip>
+                </Box>
             </TitleBar>
 
             <AntTabs

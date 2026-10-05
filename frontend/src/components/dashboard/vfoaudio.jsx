@@ -95,6 +95,12 @@ function VfoAudioRow({ decoderInfo, isPopoverOpen, muted, streaming, squelchOpen
     const bufferMilliseconds = bufferLength * 1000;
     const volume = clamp(Number(vfo?.volume ?? 50), 0, 100);
     const audioStatus = resolveVfoAudioStatus({ isStreaming: streaming, isMuted: muted, isSquelchOpen: squelchOpen });
+    const audioStatusLabel = {
+        [VFO_AUDIO_STATUS.NO_AUDIO]: t('vfo_audio.status_no_audio'),
+        [VFO_AUDIO_STATUS.MUTED]: t('vfo_audio.status_muted'),
+        [VFO_AUDIO_STATUS.SQUELCHED]: t('vfo_audio.status_squelched'),
+        [VFO_AUDIO_STATUS.PLAYING]: t('vfo_audio.status_unmuted'),
+    }[audioStatus];
     const formattedFrequency = Number.isFinite(vfo?.frequency)
         ? humanizeFrequency(vfo.frequency, 3)
         : '—';
@@ -121,15 +127,37 @@ function VfoAudioRow({ decoderInfo, isPopoverOpen, muted, streaming, squelchOpen
             }}
         >
             <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-                <Stack direction="row" alignItems="baseline" spacing={0.5}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600, lineHeight: 1.2 }}>
+                <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600, lineHeight: 1.2, flexShrink: 0 }}>
                         {t('vfo_audio.vfo', { number: vfoNumber })}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                        • {formattedFrequency}
+                    <Typography variant="caption" color="text.secondary" aria-hidden="true" sx={{ flexShrink: 0 }}>•</Typography>
+                    <Typography
+                        component="span"
+                        variant="caption"
+                        sx={{
+                            flexShrink: 0,
+                            px: 0.6,
+                            py: 0.1,
+                            border: '1px solid',
+                            borderColor: alpha(VFO_AUDIO_STATUS_COLORS[audioStatus], 0.5),
+                            borderRadius: 0.5,
+                            backgroundColor: alpha(VFO_AUDIO_STATUS_COLORS[audioStatus], 0.12),
+                            color: 'text.primary',
+                            fontSize: '0.65rem',
+                            fontWeight: 700,
+                            lineHeight: 1.2,
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
+                        {audioStatusLabel}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" aria-hidden="true" sx={{ flexShrink: 0 }}>•</Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {formattedFrequency}
                     </Typography>
                 </Stack>
-                <Stack direction="row" spacing={0.25}>
+                <Stack direction="row" spacing={0.25} sx={{ flexShrink: 0 }}>
                     <VFOAudioRecorderButton vfoNumber={vfoNumber} compact />
                     <Tooltip title={muted ? t('vfo_audio.unmute') : t('vfo_audio.mute')}>
                         <IconButton
