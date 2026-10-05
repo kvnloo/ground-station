@@ -37,6 +37,7 @@ export const WaterfallEngineProvider = ({ children }) => {
     const workerMessageListenersRef = useRef(new Set());
     const headlessInitKeyRef = useRef('');
     const secondaryCanvasesAttachedRef = useRef(false);
+    const attachedSecondaryCanvasNodesRef = useRef(null);
 
     const {
         waterfallRendererMode,
@@ -213,7 +214,16 @@ export const WaterfallEngineProvider = ({ children }) => {
 
         try {
             const waterfallOffscreenCanvas = waterfallCanvas.transferControlToOffscreen();
-            if (secondaryCanvasesAttachedRef.current) {
+            const attachedNodes = attachedSecondaryCanvasNodesRef.current;
+            const secondaryCanvasesAreUnchanged = secondaryCanvasesAttachedRef.current
+                && attachedNodes?.bandscopeCanvas === bandscopeCanvas
+                && attachedNodes?.dBAxisCanvas === dBAxisCanvas
+                && attachedNodes?.waterfallLeftMarginCanvas === waterfallLeftMarginCanvas;
+
+            // Renderer preference changes replace only the keyed waterfall
+            // canvas. Navigation remounts all canvases, including the
+            // bandscope, so it must reattach the complete visible set.
+            if (secondaryCanvasesAreUnchanged) {
                 worker.postMessage({
                     cmd: 'replaceWaterfallCanvas',
                     waterfallCanvas: waterfallOffscreenCanvas,
@@ -239,6 +249,11 @@ export const WaterfallEngineProvider = ({ children }) => {
                 waterfallLeftMarginOffscreenCanvas,
             ]);
             secondaryCanvasesAttachedRef.current = true;
+            attachedSecondaryCanvasNodesRef.current = {
+                bandscopeCanvas,
+                dBAxisCanvas,
+                waterfallLeftMarginCanvas,
+            };
 
             return true;
         } catch (error) {
@@ -259,6 +274,8 @@ export const WaterfallEngineProvider = ({ children }) => {
     }, [ensureWorker]);
 
     const detachCanvases = useCallback(() => {
+        secondaryCanvasesAttachedRef.current = false;
+        attachedSecondaryCanvasNodesRef.current = null;
         postWorkerMessage({ cmd: 'detachCanvases' });
     }, [postWorkerMessage]);
 
@@ -271,6 +288,7 @@ export const WaterfallEngineProvider = ({ children }) => {
             workerRef.current = null;
             headlessInitKeyRef.current = '';
             secondaryCanvasesAttachedRef.current = false;
+            attachedSecondaryCanvasNodesRef.current = null;
         };
     }, [ensureWorker]);
 

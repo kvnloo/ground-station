@@ -81,9 +81,9 @@ const FftAccordion = ({
                                 value={waterfallRendererPreference}
                                 onChange={(e) => onWaterfallRendererPreferenceChange(e.target.value)}
                                 label={t('fft.waterfall_renderer', { defaultValue: 'Waterfall Renderer' })}>
-                                <MenuItem value="auto">{t('fft.renderer_auto', { defaultValue: 'Automatic (WebGL2 when available)' })}</MenuItem>
+                                <MenuItem value="auto">{t('fft.renderer_auto', { defaultValue: 'Automatic' })}</MenuItem>
                                 <MenuItem value="webgl2">{t('fft.renderer_webgl2', { defaultValue: 'WebGL2' })}</MenuItem>
-                                <MenuItem value="canvas2d">{t('fft.renderer_canvas2d', { defaultValue: 'Canvas 2D (compatibility)' })}</MenuItem>
+                                <MenuItem value="canvas2d">{t('fft.renderer_canvas2d', { defaultValue: 'Canvas 2D' })}</MenuItem>
                             </Select>
                         </FormControl>
                         <FormControl disabled={gettingSDRParameters}

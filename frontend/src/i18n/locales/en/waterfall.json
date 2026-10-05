@@ -70,9 +70,9 @@
     "fft_window": "FFT Window",
     "fft_averaging": "FFT Averaging",
     "waterfall_renderer": "Waterfall Renderer",
-    "renderer_auto": "Automatic (WebGL2 when available)",
+    "renderer_auto": "Automatic",
     "renderer_webgl2": "WebGL2",
-    "renderer_canvas2d": "Canvas 2D (compatibility)",
+    "renderer_canvas2d": "Canvas 2D",
     "averaging_none": "None",
     "averaging_samples": "{{count}} samples",
     "color_map": "Color Map"
