@@ -7,7 +7,8 @@
 import React from 'react';
 import { useSelector } from 'react-redux';
 import { useAudio } from '../../dashboard/audio-provider.jsx';
-import { selectRunningRigTransmitters } from '../../target/transmitter-selectors.js';
+import { selectRunningRigTransmitterOptions } from '../../target/transmitter-selectors.js';
+export { useVfoSquelchState } from '../vfo-squelch-state.js';
 
 /**
  * Hook to manage VFO audio state (mute, buffer, levels, RF power)
@@ -115,30 +116,16 @@ export const useVfoWheelHandlers = (vfoMarkers, vfoActive, onVFOPropertyChange) 
 };
 
 /**
- * Hook to get satellite and transmitter data from Redux
- * @returns {object} Satellite and transmitter data
+ * Hook to get the stable transmitter catalogue for VFO controls.
+ * @returns {{transmitters: object[]}} selectable transmitter data
  */
 export const useVfoSatelliteData = () => {
-    // Get doppler-corrected transmitters from all running tracker views.
-    const transmitters = useSelector(selectRunningRigTransmitters);
-
-    // Get target satellite data
-    const satelliteDetails = useSelector(state => state.targetSatTrack.satelliteData?.details || null);
-    const satelliteTransmitters = useSelector(state => state.targetSatTrack.satelliteData?.transmitters || []);
-    const targetSatelliteName = satelliteDetails?.name || '';
-
-    // Combine details and transmitters for the TransmittersTable component
-    const targetSatelliteData = satelliteDetails ? {
-        ...satelliteDetails,
-        transmitters: satelliteTransmitters
-    } : null;
+    // The control list is stable while tracking. Lock actions resolve the
+    // live observed frequency at click time before applying it to a VFO.
+    const transmitters = useSelector(selectRunningRigTransmitterOptions);
 
     return {
         transmitters,
-        satelliteDetails,
-        satelliteTransmitters,
-        targetSatelliteName,
-        targetSatelliteData
     };
 };
 
@@ -156,51 +143,5 @@ export const useVfoStreamingState = () => {
     return {
         streamingVFOs,
         vfoMutedRedux
-    };
-};
-
-/**
- * Hook to get per-VFO squelch gate state from audio diagnostics.
- * `true` = gate open, `false` = gate closed (squelched), `null` = unknown/not yet available.
- */
-export const useVfoSquelchState = () => {
-    const { getVfoSquelchDebug } = useAudio();
-    const [vfoSquelchOpen, setVfoSquelchOpen] = React.useState({
-        1: null,
-        2: null,
-        3: null,
-        4: null,
-    });
-
-    React.useEffect(() => {
-        const readSquelchState = () => {
-            const nextState = { 1: null, 2: null, 3: null, 4: null };
-            for (let vfoNumber = 1; vfoNumber <= 4; vfoNumber += 1) {
-                const debug = getVfoSquelchDebug?.(vfoNumber);
-                if (debug && typeof debug.gate_open === 'boolean') {
-                    nextState[vfoNumber] = Boolean(debug.gate_open);
-                }
-            }
-
-            setVfoSquelchOpen((prevState) => {
-                if (
-                    prevState[1] === nextState[1] &&
-                    prevState[2] === nextState[2] &&
-                    prevState[3] === nextState[3] &&
-                    prevState[4] === nextState[4]
-                ) {
-                    return prevState;
-                }
-                return nextState;
-            });
-        };
-
-        readSquelchState();
-        const interval = setInterval(readSquelchState, 250);
-        return () => clearInterval(interval);
-    }, [getVfoSquelchDebug]);
-
-    return {
-        vfoSquelchOpen,
     };
 };

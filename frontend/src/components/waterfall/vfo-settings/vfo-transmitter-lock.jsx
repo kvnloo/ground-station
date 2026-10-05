@@ -5,6 +5,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
+import { useStore } from 'react-redux';
 import {
     Box,
     FormControl,
@@ -25,6 +26,7 @@ import LockOpenIcon from '@mui/icons-material/LockOpen';
 import TuneIcon from '@mui/icons-material/Tune';
 import { useTranslation } from 'react-i18next';
 import { getFrequencyBand } from '../../common/common.jsx';
+import { selectRunningRigTransmitters } from '../../target/transmitter-selectors.js';
 
 const sameIdentifier = (left, right) => {
     if (left == null || right == null) {
@@ -48,6 +50,7 @@ export const TransmitterLockSelect = ({
     onCenterFrequencyChange
 }) => {
     const { t } = useTranslation('waterfall');
+    const store = useStore();
     const [retuneDialogOpen, setRetuneDialogOpen] = useState(false);
     const [pendingTransmitter, setPendingTransmitter] = useState(null);
 
@@ -56,7 +59,12 @@ export const TransmitterLockSelect = ({
 
         if (transmitterId !== 'none') {
             // Locking to a transmitter - set frequency and lock, but don't change mode
-            const transmitter = transmitters.find(tx => tx.id === transmitterId);
+            // Menu data is intentionally stable during tracking. Resolve the
+            // current observed frequency when the user locks a VFO so doppler
+            // correction and the retune decision always use live data.
+            const transmitter = selectRunningRigTransmitters(store.getState()).find((tx) => (
+                sameIdentifier(tx.id, transmitterId)
+            )) || transmitters.find((tx) => sameIdentifier(tx.id, transmitterId));
             if (transmitter) {
                 const txFrequency = transmitter.downlink_observed_freq;
                 const parsedSampleRate = typeof sampleRate === 'number' ? sampleRate : Number(sampleRate);
@@ -143,7 +151,7 @@ export const TransmitterLockSelect = ({
     const groupedTransmitters = useMemo(() => {
         const groups = {};
         transmitters.forEach(tx => {
-            const band = getFrequencyBand(tx.downlink_observed_freq);
+            const band = getFrequencyBand(tx.downlink_low);
             if (!groups[band]) {
                 groups[band] = [];
             }
@@ -214,7 +222,7 @@ export const TransmitterLockSelect = ({
                                                 {[
                                                     tx.trackerLabel || null,
                                                     `Source: ${tx.source || 'Unknown'}`,
-                                                    `${(tx.downlink_observed_freq / 1e6).toFixed(6)} MHz (${tx.mode})`,
+                                                    `${(tx.downlink_low / 1e6).toFixed(6)} MHz (${tx.mode})`,
                                                 ].filter(Boolean).join(' • ')}
                                             </Box>
                                         </Box>

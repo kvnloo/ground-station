@@ -5,6 +5,7 @@
  */
 
 import React from 'react';
+import { shallowEqual, useSelector } from 'react-redux';
 import { Accordion, AccordionSummary, AccordionDetails } from '../settings-elements.jsx';
 import Typography from '@mui/material/Typography';
 import { Box, Tabs, Tab } from "@mui/material";
@@ -26,14 +27,30 @@ import {
     useVfoStreamingState
 } from './vfo-hooks.js';
 
+// Doppler tracking updates only change `frequency`. The display subscribes to
+// that field directly; the settings controls only need to reconcile when a
+// VFO's configuration changes.
+const areVfoMarkersEqualExceptFrequency = (previous = {}, next = {}) => {
+    const previousKeys = Object.keys(previous);
+    const nextKeys = Object.keys(next);
+    if (previousKeys.length !== nextKeys.length) {
+        return false;
+    }
+
+    return previousKeys.every((key) => {
+        const previousVfo = previous[key] || {};
+        const nextVfo = next[key] || {};
+        const previousProperties = Object.keys(previousVfo).filter((property) => property !== 'frequency');
+        const nextProperties = Object.keys(nextVfo).filter((property) => property !== 'frequency');
+        return previousProperties.length === nextProperties.length
+            && previousProperties.every((property) => previousVfo[property] === nextVfo[property]);
+    });
+};
+
 const VfoAccordion = ({
     expanded,
     onAccordionChange,
-    selectedVFOTab,
     onVFOTabChange,
-    vfoColors,
-    vfoMarkers,
-    vfoActive,
     onVFOActiveChange,
     onVFOPropertyChange,
     onTranscriptionToggle,
@@ -44,6 +61,15 @@ const VfoAccordion = ({
     onCenterFrequencyChange,
 }) => {
     const { t } = useTranslation('waterfall');
+    const vfoMarkers = useSelector(
+        (state) => state.vfo.vfoMarkers,
+        areVfoMarkersEqualExceptFrequency
+    );
+    const { selectedVFOTab, vfoActive, vfoColors } = useSelector((state) => ({
+        selectedVFOTab: state.vfo.selectedVFOTab,
+        vfoActive: state.vfo.vfoActive,
+        vfoColors: state.vfo.vfoColors,
+    }), shallowEqual);
 
     // Use custom hooks for state management
     const {
@@ -245,25 +271,29 @@ const VfoAccordion = ({
             </AccordionDetails>
 
             {/* Decoder Parameters Dialog */}
-            <DecoderParamsDialog
-                open={decoderParamsDialogOpen}
-                onClose={() => setDecoderParamsDialogOpen(false)}
-                vfoIndex={decoderParamsVfoIndex}
-                vfoMarkers={vfoMarkers}
-                vfoActive={vfoActive}
-                onVFOPropertyChange={onVFOPropertyChange}
-            />
+            {decoderParamsDialogOpen && (
+                <DecoderParamsDialog
+                    open
+                    onClose={() => setDecoderParamsDialogOpen(false)}
+                    vfoIndex={decoderParamsVfoIndex}
+                    vfoMarkers={vfoMarkers}
+                    vfoActive={vfoActive}
+                    onVFOPropertyChange={onVFOPropertyChange}
+                />
+            )}
 
             {/* Transcription Parameters Dialog */}
-            <TranscriptionParamsDialog
-                open={transcriptionParamsDialogOpen}
-                onClose={() => setTranscriptionParamsDialogOpen(false)}
-                vfoIndex={transcriptionParamsVfoIndex}
-                vfoMarkers={vfoMarkers}
-                geminiConfigured={geminiConfigured}
-                onVFOPropertyChange={onVFOPropertyChange}
-                getVFODecoderInfo={getVFODecoderInfo}
-            />
+            {transcriptionParamsDialogOpen && (
+                <TranscriptionParamsDialog
+                    open
+                    onClose={() => setTranscriptionParamsDialogOpen(false)}
+                    vfoIndex={transcriptionParamsVfoIndex}
+                    vfoMarkers={vfoMarkers}
+                    geminiConfigured={geminiConfigured}
+                    onVFOPropertyChange={onVFOPropertyChange}
+                    getVFODecoderInfo={getVFODecoderInfo}
+                />
+            )}
         </Accordion>
     );
 };
@@ -272,11 +302,7 @@ function areVfoAccordionPropsEqual(prevProps, nextProps) {
     return (
         prevProps.expanded === nextProps.expanded &&
         prevProps.onAccordionChange === nextProps.onAccordionChange &&
-        prevProps.selectedVFOTab === nextProps.selectedVFOTab &&
         prevProps.onVFOTabChange === nextProps.onVFOTabChange &&
-        prevProps.vfoColors === nextProps.vfoColors &&
-        prevProps.vfoMarkers === nextProps.vfoMarkers &&
-        prevProps.vfoActive === nextProps.vfoActive &&
         prevProps.onVFOActiveChange === nextProps.onVFOActiveChange &&
         prevProps.onVFOPropertyChange === nextProps.onVFOPropertyChange &&
         prevProps.onTranscriptionToggle === nextProps.onTranscriptionToggle &&

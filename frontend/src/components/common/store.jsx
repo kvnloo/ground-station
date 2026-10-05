@@ -66,7 +66,7 @@ const waterfallPersistConfig = {
         'showLeftSideWaterFallAccessories', 'selectedAntenna', 'selectedSDRId', 'selectedOffsetMode',
         'selectedOffsetValue', 'fftAveraging', 'showRotatorDottedLines', 'autoScalePreset', 'expandedPanels',
         'packetsDrawerHeight', 'packetsDrawerOpen', 'showNeighboringTransmitters', 'showBookmarkSources',
-        'sdrSettingsById']
+        'sdrSettingsById', 'waterfallRendererPreference']
 };
 
 // Persist GNSS UI preferences only (not live lifecycle summary).

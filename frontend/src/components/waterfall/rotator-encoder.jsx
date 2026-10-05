@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { Box, Typography, Paper, useTheme } from '@mui/material';
+import { Box, Typography, useTheme } from '@mui/material';
 import { setVFOProperty } from './vfo-marker/vfo-slice.jsx';
 import { selectRunningRigTransmitters } from '../target/transmitter-selectors.js';
 
@@ -10,6 +10,78 @@ const sameIdentifier = (left, right) => {
         return false;
     }
     return String(left) === String(right);
+};
+
+const areVfoConfigurationsEqualExceptFrequency = (previous, next) => {
+    if (previous === next) {
+        return true;
+    }
+    if (!previous || !next) {
+        return false;
+    }
+    const previousProperties = Object.keys(previous).filter((property) => property !== 'frequency');
+    const nextProperties = Object.keys(next).filter((property) => property !== 'frequency');
+    return previousProperties.length === nextProperties.length
+        && previousProperties.every((property) => previous[property] === next[property]);
+};
+
+const areRotaryVfoStatesEqual = (previous, next) => (
+    previous.isVFOActive === next.isVFOActive
+    && areVfoConfigurationsEqualExceptFrequency(previous.currentVFO, next.currentVFO)
+);
+
+// This readout is optional. Keeping the live transmitter subscription here
+// means the rotary control itself stays idle while a hidden readout is not in
+// use, instead of rerendering along with every doppler sample.
+const RotaryFrequencyReadout = ({ vfoNumber, vfo, theme }) => {
+    const frequency = useSelector((state) => state.vfo.vfoMarkers?.[vfoNumber]?.frequency || 0);
+    const transmitters = useSelector(selectRunningRigTransmitters);
+    const lockedTransmitter = vfo?.lockedTransmitterId && vfo.lockedTransmitterId !== 'none'
+        ? transmitters.find((tx) => (
+            sameIdentifier(tx.id, vfo.lockedTransmitterId)
+            && (!vfo.lockedTransmitterTrackerId || sameIdentifier(tx.trackerId, vfo.lockedTransmitterTrackerId))
+        ))
+        : null;
+    const correctedFrequency = Number.isFinite(Number(lockedTransmitter?.downlink_observed_freq))
+        ? Number(lockedTransmitter.downlink_observed_freq)
+        : 0;
+    const formatFrequency = (value) => {
+        if (value >= 1e6) return `${(value / 1e6).toFixed(3)} MHz`;
+        if (value >= 1e3) return `${(value / 1e3).toFixed(1)} kHz`;
+        return `${value} Hz`;
+    };
+
+    return (
+        <Box sx={{ mb: 1, textAlign: 'center' }}>
+            <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+                VFO {vfoNumber} - Step: {vfo.stepSize >= 1000 ? `${vfo.stepSize / 1000}kHz` : `${vfo.stepSize}Hz`}
+            </Typography>
+            <Typography variant="h6" sx={{ fontFamily: 'monospace', color: vfo.color }}>
+                {formatFrequency(frequency)}
+            </Typography>
+            {lockedTransmitter && (
+                <Box sx={{ mt: 0.5 }}>
+                    <Typography variant="caption" sx={{ color: theme.palette.warning.main, fontWeight: 600, display: 'block' }}>
+                        🔒 OFFSET MODE
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: theme.palette.text.secondary, fontSize: '0.7rem' }}>
+                        Corrected: {formatFrequency(correctedFrequency)}
+                    </Typography>
+                    <Typography
+                        variant="caption"
+                        sx={{
+                            color: (vfo.frequencyOffset || 0) >= 0 ? theme.palette.success.main : theme.palette.error.main,
+                            fontWeight: 600,
+                            display: 'block',
+                            fontSize: '0.75rem',
+                        }}
+                    >
+                        Offset: {(vfo.frequencyOffset || 0) >= 0 ? '+' : ''}{vfo.frequencyOffset || 0} Hz
+                    </Typography>
+                </Box>
+            )}
+        </Box>
+    );
 };
 
 const RotaryEncoder = ({
@@ -21,8 +93,10 @@ const RotaryEncoder = ({
                        }) => {
     const theme = useTheme();
     const dispatch = useDispatch();
-    const { vfoMarkers, vfoActive } = useSelector(state => state.vfo);
-    const transmitters = useSelector(selectRunningRigTransmitters);
+    const { currentVFO, isVFOActive } = useSelector((state) => ({
+        currentVFO: state.vfo.vfoMarkers?.[vfoNumber] || null,
+        isVFOActive: Boolean(state.vfo.vfoActive?.[vfoNumber]),
+    }), areRotaryVfoStatesEqual);
 
     const [isDragging, setIsDragging] = useState(false);
     const [rotation, setRotation] = useState(0);
@@ -33,40 +107,10 @@ const RotaryEncoder = ({
     const rotationAccumulator = useRef(0);
 
     // Get current VFO data based on the provided vfoNumber
-    const currentVFO = vfoNumber && vfoMarkers[vfoNumber] ? vfoMarkers[vfoNumber] : null;
-    const isVFOActive = vfoNumber && vfoActive[vfoNumber];
     const stepSize = currentVFO?.stepSize || 1000; // Default 1kHz step
     const currentFrequency = currentVFO?.frequency || 0;
     const isLocked = currentVFO?.lockedTransmitterId && currentVFO?.lockedTransmitterId !== 'none';
     const currentOffset = currentVFO?.frequencyOffset || 0;
-    const lockedTrackerId = currentVFO?.lockedTransmitterTrackerId;
-
-    // Get the locked transmitter if VFO is locked
-    const lockedTransmitter = isLocked
-        ? transmitters.find((tx) => {
-            if (!sameIdentifier(tx.id, currentVFO.lockedTransmitterId)) {
-                return false;
-            }
-            if (!lockedTrackerId) {
-                return true;
-            }
-            return sameIdentifier(tx.trackerId, lockedTrackerId);
-        })
-        : null;
-    const correctedFrequency = Number.isFinite(Number(lockedTransmitter?.downlink_observed_freq))
-        ? Number(lockedTransmitter.downlink_observed_freq)
-        : 0;
-
-    // Format frequency for display
-    const formatFrequency = (freq) => {
-        if (freq >= 1e6) {
-            return `${(freq / 1e6).toFixed(3)} MHz`;
-        } else if (freq >= 1e3) {
-            return `${(freq / 1e3).toFixed(1)} kHz`;
-        } else {
-            return `${freq} Hz`;
-        }
-    };
 
     // Format offset for display (always in Hz)
     const formatOffset = (offset) => {
@@ -279,48 +323,7 @@ const RotaryEncoder = ({
             }}
         >
             {showFrequency && currentVFO && (
-                <Box sx={{ mb: 1, textAlign: 'center' }}>
-                    <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
-                        VFO {vfoNumber} - Step: {stepSize >= 1000 ? `${stepSize/1000}kHz` : `${stepSize}Hz`}
-                    </Typography>
-                    <Typography variant="h6" sx={{ fontFamily: 'monospace', color: currentVFO.color }}>
-                        {formatFrequency(currentFrequency)}
-                    </Typography>
-                    {isLocked && lockedTransmitter && (
-                        <Box sx={{ mt: 0.5 }}>
-                            <Typography
-                                variant="caption"
-                                sx={{
-                                    color: theme.palette.warning.main,
-                                    fontWeight: 600,
-                                    display: 'block'
-                                }}
-                            >
-                                🔒 OFFSET MODE
-                            </Typography>
-                            <Typography
-                                variant="caption"
-                                sx={{
-                                    color: theme.palette.text.secondary,
-                                    fontSize: '0.7rem'
-                                }}
-                            >
-                                Corrected: {formatFrequency(correctedFrequency)}
-                            </Typography>
-                            <Typography
-                                variant="caption"
-                                sx={{
-                                    color: currentOffset >= 0 ? theme.palette.success.main : theme.palette.error.main,
-                                    fontWeight: 600,
-                                    display: 'block',
-                                    fontSize: '0.75rem'
-                                }}
-                            >
-                                Offset: {formatOffset(currentOffset)}
-                            </Typography>
-                        </Box>
-                    )}
-                </Box>
+                <RotaryFrequencyReadout vfoNumber={vfoNumber} vfo={currentVFO} theme={theme} />
             )}
 
             <Box

@@ -33,6 +33,8 @@ const FftAccordion = ({
                           onFFTOverlapDepthChange,
                           bandscopeSmoothing,
                           onBandscopeSmoothingChange,
+                          waterfallRendererPreference,
+                          onWaterfallRendererPreferenceChange,
                           colorMaps,
                           localColorMap,
                           onColorMapChange,
@@ -72,7 +74,18 @@ const FftAccordion = ({
                                 ))}
                             </Select>
                         </FormControl>
-
+                        <FormControl sx={{minWidth: 200, marginTop: 0, marginBottom: 1}} fullWidth variant="outlined" size="small">
+                            <InputLabel>{t('fft.waterfall_renderer', { defaultValue: 'Waterfall Renderer' })}</InputLabel>
+                            <Select
+                                size="small"
+                                value={waterfallRendererPreference}
+                                onChange={(e) => onWaterfallRendererPreferenceChange(e.target.value)}
+                                label={t('fft.waterfall_renderer', { defaultValue: 'Waterfall Renderer' })}>
+                                <MenuItem value="auto">{t('fft.renderer_auto', { defaultValue: 'Automatic (WebGL2 when available)' })}</MenuItem>
+                                <MenuItem value="webgl2">{t('fft.renderer_webgl2', { defaultValue: 'WebGL2' })}</MenuItem>
+                                <MenuItem value="canvas2d">{t('fft.renderer_canvas2d', { defaultValue: 'Canvas 2D (compatibility)' })}</MenuItem>
+                            </Select>
+                        </FormControl>
                         <FormControl disabled={gettingSDRParameters}
                                      sx={{minWidth: 200, marginTop: 0, marginBottom: 1}} fullWidth={true}
                                      variant="outlined" size="small">
@@ -205,6 +218,8 @@ function areFftAccordionPropsEqual(prevProps, nextProps) {
         prevProps.onFFTOverlapDepthChange === nextProps.onFFTOverlapDepthChange &&
         prevProps.bandscopeSmoothing === nextProps.bandscopeSmoothing &&
         prevProps.onBandscopeSmoothingChange === nextProps.onBandscopeSmoothingChange &&
+        prevProps.waterfallRendererPreference === nextProps.waterfallRendererPreference &&
+        prevProps.onWaterfallRendererPreferenceChange === nextProps.onWaterfallRendererPreferenceChange &&
         prevProps.colorMaps === nextProps.colorMaps &&
         prevProps.localColorMap === nextProps.localColorMap &&
         prevProps.onColorMapChange === nextProps.onColorMapChange

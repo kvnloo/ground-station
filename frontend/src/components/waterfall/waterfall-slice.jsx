@@ -32,6 +32,8 @@ const getDefaultWaterfallRendererMode = () => {
     return 'worker';
 };
 
+const getDefaultWaterfallRendererPreference = () => 'auto';
+
 const SDR_PARAMS_CACHE_KEY = 'ground-station.waterfall.sdr-params.v1';
 const SDR_PARAMS_CACHE_VERSION = 1;
 
@@ -201,7 +203,9 @@ export const saveWaterfallSnapshot = createAsyncThunk(
 );
 
 const initialState = {
-    waterfallRendererMode: getDefaultWaterfallRendererMode(), // 'worker' | 'dom-tiles'
+    waterfallRendererMode: getDefaultWaterfallRendererMode(), // internal: 'worker' | 'dom-tiles'
+    waterfallRendererPreference: getDefaultWaterfallRendererPreference(), // 'auto' | 'webgl2' | 'canvas2d'
+    waterfallRendererEffective: 'canvas2d',
     fftDataOverflow: false,
     fftDataOverflowLimit: 20,
     colorMaps: getAvailableColorMaps(),
@@ -319,6 +323,14 @@ export const waterfallSlice = createSlice({
         },
         setWaterfallRendererMode: (state, action) => {
             state.waterfallRendererMode = action.payload;
+        },
+        setWaterfallRendererPreference: (state, action) => {
+            state.waterfallRendererPreference = ['auto', 'webgl2', 'canvas2d'].includes(action.payload)
+                ? action.payload
+                : 'auto';
+        },
+        setWaterfallRendererEffective: (state, action) => {
+            state.waterfallRendererEffective = action.payload === 'webgl2' ? 'webgl2' : 'canvas2d';
         },
         setColorMaps: (state, action) => {
             state.colorMaps = action.payload;
@@ -765,6 +777,8 @@ export const {
     setFFTdataOverflow,
     setColorMap,
     setWaterfallRendererMode,
+    setWaterfallRendererPreference,
+    setWaterfallRendererEffective,
     setColorMaps,
     setDbRange,
     setFFTSize,

@@ -69,7 +69,7 @@ const VfoTabPanelComponent = ({
                 </Box>
 
                 {/* Frequency Display */}
-                <VfoFrequencyDisplay frequency={vfo?.frequency || 0} />
+                <VfoFrequencyDisplay vfoIndex={vfoIndex} />
 
                 {/* Decoder and transcription status */}
                 <DecoderStatusDisplay

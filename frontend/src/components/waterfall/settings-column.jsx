@@ -25,7 +25,7 @@ import {
     getClassNamesBasedOnGridEditing,
     TitleBar
 } from "../common/common.jsx";
-import { shallowEqual, useSelector, useDispatch } from 'react-redux';
+import { shallowEqual, useSelector, useDispatch, useStore } from 'react-redux';
 
 import {
     applySDRConfigParameters,
@@ -44,6 +44,7 @@ import {
     setFFTOverlapPercent,
     setFFTOverlapDepth,
     setBandscopeSmoothing,
+    setWaterfallRendererPreference,
     setGain,
     setSampleRate,
     setCenterFrequency,
@@ -105,15 +106,24 @@ import VfoAccordion from "./vfo-settings/settings-vfo.jsx";
 import RecordingAccordion from "./settings-recording.jsx";
 import PlaybackAccordion from "./settings-playback.jsx";
 import { useTranslation } from 'react-i18next';
-import { selectRunningRigTransmitters } from "../target/transmitter-selectors.js";
+import { selectRunningRigTransmitterOptions } from "../target/transmitter-selectors.js";
 import { fetchPlaybackRecordings } from "../filebrowser/filebrowser-slice.jsx";
 import { useSdrTakeoverDialog } from './use-sdr-takeover-dialog.jsx';
+import { DevRenderProfiler } from './render-profiler.jsx';
 
 const PLAYBACK_DEFAULT_FFT_OVERLAP_PERCENT = 50;
+
+const haveSameNumericEntries = (previous, next) => {
+    const previousKeys = Object.keys(previous);
+    const nextKeys = Object.keys(next);
+    return previousKeys.length === nextKeys.length
+        && previousKeys.every((key) => previous[key] === next[key]);
+};
 
 const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemainingSecondsRef }, ref) {
     const { t } = useTranslation('waterfall');
     const dispatch = useDispatch();
+    const store = useStore();
 
     const {
         colorMap,
@@ -155,6 +165,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
         selectedTransmitterId,
         fftAveraging,
         bandscopeSmoothing,
+        waterfallRendererPreference,
         isRecording,
         recordingDuration,
         recordingName,
@@ -208,6 +219,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
             selectedTransmitterId: state.waterfall.selectedTransmitterId,
             fftAveraging: state.waterfall.fftAveraging,
             bandscopeSmoothing: state.waterfall.bandscopeSmoothing,
+            waterfallRendererPreference: state.waterfall.waterfallRendererPreference,
             isRecording: state.waterfall.isRecording,
             recordingDuration: state.waterfall.recordingDuration,
             recordingName: state.waterfall.recordingName,
@@ -233,16 +245,18 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
         defaultSdrId: selectedSDRId,
     });
 
+    // Selecting the entire VFO slice made this settings column rerender for
+    // every VFO update, including updates that none of these controls use.
     const {
-        selectedVFO,
-        vfoMarkers,
         maxVFOMarkers,
-        selectedVFOTab,
-        vfoActive,
-        vfoColors,
-    } = useSelector((state) => state.vfo);
+        selectedVFO,
+    } = useSelector((state) => ({
+        selectedVFO: state.vfo.selectedVFO,
+        maxVFOMarkers: state.vfo.maxVFOMarkers,
+    }), shallowEqual);
 
-    const runningTransmitters = useSelector(selectRunningRigTransmitters);
+
+    const runningTransmitters = useSelector(selectRunningRigTransmitterOptions);
 
     const {
         sdrs
@@ -267,7 +281,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
 
     // Build a map of SDR IDs actively streaming for sessions other than this browser session.
     // We require live consumer/runtime evidence and do not treat "selected SDR only" as in-use.
-    const sdrUsageByOtherSessions = useMemo(() => {
+    const calculatedSdrUsageByOtherSessions = useMemo(() => {
         const usage = {};
         const normalizedCurrentSessionId = currentSessionId ? String(currentSessionId) : null;
         const hasSessionConsumer = (sdrRuntime, sessionId) => {
@@ -318,6 +332,11 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
 
         return usage;
     }, [runtimeSnapshotSessions, runtimeSnapshotSdrs, currentSessionId]);
+    const sdrUsageByOtherSessionsRef = useRef({});
+    if (!haveSameNumericEntries(sdrUsageByOtherSessionsRef.current, calculatedSdrUsageByOtherSessions)) {
+        sdrUsageByOtherSessionsRef.current = calculatedSdrUsageByOtherSessions;
+    }
+    const sdrUsageByOtherSessions = sdrUsageByOtherSessionsRef.current;
 
     // Helper function to get preference value
     const getPreferenceValue = useCallback((name) => {
@@ -1067,7 +1086,10 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
 
     const handleTranscriptionToggle = useCallback((vfoNumber, enabled, provider = 'gemini') => {
         // Use VFO's existing values, fallback to default
-        const currentVfo = vfoMarkers[vfoNumber];
+        // Read the current configuration only when the user toggles
+        // transcription. Subscribing the whole settings column to VFO markers
+        // would otherwise make it rerender at doppler tracking cadence.
+        const currentVfo = store.getState().vfo.vfoMarkers[vfoNumber];
         const language = currentVfo?.transcriptionLanguage || 'auto';
         const translateTo = currentVfo?.transcriptionTranslateTo || 'none';
 
@@ -1097,7 +1119,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
     toast.error(t('vfo.transcription_error', `Failed to toggle transcription: ${response.error}`));
   }
 });
-    }, [dispatch, socket, t, vfoMarkers]);
+    }, [dispatch, socket, store, t]);
 
     const handleVFOTabChange = useCallback((newValue) => {
         dispatch(setSelectedVFOTab(newValue));
@@ -1188,6 +1210,10 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
 
     const handleBandscopeSmoothingChange = useCallback((value) => {
         dispatch(setBandscopeSmoothing(value));
+    }, [dispatch]);
+
+    const handleWaterfallRendererPreferenceChange = useCallback((value) => {
+        dispatch(setWaterfallRendererPreference(value));
     }, [dispatch]);
 
     const handleColorMapChange = useCallback((value) => {
@@ -1520,7 +1546,8 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
             </TitleBar>
             <div style={{overflowY: 'auto', height: '100%', paddingBottom: '29px'}}>
 
-                <SdrAccordion
+                <DevRenderProfiler id="SdrAccordion">
+                    <SdrAccordion
                     expanded={expandedPanels.includes('sdr')}
                     onAccordionChange={handleSdrAccordionChange}
                     gettingSDRParameters={gettingSDRParameters}
@@ -1563,9 +1590,11 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     playbackRecordingsLoading={playbackRecordingsLoading}
                     selectedPlaybackRecordingName={selectedPlaybackRecording?.playback_path || selectedPlaybackRecording?.name || playbackRecordingPath || 'none'}
                     onPlaybackRecordingChange={handlePlaybackRecordingDropdownChange}
-                />
+                    />
+                </DevRenderProfiler>
 
-                <FrequencyControlAccordion
+                <DevRenderProfiler id="FrequencyControlAccordion">
+                    <FrequencyControlAccordion
                     expanded={expandedPanels.includes('freqControl')}
                     onAccordionChange={handleFreqAccordionChange}
                     centerFrequency={centerFrequency}
@@ -1580,19 +1609,16 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     isRecording={isRecording}
                     selectedSDRId={selectedSDRId}
                     isStreaming={isStreaming}
-                />
+                    />
+                </DevRenderProfiler>
 
-                <VfoAccordion
+                <DevRenderProfiler id="VfoAccordion">
+                    <VfoAccordion
                     expanded={expandedPanels.includes('vfo')}
                     onAccordionChange={handleVfoAccordionChange}
-                    selectedVFOTab={selectedVFOTab}
                     onVFOTabChange={handleVFOTabChange}
-                    vfoColors={vfoColors}
-                    vfoMarkers={vfoMarkers}
-                    vfoActive={vfoActive}
                     onVFOActiveChange={handleVFOActiveChange}
                     onVFOPropertyChange={handleVFOPropertyChange}
-                    selectedVFO={selectedVFO}
                     onVFOListenChange={handleVFOListenChange}
                     onTranscriptionToggle={handleTranscriptionToggle}
                     geminiConfigured={geminiConfigured}
@@ -1600,9 +1626,11 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     centerFrequency={centerFrequency}
                     sampleRate={sampleRate}
                     onCenterFrequencyChange={handleVfoCenterFrequencyChange}
-                />
+                    />
+                </DevRenderProfiler>
 
-                <FftAccordion
+                <DevRenderProfiler id="FftAccordion">
+                    <FftAccordion
                     expanded={expandedPanels.includes('fft')}
                     onAccordionChange={handleFftAccordionChange}
                     gettingSDRParameters={gettingSDRParameters}
@@ -1620,12 +1648,16 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     onFFTOverlapDepthChange={handleFFTOverlapDepthChange}
                     bandscopeSmoothing={bandscopeSmoothing}
                     onBandscopeSmoothingChange={handleBandscopeSmoothingChange}
+                    waterfallRendererPreference={waterfallRendererPreference}
+                    onWaterfallRendererPreferenceChange={handleWaterfallRendererPreferenceChange}
                     colorMaps={colorMaps}
                     localColorMap={localColorMap}
                     onColorMapChange={handleColorMapChange}
-                />
+                    />
+                </DevRenderProfiler>
 
-                <RecordingAccordion
+                <DevRenderProfiler id="RecordingAccordion">
+                    <RecordingAccordion
                     expanded={expandedPanels.includes('recording')}
                     onAccordionChange={handleRecordingAccordionChange}
                     isRecording={isRecording}
@@ -1648,9 +1680,11 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     isStreaming={isStreaming}
                     selectedSDRId={selectedSDRId}
                     centerFrequency={centerFrequency}
-                />
+                    />
+                </DevRenderProfiler>
 
-                <PlaybackAccordion
+                <DevRenderProfiler id="PlaybackAccordion">
+                    <PlaybackAccordion
                     expanded={expandedPanels.includes('playback')}
                     onAccordionChange={handlePlaybackAccordionChange}
                     isStreaming={isStreaming}
@@ -1660,7 +1694,8 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     onPlaybackStop={handlePlaybackStop}
                     playbackStartTime={playbackStartTime}
                     playbackRemainingSecondsRef={playbackRemainingSecondsRef}
-                />
+                    />
+                </DevRenderProfiler>
                 {takeoverDialog}
             </div>
         </>

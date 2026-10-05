@@ -6,7 +6,7 @@ import { useTheme } from '@mui/material/styles';
 
 const TRANSFORM_UPDATE_MS = 250;
 
-const WaterfallStatusBar = ({isStreaming, eventMetrics, centerFrequency, sampleRate, gain}) => {
+const WaterfallStatusBar = ({isStreaming, eventMetrics, centerFrequency, sampleRate, gain, renderer}) => {
     const { t } = useTranslation('waterfall');
     const [transformData, setTransformData] = useState(null);
     const theme = useTheme();
@@ -105,6 +105,19 @@ const WaterfallStatusBar = ({isStreaming, eventMetrics, centerFrequency, sampleR
                     <Box component="span">view: <Box component="span" sx={{ fontWeight: 500 }}>{isStreaming && transformData ? `${humanizeFrequency(transformData.startFreq)} - ${humanizeFrequency(transformData.endFreq)}` : '-'}</Box></Box>
                     <Box component="span" sx={{ opacity: 0.6 }}>•</Box>
                     <Box component="span">bw: <Box component="span" sx={{ fontWeight: 500 }}>{isStreaming && transformData ? humanizeFrequency(transformData.visibleBandwidth) : '-'}</Box></Box>
+                </Box>
+                <Box
+                    component="span"
+                    title={renderer === 'webgl2' ? t('statusbar.renderer_webgl2', { defaultValue: 'Waterfall renderer: WebGL2' }) : t('statusbar.renderer_canvas2d', { defaultValue: 'Waterfall renderer: Canvas 2D' })}
+                    sx={{
+                        marginLeft: { xs: 'auto', xl: 0.5 },
+                        flex: '0 0 auto',
+                        opacity: 0.7,
+                        fontSize: '0.68rem',
+                        letterSpacing: '0.03em',
+                    }}
+                >
+                    {renderer === 'webgl2' ? 'GL2' : '2D'}
                 </Box>
             </Box>
         </WaterfallStatusBarPaper>

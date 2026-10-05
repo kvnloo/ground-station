@@ -43,6 +43,7 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
                                               waterFallTileCanvasARef,
                                               waterFallTileCanvasBRef,
                                               waterfallRendererMode = 'worker',
+                                              waterfallRendererPreference = 'auto',
                                               centerFrequency,
                                               sampleRate,
                                               waterFallWindowHeight,
@@ -832,6 +833,7 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
                     </Box>
                 ) : (
                     <canvas
+                        key={`waterfall-worker-${waterfallRendererPreference}`}
                         className={"waterfall-canvas"}
                         ref={waterFallCanvasRef}
                         width={waterFallCanvasWidth}

@@ -142,3 +142,48 @@ export const selectRunningRigTransmitters = createSelector(
         return transmitters;
     }
 );
+
+const transmitterOptionFields = [
+    'id',
+    'uiId',
+    'trackerId',
+    'trackerLabel',
+    'trackerSatelliteName',
+    'description',
+    'source',
+    'mode',
+    'downlink_low',
+    'downlink_high',
+    'baud',
+    'alive',
+];
+
+const createTransmitterOption = (transmitter) => {
+    const option = {};
+    transmitterOptionFields.forEach((field) => {
+        option[field] = transmitter[field];
+    });
+    return option;
+};
+
+const areTransmitterOptionsEqual = (previous, next) => (
+    previous.length === next.length
+    && previous.every((previousOption, index) => transmitterOptionFields.every(
+        (field) => previousOption[field] === next[index][field]
+    ))
+);
+
+// The tracker publishes doppler-corrected observed frequencies several times
+// per second. Settings menus need the transmitter catalogue, not each of
+// those samples. Retain their reference until a selectable option changes so
+// the control panel does not reconcile at tracking cadence. Actions that set
+// a VFO frequency still query selectRunningRigTransmitters for live data.
+let previousTransmitterOptions = [];
+export const selectRunningRigTransmitterOptions = (state) => {
+    const nextOptions = selectRunningRigTransmitters(state).map(createTransmitterOption);
+    if (areTransmitterOptionsEqual(previousTransmitterOptions, nextOptions)) {
+        return previousTransmitterOptions;
+    }
+    previousTransmitterOptions = nextOptions;
+    return previousTransmitterOptions;
+};

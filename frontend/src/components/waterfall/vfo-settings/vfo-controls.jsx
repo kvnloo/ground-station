@@ -7,6 +7,7 @@
 import React from 'react';
 import { Box, ToggleButton, Tooltip } from '@mui/material';
 import { alpha } from '@mui/material/styles';
+import { useSelector } from 'react-redux';
 import { useTranslation } from 'react-i18next';
 import LCDFrequencyDisplay from '../../common/lcd-frequency-display.jsx';
 
@@ -122,7 +123,12 @@ export const VfoMuteButton = ({ vfoIndex, vfoActive, vfoMuted, onMuteToggle }) =
 /**
  * VFO Frequency Display Component
  */
-export const VfoFrequencyDisplay = ({ frequency }) => {
+export const VfoFrequencyDisplay = ({ vfoIndex }) => {
+    // A locked VFO's doppler-corrected frequency changes at tracker cadence.
+    // Keep that subscription at the inexpensive LCD boundary so the complete
+    // settings accordion does not reconcile for every tracking update.
+    const frequency = useSelector((state) => state.vfo.vfoMarkers?.[vfoIndex]?.frequency || 0);
+
     return (
         <Box sx={{
             mt: 2,

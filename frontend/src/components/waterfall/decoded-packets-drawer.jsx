@@ -17,10 +17,10 @@
  *
  */
 
-import React, { useMemo, useRef, useState, useEffect, useCallback } from 'react';
+import React, { startTransition, useMemo, useRef, useState, useEffect, useCallback } from 'react';
 import { Box, Typography, Chip, useTheme, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, Button, Alert } from '@mui/material';
 import { DataGrid, gridClasses } from '@mui/x-data-grid';
-import { useSelector, useDispatch } from 'react-redux';
+import { useSelector, useDispatch, useStore } from 'react-redux';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
@@ -70,7 +70,10 @@ const TimeFormatter = React.memo(function TimeFormatter({ value, nowMs, timezone
 
 // humanizeBytes now provided by common.jsx and imported above
 
-const LIVE_DRAWER_REFRESH_MS = 200;
+// DataGrid reconciliation is considerably more expensive than appending a
+// decoded packet to Redux. Half-second batches keep the live packet view
+// responsive while avoiding five complete table updates per second.
+const LIVE_DRAWER_REFRESH_MS = 500;
 const LIVE_DRAWER_ROW_LIMIT = 50;
 const DEFAULT_DRAWER_ROW_LIMIT = 100;
 
@@ -164,11 +167,11 @@ export const mapOutputsToRows = (outputs, rowLimit = DEFAULT_DRAWER_ROW_LIMIT) =
         .reverse();
 };
 
-const DecodedPacketsDrawer = ({ embedded = false }) => {
+const DecodedPacketsDrawer = React.memo(function DecodedPacketsDrawer({ embedded = false }) {
     const theme = useTheme();
     const dispatch = useDispatch();
+    const store = useStore();
     const { socket } = useSocket();
-    const { outputs } = useSelector((state) => state.decoders);
     const { packetsDrawerOpen, packetsDrawerHeight, isStreaming } = useSelector((state) => state.waterfall);
     const { timezone, locale } = useUserTimeSettings();
 
@@ -198,22 +201,53 @@ const DecodedPacketsDrawer = ({ embedded = false }) => {
     const effectiveDrawerOpen = embedded ? true : packetsDrawerOpen;
     const liveMode = isStreaming && effectiveDrawerOpen;
     const rowLimit = liveMode ? LIVE_DRAWER_ROW_LIMIT : DEFAULT_DRAWER_ROW_LIMIT;
-    const latestRows = useMemo(() => mapOutputsToRows(outputs, rowLimit), [outputs, rowLimit]);
-    const latestRowsRef = useRef(latestRows);
-    const [rows, setRows] = useState(latestRows);
+    const rowLimitRef = useRef(rowLimit);
+    const liveModeRef = useRef(liveMode);
+    const latestRowsRef = useRef(mapOutputsToRows(store.getState().decoders.outputs, rowLimit));
+    const [rows, setRows] = useState(latestRowsRef.current);
     const [timeNowMs, setTimeNowMs] = useState(() => Date.now());
 
     useEffect(() => {
-        latestRowsRef.current = latestRows;
+        rowLimitRef.current = rowLimit;
+        liveModeRef.current = liveMode;
+        const nextRows = mapOutputsToRows(store.getState().decoders.outputs, rowLimit);
+        latestRowsRef.current = nextRows;
         if (!liveMode) {
-            setRows(latestRows);
+            setRows(nextRows);
         }
-    }, [latestRows, liveMode]);
+    }, [liveMode, rowLimit, store]);
+
+    useEffect(() => {
+        let previousOutputs = store.getState().decoders.outputs;
+
+        // Decoder output can arrive several times per second. Retain the newest
+        // rows outside React and let the live refresh interval publish a batch.
+        // This avoids reconciling the entire DataGrid for every packet.
+        return store.subscribe(() => {
+            const outputs = store.getState().decoders.outputs;
+            if (outputs === previousOutputs) {
+                return;
+            }
+            previousOutputs = outputs;
+            const nextRows = mapOutputsToRows(outputs, rowLimitRef.current);
+            latestRowsRef.current = nextRows;
+            if (!liveModeRef.current) {
+                startTransition(() => {
+                    setRows(nextRows);
+                });
+            }
+        });
+    }, [store]);
 
     useEffect(() => {
         if (!liveMode) return;
         const timer = setInterval(() => {
-            setRows(latestRowsRef.current);
+            // A packet-table refresh must never delay receiver interaction or
+            // waterfall rendering. React may coalesce this work when the main
+            // thread is busy with a newer packet batch.
+            startTransition(() => {
+                setRows(latestRowsRef.current);
+            });
         }, LIVE_DRAWER_REFRESH_MS);
 
         return () => clearInterval(timer);
@@ -1085,6 +1119,6 @@ const DecodedPacketsDrawer = ({ embedded = false }) => {
             </Dialog>
         </Box>
     );
-};
+});
 
 export default DecodedPacketsDrawer;

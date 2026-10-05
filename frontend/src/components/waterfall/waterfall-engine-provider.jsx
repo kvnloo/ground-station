@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
-import { useSelector } from 'react-redux';
+import { shallowEqual, useSelector } from 'react-redux';
 import { useSocket } from '../common/socket.jsx';
 import { getSmoothingConfig } from './smoothing-presets.js';
 import { getThemeConfig } from '../../themes/theme-configs.js';
@@ -36,9 +36,11 @@ export const WaterfallEngineProvider = ({ children }) => {
     const fftListenersRef = useRef(new Set());
     const workerMessageListenersRef = useRef(new Set());
     const headlessInitKeyRef = useRef('');
+    const secondaryCanvasesAttachedRef = useRef(false);
 
     const {
         waterfallRendererMode,
+        waterfallRendererPreference,
         isStreaming,
         waterFallCanvasWidth,
         waterFallCanvasHeight,
@@ -52,6 +54,7 @@ export const WaterfallEngineProvider = ({ children }) => {
         targetFPS,
     } = useSelector((state) => ({
         waterfallRendererMode: state.waterfall.waterfallRendererMode,
+        waterfallRendererPreference: state.waterfall.waterfallRendererPreference,
         isStreaming: state.waterfall.isStreaming,
         waterFallCanvasWidth: state.waterfall.waterFallCanvasWidth,
         waterFallCanvasHeight: state.waterfall.waterFallCanvasHeight,
@@ -63,7 +66,7 @@ export const WaterfallEngineProvider = ({ children }) => {
         bandscopeSmoothing: state.waterfall.bandscopeSmoothing,
         bandscopeRateLimitEnabled: state.waterfall.bandscopeRateLimitEnabled,
         targetFPS: state.waterfall.targetFPS,
-    }));
+    }), shallowEqual);
 
     const selectedThemeName = useSelector(
         (state) => state.preferences?.preferences?.find((pref) => pref.name === 'theme')?.value || 'dark'
@@ -210,6 +213,14 @@ export const WaterfallEngineProvider = ({ children }) => {
 
         try {
             const waterfallOffscreenCanvas = waterfallCanvas.transferControlToOffscreen();
+            if (secondaryCanvasesAttachedRef.current) {
+                worker.postMessage({
+                    cmd: 'replaceWaterfallCanvas',
+                    waterfallCanvas: waterfallOffscreenCanvas,
+                    config,
+                }, [waterfallOffscreenCanvas]);
+                return true;
+            }
             const bandscopeOffscreenCanvas = bandscopeCanvas.transferControlToOffscreen();
             const dBAxisOffscreenCanvas = dBAxisCanvas.transferControlToOffscreen();
             const waterfallLeftMarginOffscreenCanvas = waterfallLeftMarginCanvas.transferControlToOffscreen();
@@ -227,6 +238,7 @@ export const WaterfallEngineProvider = ({ children }) => {
                 dBAxisOffscreenCanvas,
                 waterfallLeftMarginOffscreenCanvas,
             ]);
+            secondaryCanvasesAttachedRef.current = true;
 
             return true;
         } catch (error) {
@@ -258,6 +270,7 @@ export const WaterfallEngineProvider = ({ children }) => {
             }
             workerRef.current = null;
             headlessInitKeyRef.current = '';
+            secondaryCanvasesAttachedRef.current = false;
         };
     }, [ensureWorker]);
 
@@ -283,6 +296,7 @@ export const WaterfallEngineProvider = ({ children }) => {
                 bandscopeRateLimitEnabled,
                 timezone,
                 theme: workerTheme,
+                rendererPreference: waterfallRendererPreference,
             },
         });
 
@@ -301,6 +315,7 @@ export const WaterfallEngineProvider = ({ children }) => {
         timezone,
         workerTheme,
         waterfallRendererMode,
+        waterfallRendererPreference,
         waterFallCanvasHeight,
         waterFallCanvasWidth,
     ]);
@@ -318,9 +333,11 @@ export const WaterfallEngineProvider = ({ children }) => {
             bandscopeRateLimitEnabled,
             timezone,
             theme: workerTheme,
+            rendererPreference: waterfallRendererPreference,
         });
     }, [
         waterfallRendererMode,
+        waterfallRendererPreference,
         colorMap,
         dbRange,
         fftSize,

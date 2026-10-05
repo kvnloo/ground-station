@@ -306,4 +306,6 @@ const FrequencyDisplay = ({
     );
 };
 
-export default FrequencyDisplay;
+// The surrounding settings panel also receives live SDR and VFO updates. The
+// dial is expensive to construct, so skip its MUI tree unless a dial prop moves.
+export default React.memo(FrequencyDisplay);

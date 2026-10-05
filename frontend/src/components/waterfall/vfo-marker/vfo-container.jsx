@@ -22,7 +22,7 @@
 import React, {useState, useEffect, useCallback, useRef, useMemo} from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { Box, IconButton } from '@mui/material';
-import { useAudio } from '../../dashboard/audio-provider.jsx';
+import { useVfoSquelchState } from '../vfo-squelch-state.js';
 import {
     setVFOProperty,
     setSelectedVFO,
@@ -152,7 +152,7 @@ const VFOMarkersContainer = ({
     // leaving enough main-thread time for input and the waterfall itself.
     const DRAG_VISUAL_UPDATE_INTERVAL_MS = 33;
     const dispatch = useDispatch();
-    const { getVfoSquelchDebug } = useAudio();
+    const { vfoSquelchOpen } = useVfoSquelchState();
     const {
         vfoMarkers,
         maxVFOMarkers,
@@ -191,12 +191,6 @@ const VFOMarkersContainer = ({
     //const height = bandscopeHeight + waterfallHeight;
     const height = bandscopeHeight;
     const [cursor, setCursor] = useState('default');
-    const [vfoSquelchOpen, setVfoSquelchOpen] = useState({
-        1: null,
-        2: null,
-        3: null,
-        4: null,
-    });
 
     // Track the previous VFO active state to detect changes
     const prevVfoActiveRef = useRef({});
@@ -588,35 +582,6 @@ const VFOMarkersContainer = ({
         }
         updateActualWidth();
     }, [interactionActive, allowInteractionMeasure, interactionMeasureTick, updateActualWidth]);
-
-    // Poll squelch gate state from audio diagnostics with change-only updates.
-    useEffect(() => {
-        const readSquelchState = () => {
-            const nextState = { 1: null, 2: null, 3: null, 4: null };
-            for (let vfoNumber = 1; vfoNumber <= 4; vfoNumber += 1) {
-                const debug = getVfoSquelchDebug?.(vfoNumber);
-                if (debug && typeof debug.gate_open === 'boolean') {
-                    nextState[vfoNumber] = Boolean(debug.gate_open);
-                }
-            }
-
-            setVfoSquelchOpen((prevState) => {
-                if (
-                    prevState[1] === nextState[1] &&
-                    prevState[2] === nextState[2] &&
-                    prevState[3] === nextState[3] &&
-                    prevState[4] === nextState[4]
-                ) {
-                    return prevState;
-                }
-                return nextState;
-            });
-        };
-
-        readSquelchState();
-        const interval = setInterval(readSquelchState, 250);
-        return () => clearInterval(interval);
-    }, [getVfoSquelchDebug]);
 
     // Resize backing store only when dimensions actually change.
     useEffect(() => {

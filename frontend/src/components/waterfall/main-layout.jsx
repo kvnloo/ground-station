@@ -35,6 +35,7 @@ import {useDispatch, useSelector} from "react-redux";
 import MainWaterfallDisplay from "./waterfall-island.jsx";
 import DecodedInsightsIsland from "./decoded-insights-island.jsx";
 import WaterfallSettings from "./settings-column.jsx";
+import { DevRenderProfiler } from './render-profiler.jsx';
 
 
 // A global callback for dashboard editing here
@@ -314,18 +315,22 @@ const MainLayout = React.memo(function MainLayout() {
 
     const gridContents = useMemo(() => [
         <StyledIslandParentScrollbar key="waterfall">
-            <MainWaterfallDisplay
-                playbackElapsedSecondsRef={playbackElapsedSecondsRef}
-                playbackRemainingSecondsRef={playbackRemainingSecondsRef}
-                playbackTotalSecondsRef={playbackTotalSecondsRef}
-            />
+            <DevRenderProfiler id="MainWaterfallDisplay">
+                <MainWaterfallDisplay
+                    playbackElapsedSecondsRef={playbackElapsedSecondsRef}
+                    playbackRemainingSecondsRef={playbackRemainingSecondsRef}
+                    playbackTotalSecondsRef={playbackTotalSecondsRef}
+                />
+            </DevRenderProfiler>
         </StyledIslandParentScrollbar>,
         <StyledIslandParentScrollbar key="settings">
             {deferredIslandCount >= 1 ? (
-                <WaterfallSettings
-                    ref={waterfallComponentSettingsRef}
-                    playbackRemainingSecondsRef={playbackRemainingSecondsRef}
-                />
+                <DevRenderProfiler id="WaterfallSettings">
+                    <WaterfallSettings
+                        ref={waterfallComponentSettingsRef}
+                        playbackRemainingSecondsRef={playbackRemainingSecondsRef}
+                    />
+                </DevRenderProfiler>
             ) : <DeferredIslandPlaceholder />}
         </StyledIslandParentScrollbar>,
         <StyledIslandParentScrollbar key="decoding">

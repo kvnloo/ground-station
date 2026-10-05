@@ -32,6 +32,7 @@ import {
 } from '../common/common.jsx';
 import DecodedPacketsDrawer from './decoded-packets-drawer.jsx';
 import GnssFixQualityTimeline from './gnss-fix-quality-timeline.jsx';
+import { DevRenderProfiler } from './render-profiler.jsx';
 import { useUserTimeSettings } from '../../hooks/useUserTimeSettings.jsx';
 import { formatDateTime, formatTime } from '../../utils/date-time.js';
 import {
@@ -567,7 +568,9 @@ const DecodedInsightsIsland = React.memo(function DecodedInsightsIsland() {
                 {activeTab === 'packets' && (
                     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                         <Box sx={{ flex: 1, minHeight: 0 }}>
-                            <DecodedPacketsDrawer embedded />
+                            <DevRenderProfiler id="DecodedPacketsDrawer">
+                                <DecodedPacketsDrawer embedded />
+                            </DevRenderProfiler>
                         </Box>
                         <WaterfallStatusBarPaper
                             elevation={0}
