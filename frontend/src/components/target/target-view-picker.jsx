@@ -9,7 +9,12 @@
  */
 
 import React, {useMemo} from 'react';
-import {ToggleButton, ToggleButtonGroup, useMediaQuery, useTheme} from '@mui/material';
+import {Box, IconButton, ToggleButton, ToggleButtonGroup, Tooltip, useMediaQuery, useTheme} from '@mui/material';
+import MapIcon from '@mui/icons-material/Map';
+import PublicIcon from '@mui/icons-material/Public';
+import NightsStayIcon from '@mui/icons-material/NightsStay';
+import AutoModeIcon from '@mui/icons-material/AutoMode';
+import WbSunnyIcon from '@mui/icons-material/WbSunny';
 import {useDispatch, useSelector} from 'react-redux';
 import {useTranslation} from 'react-i18next';
 import {useSocket} from '../common/socket.jsx';
@@ -28,15 +33,15 @@ const MAP_ENGINE_MAPLIBRE_GLOBE = 'maplibre-globe';
 const MAP_ENGINE_PLANETARIUM = 'planetarium';
 
 const SATELLITE_VIEW_OPTIONS = [
-    {id: 'map', labelKey: 'view_picker.map', fallback: '2D map'},
-    {id: 'globe', labelKey: 'view_picker.globe', fallback: 'Globe'},
-    {id: 'sky', labelKey: 'view_picker.sky', fallback: 'Sky'},
-    {id: 'auto', labelKey: 'view_picker.automatic', fallback: 'Auto by visibility'},
+    {id: 'map', labelKey: 'view_picker.map', fallback: '2D map', Icon: MapIcon},
+    {id: 'globe', labelKey: 'view_picker.globe', fallback: 'Globe', Icon: PublicIcon},
+    {id: 'sky', labelKey: 'view_picker.sky', fallback: 'Sky', Icon: NightsStayIcon},
+    {id: 'auto', labelKey: 'view_picker.automatic', fallback: 'Auto by visibility', Icon: AutoModeIcon},
 ];
 
 const CELESTIAL_VIEW_OPTIONS = [
-    {id: TARGET_VIEW_MODE_SOLAR_SYSTEM, labelKey: 'view_picker.solar_system', fallback: 'Solar system'},
-    {id: TARGET_VIEW_MODE_PLANETARIUM, labelKey: 'view_picker.sky', fallback: 'Sky'},
+    {id: TARGET_VIEW_MODE_SOLAR_SYSTEM, labelKey: 'view_picker.solar_system', fallback: 'Solar system', Icon: WbSunnyIcon},
+    {id: TARGET_VIEW_MODE_PLANETARIUM, labelKey: 'view_picker.sky', fallback: 'Sky', Icon: NightsStayIcon},
 ];
 
 const resolveSatelliteViewId = ({mapEngine, autoSwitchPlanetariumByVisibility}) => {
@@ -106,58 +111,105 @@ const TargetViewPicker = ({targetType}) => {
     };
 
     return (
-        <ToggleButtonGroup
-            exclusive
-            size="small"
-            value={selectedViewId}
-            aria-label={t('view_picker.label', {defaultValue: 'View'})}
-            onChange={(_event, nextViewId) => {
-                // MUI emits null when an active exclusive button is pressed.
-                // A view must always remain selected, so ignore that action.
-                if (nextViewId) handleSelect(nextViewId);
-            }}
-            sx={{
-                flexShrink: 0,
-                gap: 0.5,
-                '& .MuiToggleButtonGroup-grouped': {
-                    // Keep the same individual outlined/contained treatment as
-                    // the quick filters in the passes-table title bar.
-                    minHeight: isTightHeader ? 20 : (isCompactHeader ? 22 : 24),
-                    height: isTightHeader ? 20 : (isCompactHeader ? 22 : 24),
-                    minWidth: 'auto',
-                    px: isTightHeader ? 0.7 : (isCompactHeader ? 0.85 : 1),
-                    textTransform: 'none',
-                    whiteSpace: 'nowrap',
-                    fontSize: isTightHeader ? '0.64rem' : (isCompactHeader ? '0.68rem' : '0.72rem'),
-                    color: 'primary.main',
-                    borderColor: 'primary.main',
-                    borderRadius: 1,
-                    '&:not(:first-of-type)': {
-                        borderLeft: '1px solid',
-                        borderLeftColor: 'primary.main',
-                        ml: 0,
-                    },
-                    '&:hover': {
-                        bgcolor: 'action.hover',
+        <>
+            <ToggleButtonGroup
+                exclusive
+                size="small"
+                value={selectedViewId}
+                aria-label={t('view_picker.label', {defaultValue: 'View'})}
+                onChange={(_event, nextViewId) => {
+                    // MUI emits null when an active exclusive button is pressed.
+                    // A view must always remain selected, so ignore that action.
+                    if (nextViewId) handleSelect(nextViewId);
+                }}
+                sx={{
+                    flexShrink: 0,
+                    gap: 0.5,
+                    // The island can be narrow even when the browser viewport is wide.
+                    '@container target-view-header (max-width: 650px)': {display: 'none'},
+                    '& .MuiToggleButtonGroup-grouped': {
+                        // Keep the same individual outlined/contained treatment as
+                        // the quick filters in the passes-table title bar.
+                        minHeight: isTightHeader ? 20 : (isCompactHeader ? 22 : 24),
+                        height: isTightHeader ? 20 : (isCompactHeader ? 22 : 24),
+                        minWidth: 'auto',
+                        px: isTightHeader ? 0.7 : (isCompactHeader ? 0.85 : 1),
+                        textTransform: 'none',
+                        whiteSpace: 'nowrap',
+                        fontSize: isTightHeader ? '0.64rem' : (isCompactHeader ? '0.68rem' : '0.72rem'),
+                        color: 'primary.main',
                         borderColor: 'primary.main',
-                    },
-                    '&.Mui-selected': {
-                        color: 'primary.contrastText',
-                        bgcolor: 'primary.main',
-                        borderColor: 'primary.main',
+                        borderRadius: 1,
+                        '&:not(:first-of-type)': {
+                            borderLeft: '1px solid',
+                            borderLeftColor: 'primary.main',
+                            ml: 0,
+                        },
                         '&:hover': {
-                            bgcolor: 'primary.dark',
+                            bgcolor: 'action.hover',
+                            borderColor: 'primary.main',
+                        },
+                        '&.Mui-selected': {
+                            color: 'primary.contrastText',
+                            bgcolor: 'primary.main',
+                            borderColor: 'primary.main',
+                            '&:hover': {
+                                bgcolor: 'primary.dark',
+                            },
                         },
                     },
-                },
-            }}
-        >
-            {options.map((option) => (
-                <ToggleButton key={option.id} value={option.id} aria-label={t(option.labelKey, {defaultValue: option.fallback})}>
-                    {t(option.labelKey, {defaultValue: option.fallback})}
-                </ToggleButton>
-            ))}
-        </ToggleButtonGroup>
+                }}
+            >
+                {options.map((option) => (
+                    <ToggleButton key={option.id} value={option.id} aria-label={t(option.labelKey, {defaultValue: option.fallback})}>
+                        {t(option.labelKey, {defaultValue: option.fallback})}
+                    </ToggleButton>
+                ))}
+            </ToggleButtonGroup>
+            <Box
+                role="group"
+                aria-label={t('view_picker.label', {defaultValue: 'View'})}
+                sx={{
+                    display: 'none',
+                    alignItems: 'center',
+                    gap: 0.5,
+                    flexShrink: 0,
+                    '@container target-view-header (max-width: 650px)': {display: 'flex'},
+                }}
+            >
+                {options.map((option) => {
+                    const label = t(option.labelKey, {defaultValue: option.fallback});
+                    const selected = option.id === selectedViewId;
+                    return (
+                        <Tooltip key={option.id} title={label}>
+                            <IconButton
+                                size="small"
+                                aria-label={label}
+                                aria-pressed={selected}
+                                onClick={() => {
+                                    if (!selected) handleSelect(option.id);
+                                }}
+                                sx={{
+                                    width: 24,
+                                    height: 24,
+                                    p: 0.25,
+                                    border: '1px solid',
+                                    borderColor: 'primary.main',
+                                    borderRadius: 1,
+                                    color: selected ? 'primary.contrastText' : 'primary.main',
+                                    bgcolor: selected ? 'primary.main' : 'transparent',
+                                    '&:hover': {
+                                        bgcolor: selected ? 'primary.dark' : 'action.hover',
+                                    },
+                                }}
+                            >
+                                <option.Icon sx={{fontSize: 16}}/>
+                            </IconButton>
+                        </Tooltip>
+                    );
+                })}
+            </Box>
+        </>
     );
 };
 

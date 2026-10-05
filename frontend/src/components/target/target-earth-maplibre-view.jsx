@@ -708,13 +708,13 @@ const TargetEarthMapLibreView = ({projection = MAPLIBRE_PROJECTION_MERCATOR, eff
         <Box sx={{height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0}}>
             <TitleBar
                 className={getClassNamesBasedOnGridEditing(gridEditable, ['window-title-bar'])}
-                sx={islandTitleBarSx}
+                sx={{...islandTitleBarSx, containerType: 'inline-size', containerName: 'target-view-header'}}
             >
-                <Box sx={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%'}}>
-                    <Typography variant="subtitle2" sx={{fontWeight: 'bold'}}>
+                <Box sx={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', minWidth: 0}}>
+                    <Typography variant="subtitle2" sx={{fontWeight: 'bold', minWidth: 0}} noWrap>
                         {t('satellite_map.title')}
                     </Typography>
-                    <Box sx={{display: 'flex', alignItems: 'center', gap: 0.5}}>
+                    <Box sx={{display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0}}>
                         <TargetViewPicker targetType="satellite"/>
                         <Tooltip title={t('view_settings.customize_title', {defaultValue: 'Customize current view'})}>
                             <span>

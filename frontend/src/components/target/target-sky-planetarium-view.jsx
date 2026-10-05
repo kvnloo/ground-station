@@ -382,18 +382,18 @@ const TargetSkyPlanetariumView = () => {
         >
             <TitleBar
                 className={getClassNamesBasedOnGridEditing(gridEditable, ['window-title-bar'])}
-                sx={islandTitleBarSx}
+                sx={{...islandTitleBarSx, containerType: 'inline-size', containerName: 'target-view-header'}}
             >
-                <Box sx={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%'}}>
-                    <Box sx={{display: 'flex', alignItems: 'center', minWidth: 0, gap: 0.75}}>
-                        <Typography variant="subtitle2" sx={{fontWeight: 'bold'}} noWrap>
+                <Box sx={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', minWidth: 0}}>
+                    <Box sx={{display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, gap: 0.75}}>
+                        <Typography variant="subtitle2" sx={{fontWeight: 'bold', minWidth: 0}} noWrap>
                             {`${t('satellite_map.title')} · Planetarium`}
                         </Typography>
-                        <Typography variant="caption" sx={{ color: 'text.secondary' }} noWrap>
+                        <Typography variant="caption" sx={{ color: 'text.secondary', minWidth: 0 }} noWrap>
                             {targetName || '-'}
                         </Typography>
                     </Box>
-                    <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+                    <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexShrink: 0 }}>
                         <TargetViewPicker targetType={targetType}/>
                         <Tooltip title={t('view_settings.customize_title', {defaultValue: 'Customize current view'})}>
                             <span>
