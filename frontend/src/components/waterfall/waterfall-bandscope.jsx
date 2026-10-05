@@ -44,10 +44,10 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
                                               waterFallTileCanvasARef,
                                               waterFallTileCanvasBRef,
                                               waterfallRendererMode = 'worker',
-                                              waterfallRendererPreference = 'auto',
                                               centerFrequency,
                                               sampleRate,
                                               waterFallWindowHeight,
+                                              onVisibleWaterfallHeightChange,
                                               frequencyBands = [],
                                               minZoom = 1,
                                               maxZoom = 20,
@@ -56,6 +56,8 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
 
     const theme = useTheme();
     const containerRef = useRef(null);
+    const viewportRef = useRef(null);
+    const lastVisibleWaterfallHeightRef = useRef(null);
     const containerWidthRef = useRef(0);
     const [isMobile, setIsMobile] = useState(false);
     const scaleRef = useRef(1);
@@ -586,8 +588,49 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
         });
     }, [bandscopeCanvasRef, waterFallCanvasRef, waterFallTileCanvasARef, waterFallTileCanvasBRef]);
 
+    useEffect(() => {
+        if (waterfallRendererMode !== 'worker' || !onVisibleWaterfallHeightChange) return;
+
+        const viewport = viewportRef.current;
+        const canvas = waterFallCanvasRef.current;
+        if (!viewport || !canvas) return;
+
+        const measureVisibleHeight = () => {
+            const viewportRect = viewport.getBoundingClientRect();
+            const canvasRect = canvas.getBoundingClientRect();
+            if (!canvasRect.height) return;
+
+            // The island clips below the bandscope and frequency scale. Convert
+            // its bottom edge into canvas rows, with one extra row to cover
+            // rounding at the boundary. Horizontal zoom does not affect Y.
+            const visibleCssHeight = Math.max(0, viewportRect.bottom - canvasRect.top);
+            const visibleRows = Math.min(
+                canvas.height,
+                Math.ceil(visibleCssHeight * canvas.height / canvasRect.height) + 1
+            );
+            if (visibleRows !== lastVisibleWaterfallHeightRef.current) {
+                lastVisibleWaterfallHeightRef.current = visibleRows;
+                onVisibleWaterfallHeightChange(visibleRows);
+            }
+        };
+
+        const observer = new ResizeObserver(measureVisibleHeight);
+        observer.observe(viewport);
+        if (containerRef.current) observer.observe(containerRef.current);
+        measureVisibleHeight();
+        return () => observer.disconnect();
+    }, [
+        waterfallRendererMode,
+        waterFallWindowHeight,
+        waterFallCanvasHeight,
+        bandScopeHeight,
+        bandscopeTopPadding,
+        onVisibleWaterfallHeightChange,
+        waterFallCanvasRef,
+    ]);
+
     return (
-        <Box sx={{
+        <Box ref={viewportRef} sx={{
             height: 'calc(100% - 90px)',
             width: '100%',
             overflow: 'hidden',
@@ -834,7 +877,6 @@ const WaterfallAndBandscope = forwardRef(function WaterfallAndBandscope({
                     </Box>
                 ) : (
                     <canvas
-                        key={`waterfall-worker-${waterfallRendererPreference}`}
                         className={"waterfall-canvas"}
                         ref={waterFallCanvasRef}
                         width={waterFallCanvasWidth}

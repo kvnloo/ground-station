@@ -41,7 +41,6 @@ export const WaterfallEngineProvider = ({ children }) => {
 
     const {
         waterfallRendererMode,
-        waterfallRendererPreference,
         isStreaming,
         waterFallCanvasWidth,
         waterFallCanvasHeight,
@@ -55,7 +54,6 @@ export const WaterfallEngineProvider = ({ children }) => {
         targetFPS,
     } = useSelector((state) => ({
         waterfallRendererMode: state.waterfall.waterfallRendererMode,
-        waterfallRendererPreference: state.waterfall.waterfallRendererPreference,
         isStreaming: state.waterfall.isStreaming,
         waterFallCanvasWidth: state.waterfall.waterFallCanvasWidth,
         waterFallCanvasHeight: state.waterfall.waterFallCanvasHeight,
@@ -220,9 +218,8 @@ export const WaterfallEngineProvider = ({ children }) => {
                 && attachedNodes?.dBAxisCanvas === dBAxisCanvas
                 && attachedNodes?.waterfallLeftMarginCanvas === waterfallLeftMarginCanvas;
 
-            // Renderer preference changes replace only the keyed waterfall
-            // canvas. Navigation remounts all canvases, including the
-            // bandscope, so it must reattach the complete visible set.
+            // A waterfall-only canvas replacement can reuse the secondary
+            // canvases. Navigation remounts them too, so attach the full set.
             if (secondaryCanvasesAreUnchanged) {
                 worker.postMessage({
                     cmd: 'replaceWaterfallCanvas',
@@ -314,7 +311,6 @@ export const WaterfallEngineProvider = ({ children }) => {
                 bandscopeRateLimitEnabled,
                 timezone,
                 theme: workerTheme,
-                rendererPreference: waterfallRendererPreference,
             },
         });
 
@@ -333,7 +329,6 @@ export const WaterfallEngineProvider = ({ children }) => {
         timezone,
         workerTheme,
         waterfallRendererMode,
-        waterfallRendererPreference,
         waterFallCanvasHeight,
         waterFallCanvasWidth,
     ]);
@@ -351,11 +346,9 @@ export const WaterfallEngineProvider = ({ children }) => {
             bandscopeRateLimitEnabled,
             timezone,
             theme: workerTheme,
-            rendererPreference: waterfallRendererPreference,
         });
     }, [
         waterfallRendererMode,
-        waterfallRendererPreference,
         colorMap,
         dbRange,
         fftSize,

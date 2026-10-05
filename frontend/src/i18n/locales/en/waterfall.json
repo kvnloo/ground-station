@@ -69,10 +69,6 @@
     "fft_size": "FFT Size",
     "fft_window": "FFT Window",
     "fft_averaging": "FFT Averaging",
-    "waterfall_renderer": "Waterfall Renderer",
-    "renderer_auto": "Automatic",
-    "renderer_webgl2": "WebGL2",
-    "renderer_canvas2d": "Canvas 2D",
     "averaging_none": "None",
     "averaging_samples": "{{count}} samples",
     "color_map": "Color Map"
@@ -144,9 +140,7 @@
     "close": "Close"
   },
   "statusbar": {
-    "stopped": "stopped",
-    "renderer_webgl2": "Waterfall renderer: WebGL2",
-    "renderer_canvas2d": "Waterfall renderer: Canvas 2D"
+    "stopped": "stopped"
   },
   "recording": {
     "title": "IQ Recording",

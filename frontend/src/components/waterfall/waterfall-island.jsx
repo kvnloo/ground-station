@@ -58,7 +58,6 @@ import {
     setAutoScalePreset,
     saveWaterfallSnapshot,
     setFFTdataOverflow,
-    setWaterfallRendererEffective,
 } from './waterfall-slice.jsx';
 import {
     enableVFO1,
@@ -168,8 +167,6 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
     const mainWaterFallContainer = useRef(null);
     const [showSnapshotOverlay, setShowSnapshotOverlay] = useState(false);
     const [isFullscreen, setIsFullscreen] = useState(false);
-    const [rendererRecovery, setRendererRecovery] = useState(0);
-    const [rendererFallback, setRendererFallback] = useState(false);
     const {
         workerRef,
         postWorkerMessage,
@@ -177,11 +174,12 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
         detachCanvases,
         subscribeToWorkerMessages
     } = useWaterfallEngine();
+    const updateVisibleWaterfallHeight = useCallback((height) => {
+        postWorkerMessage({ cmd: 'setVisibleWaterfallHeight', height });
+    }, [postWorkerMessage]);
     const {
         colorMap,
         waterfallRendererMode,
-        waterfallRendererPreference,
-        waterfallRendererEffective,
         colorMaps,
         dbRange,
         fftSizeOptions,
@@ -226,8 +224,6 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
         (state) => ({
             colorMap: state.waterfall.colorMap,
             waterfallRendererMode: state.waterfall.waterfallRendererMode,
-            waterfallRendererPreference: state.waterfall.waterfallRendererPreference,
-            waterfallRendererEffective: state.waterfall.waterfallRendererEffective,
             colorMaps: state.waterfall.colorMaps,
             dbRange: state.waterfall.dbRange,
             fftSizeOptions: state.waterfall.fftSizeOptions,
@@ -663,12 +659,6 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
                 window.waterfallCanvasDataURL = null;
             };
             reader.readAsDataURL(blob);
-        } else if (type === 'rendererStatus') {
-            dispatch(setWaterfallRendererEffective(data?.effective));
-        } else if (type === 'rendererContextLost') {
-            // Keep the saved preference intact, but use Canvas for this session.
-            setRendererFallback(true);
-            setRendererRecovery((value) => value + 1);
         } else if (type === 'waterfallCaptureFailed') {
             console.error('Waterfall capture failed:', data?.error);
             window.waterfallCanvasDataURL = null;
@@ -676,22 +666,11 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
     }, [dispatch]);
 
     useEffect(() => {
-        setRendererFallback(false);
-    }, [waterfallRendererPreference]);
-
-    useEffect(() => {
         if (waterfallRendererMode !== 'worker') {
             return;
         }
         return subscribeToWorkerMessages(handleWorkerMessage);
     }, [waterfallRendererMode, subscribeToWorkerMessages, handleWorkerMessage]);
-
-    useEffect(() => {
-        // A transferred OffscreenCanvas cannot change from WebGL to Canvas 2D.
-        // A keyed replacement gives the selected renderer a fresh canvas.
-        if (waterfallRendererMode !== 'worker') return;
-        canvasTransferredRef.current = false;
-    }, [waterfallRendererPreference, waterfallRendererMode, rendererFallback, rendererRecovery]);
 
     useEffect(() => {
         if (waterfallRendererMode !== 'worker' || !waterFallCanvasRef.current || canvasTransferredRef.current) {
@@ -711,7 +690,6 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
                 fftSize,
                 showRotatorDottedLines,
                 bandscopeRateLimitEnabled,
-                rendererPreference: rendererFallback ? 'canvas2d' : waterfallRendererPreference,
                 timezone,
                 theme: {
                     palette: {
@@ -753,9 +731,6 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
         }
     }, [
         waterfallRendererMode,
-        waterfallRendererPreference,
-        rendererFallback,
-        rendererRecovery,
         waterFallCanvasWidth,
         waterFallCanvasHeight,
         colorMap,
@@ -1343,10 +1318,10 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
                         waterFallTileCanvasARef={waterFallTileCanvasARef}
                         waterFallTileCanvasBRef={waterFallTileCanvasBRef}
                         waterfallRendererMode={waterfallRendererMode}
-                        waterfallRendererPreference={`${waterfallRendererPreference}-${rendererRecovery}`}
                         centerFrequency={centerFrequency}
                         sampleRate={sampleRate}
                         waterFallWindowHeight={dimensions['height']}
+                        onVisibleWaterfallHeightChange={updateVisibleWaterfallHeight}
                         frequencyBands={frequencyBands}
                         playbackRemainingSecondsRef={playbackRemainingSecondsRef}
                     />
@@ -1468,7 +1443,7 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
                         </Box>
                     </Box>
                 )}
-                <WaterfallStatusBar isStreaming={isStreaming} eventMetrics={eventMetrics} centerFrequency={centerFrequency} sampleRate={sampleRate} gain={gain} renderer={waterfallRendererEffective} />
+                <WaterfallStatusBar isStreaming={isStreaming} eventMetrics={eventMetrics} centerFrequency={centerFrequency} sampleRate={sampleRate} gain={gain} />
             </Box>
         </div>
     );

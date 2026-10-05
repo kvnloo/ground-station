@@ -404,7 +404,7 @@ const TransmittersTable = ({ satelliteData, inDialog = false, actionsPortalTarge
                         rows={rows}
                         columns={gridColumns}
                         initialState={{pagination: {paginationModel}}}
-                        pageSizeOptions={[5, 10]}
+                        pageSizeOptions={[5, 10, 25, 50, 100]}
                         checkboxSelection={true}
                         onColumnWidthChange={handleColumnWidthChange}
                         onRowSelectionModelChange={(newSelected) => {

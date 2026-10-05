@@ -44,7 +44,6 @@ import {
     setFFTOverlapPercent,
     setFFTOverlapDepth,
     setBandscopeSmoothing,
-    setWaterfallRendererPreference,
     setGain,
     setSampleRate,
     setCenterFrequency,
@@ -165,7 +164,6 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
         selectedTransmitterId,
         fftAveraging,
         bandscopeSmoothing,
-        waterfallRendererPreference,
         isRecording,
         recordingDuration,
         recordingName,
@@ -219,7 +217,6 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
             selectedTransmitterId: state.waterfall.selectedTransmitterId,
             fftAveraging: state.waterfall.fftAveraging,
             bandscopeSmoothing: state.waterfall.bandscopeSmoothing,
-            waterfallRendererPreference: state.waterfall.waterfallRendererPreference,
             isRecording: state.waterfall.isRecording,
             recordingDuration: state.waterfall.recordingDuration,
             recordingName: state.waterfall.recordingName,
@@ -1212,10 +1209,6 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
         dispatch(setBandscopeSmoothing(value));
     }, [dispatch]);
 
-    const handleWaterfallRendererPreferenceChange = useCallback((value) => {
-        dispatch(setWaterfallRendererPreference(value));
-    }, [dispatch]);
-
     const handleColorMapChange = useCallback((value) => {
         setLocalColorMap(value);
         dispatch(setColorMap(value));
@@ -1648,8 +1641,6 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     onFFTOverlapDepthChange={handleFFTOverlapDepthChange}
                     bandscopeSmoothing={bandscopeSmoothing}
                     onBandscopeSmoothingChange={handleBandscopeSmoothingChange}
-                    waterfallRendererPreference={waterfallRendererPreference}
-                    onWaterfallRendererPreferenceChange={handleWaterfallRendererPreferenceChange}
                     colorMaps={colorMaps}
                     localColorMap={localColorMap}
                     onColorMapChange={handleColorMapChange}

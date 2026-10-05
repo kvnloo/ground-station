@@ -26,15 +26,12 @@ import {
     drawBandscope as drawBandscopeModule,
     updateWaterfallLeftMargin as updateWaterfallLeftMarginModule
 } from './worker-modules/rendering.js';
-import { createWebGlWaterfallRenderer } from './webgl-waterfall-renderer.js';
 
 let waterfallCanvas = null;
 let bandscopeCanvas = null;
 let dBAxisCanvas = null;
 let waterfallLeftMarginCanvas = null;
 let waterfallCtx = null;
-let webglWaterfall = null;
-let waterfallBackend = 'canvas2d';
 // Ring buffer canvas to avoid full-surface scroll blits each frame
 let ringCanvas = null;
 let ringCtx = null;
@@ -142,6 +139,8 @@ let presentLoopRunning = false;
 let presentTimeoutId = null;
 let pendingRowsToPresent = 0;
 let needsPresent = false;
+// Only presentation is clipped; the ring retains history for resizing and snapshots.
+let visibleWaterfallHeight = null;
 const ROTATOR_MARKER_DASH_WIDTH = 4;
 const ROTATOR_MARKER_DASH_GAP = 12;
 
@@ -231,26 +230,28 @@ function stampRotatorOverlayRow(y) {
     }
 }
 
-function composeWaterfall() {
-    if (webglWaterfall) {
-        webglWaterfall.present();
-        return;
-    }
-    if (!waterfallCanvas || !waterfallCtx || !ringCanvas) {
-        return;
-    }
+function composeWaterfall(fullHeight = false) {
+    if (!waterfallCanvas) return;
 
-    // Composite the ring buffers with the newest row at the top.
     const h = waterfallCanvas.height;
+    const presentRows = fullHeight || visibleWaterfallHeight === null
+        ? h
+        : Math.min(h, visibleWaterfallHeight);
+    if (presentRows <= 0) return;
+    if (!waterfallCtx || !ringCanvas) return;
+
+    // Ring coordinates rotate, so a row below the visible boundary can still
+    // be the newest row. Crop only the final composition, including wraparound.
     const w = waterfallCanvas.width;
     const topStart = ringHeadY;
-    const heightA = h - topStart;
+    const heightA = Math.min(presentRows, h - topStart);
+    const heightB = presentRows - heightA;
 
     if (heightA > 0) {
         waterfallCtx.drawImage(ringCanvas, 0, topStart, w, heightA, 0, 0, w, heightA);
     }
-    if (topStart > 0) {
-        waterfallCtx.drawImage(ringCanvas, 0, 0, w, topStart, 0, heightA, w, topStart);
+    if (heightB > 0) {
+        waterfallCtx.drawImage(ringCanvas, 0, 0, w, heightB, 0, heightA, w, heightB);
     }
 
     // Draw the transparent marker ring after the FFT pixels. Keeping this in
@@ -261,39 +262,17 @@ function composeWaterfall() {
     if (heightA > 0) {
         waterfallCtx.drawImage(rotatorOverlayCanvas, 0, topStart, w, heightA, 0, 0, w, heightA);
     }
-    if (topStart > 0) {
-        waterfallCtx.drawImage(rotatorOverlayCanvas, 0, 0, w, topStart, 0, heightA, w, topStart);
+    if (heightB > 0) {
+        waterfallCtx.drawImage(rotatorOverlayCanvas, 0, 0, w, heightB, 0, heightA, w, heightB);
     }
 }
 
-function selectWaterfallRenderer(config = {}) {
-    webglWaterfall?.destroy();
-    webglWaterfall = null;
-    waterfallCtx = null;
-    const preference = config.rendererPreference || 'auto';
-    const wantsWebGl = preference === 'auto' || preference === 'webgl2';
-    if (wantsWebGl && waterfallCanvas) {
-        webglWaterfall = createWebGlWaterfallRenderer(waterfallCanvas, {
-            width: config.width || waterfallCanvas.width,
-            height: config.height || waterfallCanvas.height,
-            palette: palette || new Uint8Array(256 * 3),
-            backgroundColor: theme.palette.background.default,
-            onContextLost: () => self.postMessage({ type: 'rendererContextLost' }),
-        });
-    }
-    if (webglWaterfall) {
-        waterfallBackend = 'webgl2';
-    } else {
-        waterfallBackend = 'canvas2d';
-        waterfallCtx = waterfallCanvas?.getContext('2d', {
-            alpha: true,
-            desynchronized: true,
-            willReadFrequently: false,
-        }) || null;
-        if (waterfallCtx) waterfallCtx.imageSmoothingEnabled = false;
-    }
-    self.postMessage({ type: 'rendererStatus', data: { preference, effective: waterfallBackend,
-        reason: waterfallBackend === 'webgl2' ? 'supported' : (preference === 'canvas2d' ? 'forced' : 'unavailable') } });
+function attachWaterfallContext() {
+    waterfallCtx = waterfallCanvas?.getContext('2d', {
+        alpha: true,
+        desynchronized: true,
+        willReadFrequently: false,
+    }) || null;
 }
 
 function rebuildPalette() {
@@ -327,7 +306,7 @@ self.onmessage = function(eventMessage) {
             bandscopeCanvas = eventMessage.data.bandscopeCanvas;
             dBAxisCanvas = eventMessage.data.dBAxisCanvas;
             waterfallLeftMarginCanvas = eventMessage.data.waterfallLeftMarginCanvas;
-            selectWaterfallRenderer(eventMessage.data.config);
+            attachWaterfallContext();
             bandscopeCtx = bandscopeCanvas.getContext('2d', {
                 alpha: true,
                 desynchronized: true,
@@ -352,6 +331,7 @@ self.onmessage = function(eventMessage) {
 
             // Preserve ring-buffer history when (re)attaching visible canvases.
             setupCanvas(eventMessage.data.config, { preserveRing: true });
+            composeWaterfall();
 
             // Start monitoring when canvas is initialized
             startFftRateMonitoring();
@@ -364,12 +344,10 @@ self.onmessage = function(eventMessage) {
             break;
 
         case 'replaceWaterfallCanvas':
-            // An OffscreenCanvas cannot exchange a WebGL context for 2D in place.
-            webglWaterfall?.destroy();
-            webglWaterfall = null;
             waterfallCanvas = eventMessage.data.waterfallCanvas;
-            selectWaterfallRenderer(eventMessage.data.config);
+            attachWaterfallContext();
             setupCanvas(eventMessage.data.config, { preserveRing: true });
+            composeWaterfall();
             break;
 
         case 'start':
@@ -391,6 +369,17 @@ self.onmessage = function(eventMessage) {
         case 'updateFPS':
             updateFPS(eventMessage.data.fps || eventMessage.data?.data?.fps);
             break;
+
+        case 'setVisibleWaterfallHeight': {
+            const height = Number(eventMessage.data.height);
+            if (!Number.isFinite(height) || height < 0) break;
+            const nextHeight = Math.floor(height);
+            if (visibleWaterfallHeight === nextHeight) break;
+            visibleWaterfallHeight = nextHeight;
+            // A resize can reveal older rows while streaming is paused.
+            composeWaterfall();
+            break;
+        }
 
         case 'toggleRotatorDottedLines':
             // Toggle the visibility of dotted lines for rotator events
@@ -539,7 +528,6 @@ self.onmessage = function(eventMessage) {
             }
             // Rebuild palette if needed after config updates
             if (paletteDirty) rebuildPalette();
-            webglWaterfall?.setPalette(palette, theme.palette.background.default);
             break;
 
         case 'autoScaleDbRange': {
@@ -579,9 +567,6 @@ self.onmessage = function(eventMessage) {
                 leftMarginStateCtx.drawImage(waterfallLeftMarginCanvas, 0, 0);
             }
             waterfallCanvas = null;
-            webglWaterfall?.destroy();
-            webglWaterfall = null;
-            waterfallBackend = 'canvas2d';
             bandscopeCanvas = null;
             dBAxisCanvas = null;
             waterfallLeftMarginCanvas = null;
@@ -610,9 +595,10 @@ self.onmessage = function(eventMessage) {
 
         case 'captureWaterfallCanvas':
             // Capture waterfall canvas as PNG
-            if (waterfallCanvas && (waterfallCtx || webglWaterfall)) {
+            if (waterfallCanvas && waterfallCtx) {
                 try {
-                    webglWaterfall?.present();
+                    // Snapshots still use the complete retained history.
+                    composeWaterfall(true);
                     // Get the original canvas dimensions
                     const originalWidth = waterfallCanvas.width;
                     const originalHeight = waterfallCanvas.height;
@@ -840,6 +826,7 @@ function setupCanvas(config = {}, options = {}) {
 
     // Clear visible canvas when attached.
     if (waterfallCtx && waterfallCanvas) {
+        waterfallCtx.imageSmoothingEnabled = false;
         waterfallCtx.fillStyle = theme.palette.background.default;
         waterfallCtx.fillRect(0, 0, waterfallCanvas.width, waterfallCanvas.height);
     }
@@ -856,10 +843,6 @@ function setupCanvas(config = {}, options = {}) {
     // Rebuild color palette for current settings
     paletteDirty = true;
     rebuildPalette();
-    if (webglWaterfall) {
-        webglWaterfall.resize(width, height);
-        webglWaterfall.setPalette(palette, theme.palette.background.default);
-    }
 }
 
 function startRendering(fps) {
@@ -914,13 +897,6 @@ function presentTick() {
 }
 
 function ingestWaterfallRow(frame) {
-    if (webglWaterfall) {
-        const [min, max] = dbRange;
-        webglWaterfall.pushFrame(frame, min + DB_RANGE_OFFSET, max + DB_RANGE_OFFSET);
-        if (waterfallCanvas) pendingRowsToPresent = Math.min(pendingRowsToPresent + 1, waterfallCanvas.height);
-        needsPresent = true;
-        return;
-    }
     if (!ringCanvas || !ringCtx || !imageData) return;
     if (!frame || frame.length === 0) return;
 
@@ -945,7 +921,7 @@ function ingestWaterfallRow(frame) {
 }
 
 function presentWaterfall() {
-    if (!waterfallCanvas || (!waterfallCtx && !webglWaterfall) || !needsPresent) return;
+    if (!waterfallCanvas || !waterfallCtx || !needsPresent) return;
 
     // Increment the counter for rate calculation
     renderWaterfallCount++;
@@ -964,8 +940,7 @@ function presentWaterfall() {
             });
             lastTimestamp = marginResult.lastTimestamp;
             if (marginResult.hasRotatorEvent) {
-                if (webglWaterfall) webglWaterfall.markLatestRow();
-                else stampRotatorOverlayRow(ringHeadY);
+                stampRotatorOverlayRow(ringHeadY);
             }
         }
         // Keep persistent left-margin state aligned with what was rendered visibly.
