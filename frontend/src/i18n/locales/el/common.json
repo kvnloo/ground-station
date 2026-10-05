@@ -311,6 +311,7 @@
       "run_satdump_post_processing_label": "Εκτελεση SatDump post-processing μετα την ηχογραφηση IQ",
       "satdump_pipeline_label": "Pipeline SatDump",
       "delete_iq_after_satdump_label": "Διαγραφη ηχογραφησης IQ μετα την ολοκληρωση SatDump",
+      "retain_iq_on_satdump_failure_label": "Διατήρηση της εγγραφής IQ και δημιουργία διαγράμματος καταρράκτη αν αποτύχει το SatDump",
       "source_with_frequency": "Πηγη: {{source}} • {{frequency}} MHz",
       "source_value": "Πηγη: {{value}}",
       "mode_value": "Λειτουργια: {{value}}",

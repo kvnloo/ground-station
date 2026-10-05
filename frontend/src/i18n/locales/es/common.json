@@ -470,6 +470,7 @@
       "run_satdump_post_processing_label": "Corre SatDump post-procesamiento después de la grabación de IQ",
       "satdump_pipeline_label": "Canalización de SatDump",
       "delete_iq_after_satdump_label": "Eliminar la grabación IQ después de que SatDump complete",
+      "retain_iq_on_satdump_failure_label": "Conservar la grabación IQ y generar un espectrograma si SatDump falla",
       "source_with_frequency": "Fuente: {{source}} • {{frequency}} MHz",
       "source_value": "Fuente: {{value}}",
       "mode_value": "Modo: {{value}}",

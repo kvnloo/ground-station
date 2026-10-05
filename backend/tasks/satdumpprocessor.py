@@ -260,6 +260,38 @@ def _is_directory_empty(directory: Path) -> bool:
     return True
 
 
+def _delete_sigmf_recording(recording_file: Path, progress_queue: Optional[Queue]) -> None:
+    """Delete both parts of a processed SigMF recording."""
+    try:
+        base_path = recording_file
+        if base_path.name.endswith(".sigmf-data"):
+            base_path = base_path.with_suffix("")
+
+        data_path = base_path.with_suffix(".sigmf-data")
+        meta_path = base_path.with_suffix(".sigmf-meta")
+        for path in (data_path, meta_path):
+            if path.exists():
+                path.unlink()
+
+        if progress_queue:
+            progress_queue.put(
+                {
+                    "type": "output",
+                    "output": f"Deleted IQ recording: {data_path} (+.sigmf-meta)",
+                    "stream": "stdout",
+                }
+            )
+    except Exception as e:
+        if progress_queue:
+            progress_queue.put(
+                {
+                    "type": "output",
+                    "output": f"Warning: Failed to delete IQ recording: {e}",
+                    "stream": "stderr",
+                }
+            )
+
+
 def satdump_process_recording(
     recording_path: str,
     output_dir: str,
@@ -268,6 +300,7 @@ def satdump_process_recording(
     baseband_format: str = "i16",
     finish_processing: bool = True,
     delete_input_after: bool = False,
+    retain_input_on_failure: bool = True,
     _progress_queue: Optional[Queue] = None,
 ):
     """
@@ -280,6 +313,8 @@ def satdump_process_recording(
         samplerate: Sample rate in Hz (0 = auto-detect from filename)
         baseband_format: Input format ('i16', 'i8', 'f32', 'w16', 'w8', etc.)
         finish_processing: Whether to run product generation after decoding
+        delete_input_after: Delete SigMF input after processing
+        retain_input_on_failure: Keep SigMF input when decoding fails
         _progress_queue: Queue for sending progress updates
 
     Returns:
@@ -495,38 +530,10 @@ def satdump_process_recording(
             )
             has_output = has_images or any(output_path.rglob("product.cbor"))
 
-        if delete_input_after:
-            try:
-                base_path = recording_file
-                if base_path.name.endswith(".sigmf-data"):
-                    base_path = base_path.with_suffix("")
-
-                data_path = base_path.with_suffix(".sigmf-data")
-                meta_path = base_path.with_suffix(".sigmf-meta")
-
-                for path in (data_path, meta_path):
-                    if path.exists():
-                        path.unlink()
-
-                if _progress_queue:
-                    _progress_queue.put(
-                        {
-                            "type": "output",
-                            "output": f"Deleted IQ recording: {data_path} (+.sigmf-meta)",
-                            "stream": "stdout",
-                        }
-                    )
-            except Exception as e:
-                if _progress_queue:
-                    _progress_queue.put(
-                        {
-                            "type": "output",
-                            "output": f"Warning: Failed to delete IQ recording: {e}",
-                            "stream": "stderr",
-                        }
-                    )
-
         if not has_images:
+            # Retained failures can be inspected and reprocessed from the recordings browser.
+            if delete_input_after and not retain_input_on_failure:
+                _delete_sigmf_recording(recording_file, _progress_queue)
             if output_path.exists() and not output_dir_preexisted:
                 if _progress_queue:
                     _progress_queue.put(
@@ -548,6 +555,8 @@ def satdump_process_recording(
         # SatDump v1.2.x returns exit code 1 even when decoding succeeded
         if return_code == 0 or (return_code == 1 and has_output):
             generate_decoded_thumbnail(output_path, progress_queue=_progress_queue, force=True)
+            if delete_input_after:
+                _delete_sigmf_recording(recording_file, _progress_queue)
             if _progress_queue:
                 _progress_queue.put(
                     {
@@ -588,6 +597,8 @@ def satdump_process_recording(
                 "return_code": return_code,
             }
         else:
+            if delete_input_after and not retain_input_on_failure:
+                _delete_sigmf_recording(recording_file, _progress_queue)
             # Clean up empty output directory
             _cleanup_empty_directory(output_path, _progress_queue)
 

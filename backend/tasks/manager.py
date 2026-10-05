@@ -62,6 +62,7 @@ import traceback
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from queue import Empty
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -70,6 +71,7 @@ from db import AsyncSessionLocal
 from handlers.entities.filebrowser import emit_file_browser_state
 from hardware.soapysdrbrowser import update_discovered_servers
 from server.schedulerstate import get_orbital_sync_next_run_time
+from tasks.waterfallgenerator import generate_waterfall_task
 from tlesync.persist import is_terminal_orbital_sync_state, save_orbital_sync_state
 from tlesync.state import sync_state_manager
 from tracker.runner import get_all_tracker_managers
@@ -457,6 +459,33 @@ class BackgroundTaskManager:
                     )
                 except Exception as e:
                     logger.error(f"Error emitting satdump-completed notification: {e}")
+
+            if (
+                task_info.name.startswith("SatDump:")
+                and task_info.status == TaskStatus.FAILED
+                and task_info.kwargs.get("delete_input_after")
+                and task_info.kwargs.get("retain_input_on_failure", True)
+                and task_info.args
+            ):
+                try:
+                    recording_file = Path(task_info.args[0])
+                    recording_base = recording_file.with_suffix("")
+                    metadata_file = recording_base.with_suffix(".sigmf-meta")
+                    if recording_file.is_file() and metadata_file.is_file():
+                        # The recorder skipped its normal waterfall because this IQ
+                        # was expected to be deleted after SatDump succeeded.
+                        waterfall_task_id = await self.start_task(
+                            func=generate_waterfall_task,
+                            args=(str(recording_base),),
+                            name=f"Waterfall: {recording_base.name}",
+                        )
+                        logger.info(
+                            "Started waterfall task %s for retained SatDump IQ %s",
+                            waterfall_task_id,
+                            recording_file,
+                        )
+                except Exception:
+                    logger.exception("Failed to start waterfall for retained SatDump IQ")
 
         except asyncio.CancelledError:
             logger.info(f"Monitoring cancelled for task '{task_info.name}'")

@@ -470,6 +470,7 @@
       "run_satdump_post_processing_label": "SatDump-naverwerking uitvoeren na IQ-opname",
       "satdump_pipeline_label": "SatDump-pijplijn",
       "delete_iq_after_satdump_label": "IQ-opname verwijderen nadat SatDump is voltooid",
+      "retain_iq_on_satdump_failure_label": "IQ-opname bewaren en watervaldiagram maken als SatDump mislukt",
       "source_with_frequency": "Bron: {{source}} • {{frequency}} MHz",
       "source_value": "Bron: {{value}}",
       "mode_value": "Modus: {{value}}",

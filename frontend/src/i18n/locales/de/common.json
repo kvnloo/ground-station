@@ -470,6 +470,7 @@
       "run_satdump_post_processing_label": "Führen Sie SatDump-Nachbearbeitung nach der IQ-Aufzeichnung aus",
       "satdump_pipeline_label": "SatDump-Pipeline",
       "delete_iq_after_satdump_label": "IQ-Aufzeichnung löschen, nachdem SatDump abgeschlossen ist",
+      "retain_iq_on_satdump_failure_label": "IQ-Aufzeichnung behalten und Wasserfalldiagramm erstellen, wenn SatDump fehlschlägt",
       "source_with_frequency": "Quelle: {{source}} • {{frequency}} MHz",
       "source_value": "Quelle: {{value}}",
       "mode_value": "Modus: {{value}}",

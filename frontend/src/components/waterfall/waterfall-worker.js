@@ -48,6 +48,7 @@ let leftMarginStateCtx = null;
 let bandscopeZoomScale = 1;
 let targetFPS = 15;
 let fftData = new Array(1024).fill(-120);
+let hasReceivedFftData = false;
 let fftSize = 8192;
 let colorMap = 'cosmic';
 let dbRange = [-120, 30];
@@ -332,6 +333,10 @@ self.onmessage = function(eventMessage) {
             // Preserve ring-buffer history when (re)attaching visible canvases.
             setupCanvas(eventMessage.data.config, { preserveRing: true });
             composeWaterfall();
+            // A stopped stream has no next FFT frame to paint these new canvases.
+            if (hasReceivedFftData) {
+                throttledDrawBandscope(true);
+            }
 
             // Start monitoring when canvas is initialized
             startFftRateMonitoring();
@@ -398,6 +403,7 @@ self.onmessage = function(eventMessage) {
 
             // Store the new FFT data
             fftData = eventMessage.data.fft;
+            hasReceivedFftData = true;
 
             // Update playback timing info if present (for playback mode)
             if (eventMessage.data.recording_datetime) {
@@ -660,7 +666,7 @@ self.onmessage = function(eventMessage) {
 // Store FFT data in history for auto-scaling analysis
 
 // Function to throttle bandscope drawing
-function throttledDrawBandscope() {
+function throttledDrawBandscope(force = false) {
     if (!bandscopeCtx || !bandscopeCanvas || !dBAxisCtx || !dBAxisCanvas) {
         return;
     }
@@ -668,7 +674,7 @@ function throttledDrawBandscope() {
     const now = Date.now();
 
     // Draw on every FFT frame unless internal rate limiting is enabled.
-    const canDrawNow = !bandscopeRateLimitEnabled || now - lastBandscopeDrawTime >= bandscopeDrawInterval;
+    const canDrawNow = force || !bandscopeRateLimitEnabled || now - lastBandscopeDrawTime >= bandscopeDrawInterval;
     if (canDrawNow) {
         // Compute smoothing only when the bandscope is actually redrawn.
         // This avoids expensive per-packet smoothing work when FFT ingest

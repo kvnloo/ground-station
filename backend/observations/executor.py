@@ -1214,6 +1214,8 @@ class ObservationExecutor:
             baseband_format = self._resolve_baseband_format(metadata)
             output_dir = self._build_satdump_output_dir(recording_path, pipeline)
             recording_name = Path(recording_path).name
+            # Saved observations without this setting should preserve failed IQ captures.
+            retain_input_on_failure = task_config.get("retain_iq_on_satdump_failure") is not False
 
             try:
                 task_id = await background_task_manager.start_task(
@@ -1226,6 +1228,7 @@ class ObservationExecutor:
                         "delete_input_after": task_config.get(
                             "delete_after_post_processing", False
                         ),
+                        "retain_input_on_failure": retain_input_on_failure,
                     },
                     name=f"SatDump: {recording_name} ({pipeline})",
                 )

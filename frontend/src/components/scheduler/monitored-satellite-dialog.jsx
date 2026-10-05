@@ -624,6 +624,7 @@ export default function MonitoredSatelliteDialog() {
                         enable_post_processing: false,
                         post_process_pipeline: getDefaultSatdumpPipeline(),
                         delete_after_post_processing: false,
+                        retain_iq_on_satdump_failure: true,
                     },
                 };
                 break;
@@ -2673,6 +2674,22 @@ export default function MonitoredSatelliteDialog() {
                                                                         />
                                                                     }
                                                                     label={t('scheduler_dialogs.shared.delete_iq_after_satdump_label')}
+                                                                />
+                                                                <FormControlLabel
+                                                                    sx={{ ml: 2, display: 'flex' }}
+                                                                    control={
+                                                                        <Checkbox
+                                                                            checked={task.config.retain_iq_on_satdump_failure !== false}
+                                                                            onChange={(e) =>
+                                                                                handleTaskConfigChange(index, 'retain_iq_on_satdump_failure', e.target.checked)
+                                                                            }
+                                                                            disabled={
+                                                                                !task.config.enable_post_processing ||
+                                                                                !task.config.delete_after_post_processing
+                                                                            }
+                                                                        />
+                                                                    }
+                                                                    label={t('scheduler_dialogs.shared.retain_iq_on_satdump_failure_label')}
                                                                 />
                                                             </Box>
                                                         </>

@@ -312,6 +312,7 @@
       "run_satdump_post_processing_label": "IQ 录制后运行 SatDump 后处理",
       "satdump_pipeline_label": "SatDump 处理链",
       "delete_iq_after_satdump_label": "SatDump 完成后删除 IQ 录制文件",
+      "retain_iq_on_satdump_failure_label": "SatDump 失败时保留 IQ 录制并生成瀑布图",
       "source_with_frequency": "来源：{{source}} • {{frequency}} MHz",
       "source_value": "来源：{{value}}",
       "mode_value": "模式：{{value}}",

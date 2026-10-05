@@ -297,6 +297,7 @@
       "run_satdump_post_processing_label": "Run SatDump post-processing after IQ recording",
       "satdump_pipeline_label": "SatDump Pipeline",
       "delete_iq_after_satdump_label": "Delete IQ recording after SatDump completes",
+      "retain_iq_on_satdump_failure_label": "Keep IQ recording and generate waterfall if SatDump fails",
       "source_with_frequency": "Source: {{source}} • {{frequency}} MHz",
       "source_value": "Source: {{value}}",
       "mode_value": "Mode: {{value}}",

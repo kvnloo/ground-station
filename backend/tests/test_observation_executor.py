@@ -241,6 +241,44 @@ def test_requires_observation_bundle_for_retained_or_mixed_artifacts(monkeypatch
     )
 
 
+@pytest.mark.parametrize("retain_setting", [None, False, True])
+@pytest.mark.asyncio
+async def test_satdump_receives_failure_retention_setting(monkeypatch, tmp_path, retain_setting):
+    executor_module = _load_executor_module(monkeypatch)
+    executor = _new_executor(executor_module)
+    recording_base = tmp_path / "capture"
+    executor._iq_recording_info = {
+        "obs-1": {"session-1": {1: {"recording_path": str(recording_base)}}}
+    }
+    task_config = {
+        "enable_post_processing": True,
+        "post_process_pipeline": "meteor_m2-x_lrpt",
+        "delete_after_post_processing": True,
+    }
+    if retain_setting is not None:
+        task_config["retain_iq_on_satdump_failure"] = retain_setting
+    calls = []
+
+    class FakeBackgroundManager:
+        async def start_task(self, **kwargs):
+            calls.append(kwargs)
+            return "satdump-task"
+
+    monkeypatch.setattr(
+        executor_module.runtimestate, "background_task_manager", FakeBackgroundManager()
+    )
+    await executor._start_satdump_postprocessing(
+        "obs-1",
+        "session-1",
+        [{"type": "iq_recording", "config": task_config}],
+        {"sample_rate": 1_000_000},
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["kwargs"]["retain_input_on_failure"] is (retain_setting is not False)
+    assert calls[0]["kwargs"]["delete_input_after"] is True
+
+
 @pytest.mark.asyncio
 async def test_start_observation_fails_fast_when_tracker_start_fails(monkeypatch, tmp_path):
     executor_module = _load_executor_module(monkeypatch)
