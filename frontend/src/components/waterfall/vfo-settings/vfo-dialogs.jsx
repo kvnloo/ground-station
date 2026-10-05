@@ -220,18 +220,6 @@ export const TranscriptionParamsDialog = ({
                             )}
                         </Box>
                     )}
-
-                    <Box sx={{
-                        mt: 2,
-                        display: 'flex',
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                        fontSize: '0.875rem',
-                        color: 'text.secondary',
-                        gap: 0.5
-                    }}>
-                        ✨ Powered by Gemini
-                    </Box>
                 </Box>
             </DialogContent>
         </Dialog>
