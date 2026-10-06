@@ -133,6 +133,20 @@ def test_inventory_deletes_a_decoded_folder(inventory):
     assert not folder.exists()
 
 
+def test_decoded_folder_summary_size_includes_nested_meteor_outputs(inventory):
+    folder = inventory.roots.decoded / "METEOR_M2.satdump_meteor_m2-x_lrpt"
+    _write(folder / "dataset.json", b"{}")
+    _write(folder / "products" / "image.png", b"image data")
+    _write(folder / "products" / "packets.cadu", b"packets")
+    inventory.rebuild()
+
+    summary = inventory.get("decoded_folder:METEOR_M2.satdump_meteor_m2-x_lrpt")
+    detail = inventory.detail(summary["id"])
+
+    assert summary["size"] == 2 + 10 + 7
+    assert detail["size"] == summary["size"]
+
+
 def test_observation_detail_uses_waterfall_previews_and_groups_recording_files(inventory):
     folder = inventory.roots.observations / "NOAA.gsobs"
     recording_root = folder / "recordings"

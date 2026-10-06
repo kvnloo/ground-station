@@ -356,6 +356,9 @@ class LibraryInventory:
             if not folder.is_dir() or ".satdump_" not in folder.name:
                 continue
             stat = folder.stat()
+            # Folder cards and size sorting need the same byte total shown in
+            # the detail view, including files in nested SatDump output folders.
+            total_size = sum(path.stat().st_size for path in folder.rglob("*") if path.is_file())
             dataset = _read_json(folder / "dataset.json")
             folder_parts = folder.name.split(".")
             pipeline = folder_parts[1].replace("satdump_", "") if len(folder_parts) > 1 else None
@@ -367,7 +370,7 @@ class LibraryInventory:
                     "name": folder.stem,
                     "display_name": folder.stem,
                     "foldername": folder.name,
-                    "size": 0,
+                    "size": total_size,
                     "created": _iso(stat.st_ctime),
                     "modified": _iso(stat.st_mtime),
                     "url": f"/decoded/{quote(folder.name)}",
@@ -564,7 +567,7 @@ class LibraryInventory:
         }
 
     def _decoded_folder_detail(self, item: Dict[str, Any], folder: Path) -> Dict[str, Any]:
-        """Expand a decoded folder lazily; listing it never walks this tree."""
+        """Expand a decoded folder's images and metadata when it is opened."""
         images: List[Dict[str, Any]] = []
         total_size = 0
         for path in folder.rglob("*"):
