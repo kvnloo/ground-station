@@ -41,12 +41,10 @@ const DEFAULT_VIEWPORT = { zoom: 18, panX: 0, panY: 0 };
 const OFFSCREEN_TARGET_EDGE_INSET_PX = 6;
 const OFFSCREEN_TARGET_VISIBILITY_PADDING_PX = 4;
 const OFFSCREEN_TARGET_ARROW_LENGTH_PX = 14;
-const OFFSCREEN_TARGET_LABEL_GAP_PX = 18;
+const OFFSCREEN_TARGET_LABEL_GAP_PX = 8;
 const OFFSCREEN_TARGET_STAGGER_PX = 14;
-const OFFSCREEN_TARGET_LABEL_DEPTH_STEP_PX = 9;
 const OFFSCREEN_TARGET_LABEL_SEARCH_STEPS = 7;
 const OFFSCREEN_TARGET_LABEL_SAFE_MARGIN_PX = 2;
-const OFFSCREEN_TARGET_NORTH_LABEL_BIAS_PX = 8;
 const OFFSCREEN_TARGET_NORTH_ARROW_BIAS_PX = 20;
 const LABEL_EDGE_CENTER_OFFSET_PX = 40;
 const MAX_BACKGROUND_RING_RADIUS_PX = 12000;
@@ -69,6 +67,7 @@ const STARFIELD_COLOR_STOPS = [
     { bv: 0.9, rgb: [255, 216, 174] },
     { bv: 1.6, rgb: [255, 176, 124] },
 ];
+const LIGHT_STARFIELD_RGB = [20, 24, 30];
 const ASSET_BASE_URL = import.meta.env.BASE_URL || '/';
 const NORMALIZED_ASSET_BASE_URL = ASSET_BASE_URL.endsWith('/') ? ASSET_BASE_URL : `${ASSET_BASE_URL}/`;
 const STARFIELD_CATALOG_URL = `${NORMALIZED_ASSET_BASE_URL}assets/astronomy/stars-bright-v1.json`;
@@ -185,7 +184,13 @@ const hexToRgba = (hex, alpha) => {
     const b = Number.parseInt(value.slice(4, 6), 16);
     return `rgba(${r},${g},${b},${alpha})`;
 };
-const resolveStarRgba = (bv, alpha) => {
+const resolveStarRgba = (bv, alpha, themeMode) => {
+    // Light canvases use a photographic-negative treatment. Magnitude still
+    // controls opacity and size, making brighter stars appear darker.
+    if (themeMode === 'light') {
+        return `rgba(${LIGHT_STARFIELD_RGB.join(',')},${alpha})`;
+    }
+
     const normalizedBv = Number.isFinite(Number(bv)) ? Number(bv) : 0.65;
     const stops = STARFIELD_COLOR_STOPS;
     let lower = stops[0];
@@ -1366,9 +1371,9 @@ const SolarSystemCanvas = ({
             placedLabelBoxes.push(placement.box);
             ctx.restore();
         };
-        const findOffscreenLabelPlacement = ({
-            baseX,
-            baseY,
+        const findOffscreenIndicatorPlacement = ({
+            edgeX,
+            edgeY,
             ux,
             uy,
             perpX,
@@ -1380,6 +1385,8 @@ const SolarSystemCanvas = ({
         }) => {
             const bgPadX = 4;
             const bgPadY = 2;
+            const boxWidth = textWidth + bgPadX * 2;
+            const boxHeight = textHeight + bgPadY * 2;
             const sideCandidates = [baseSideShift];
 
             for (let step = 1; step <= OFFSCREEN_TARGET_LABEL_SEARCH_STEPS; step += 1) {
@@ -1388,33 +1395,83 @@ const SolarSystemCanvas = ({
                 sideCandidates.push(baseSideShift - delta);
             }
 
-            const minLabelX = LABEL_EDGE_CENTER_OFFSET_PX + textWidth / 2 + OFFSCREEN_TARGET_LABEL_SAFE_MARGIN_PX;
-            const maxLabelX = width - LABEL_EDGE_CENTER_OFFSET_PX - textWidth / 2 - OFFSCREEN_TARGET_LABEL_SAFE_MARGIN_PX;
-            const minLabelY = OFFSCREEN_TARGET_EDGE_INSET_PX + textHeight / 2 + OFFSCREEN_TARGET_LABEL_SAFE_MARGIN_PX;
-            const maxLabelY = height - OFFSCREEN_TARGET_EDGE_INSET_PX - textHeight / 2 - OFFSCREEN_TARGET_LABEL_SAFE_MARGIN_PX;
+            const minLabelX = LABEL_EDGE_CENTER_OFFSET_PX + boxWidth / 2 + OFFSCREEN_TARGET_LABEL_SAFE_MARGIN_PX;
+            const maxLabelX = width - LABEL_EDGE_CENTER_OFFSET_PX - boxWidth / 2 - OFFSCREEN_TARGET_LABEL_SAFE_MARGIN_PX;
+            const minLabelY = OFFSCREEN_TARGET_EDGE_INSET_PX + boxHeight / 2 + OFFSCREEN_TARGET_LABEL_SAFE_MARGIN_PX;
+            const maxLabelY = height - OFFSCREEN_TARGET_EDGE_INSET_PX - boxHeight / 2 - OFFSCREEN_TARGET_LABEL_SAFE_MARGIN_PX;
 
-            // Probe outward from the preferred spot until we find a free label box.
-            for (let depthStep = 0; depthStep <= OFFSCREEN_TARGET_LABEL_SEARCH_STEPS; depthStep += 1) {
-                const inwardDistance = OFFSCREEN_TARGET_LABEL_GAP_PX + depthStep * OFFSCREEN_TARGET_LABEL_DEPTH_STEP_PX;
-                for (const sideShift of sideCandidates) {
-                    const rawX = baseX - ux * inwardDistance + perpX * sideShift;
-                    const rawY = baseY - uy * inwardDistance + perpY * sideShift + verticalBias;
-                    const centerX = clamp(rawX, minLabelX, maxLabelX);
-                    const centerY = clamp(rawY, minLabelY, maxLabelY);
-                    const box = {
-                        x: centerX - textWidth / 2 - bgPadX,
-                        y: centerY - textHeight / 2 - bgPadY,
-                        w: textWidth + bgPadX * 2,
-                        h: textHeight + bgPadY * 2,
-                    };
+            let fallbackPlacement = null;
+            for (const sideShift of sideCandidates) {
+                // Shift the complete arrow-and-label unit along the viewport edge.
+                const tipX = clamp(
+                    edgeX + perpX * sideShift,
+                    OFFSCREEN_TARGET_EDGE_INSET_PX,
+                    width - OFFSCREEN_TARGET_EDGE_INSET_PX,
+                );
+                const tipY = clamp(
+                    edgeY + perpY * sideShift + verticalBias,
+                    OFFSCREEN_TARGET_EDGE_INSET_PX,
+                    height - OFFSCREEN_TARGET_EDGE_INSET_PX,
+                );
+                const baseX = tipX - ux * OFFSCREEN_TARGET_ARROW_LENGTH_PX;
+                const baseY = tipY - uy * OFFSCREEN_TARGET_ARROW_LENGTH_PX;
+                // Account for the label's projected half-size so its nearest
+                // edge maintains a consistent gap from the arrow base.
+                const labelHalfExtent = (
+                    Math.abs(ux) * boxWidth / 2
+                    + Math.abs(uy) * boxHeight / 2
+                );
+                const labelCenterDistance = OFFSCREEN_TARGET_LABEL_GAP_PX + labelHalfExtent;
+                const centerX = baseX - ux * labelCenterDistance;
+                const centerY = baseY - uy * labelCenterDistance;
+                if (
+                    centerX < minLabelX
+                    || centerX > maxLabelX
+                    || centerY < minLabelY
+                    || centerY > maxLabelY
+                ) continue;
 
-                    if (!placedLabelBoxes.some((existing) => boxesOverlap(existing, box))) {
-                        return { centerX, centerY, box };
-                    }
+                const box = {
+                    x: centerX - boxWidth / 2,
+                    y: centerY - boxHeight / 2,
+                    w: boxWidth,
+                    h: boxHeight,
+                };
+                const arrowPadding = 6;
+                const arrowBox = {
+                    x: Math.min(baseX, tipX) - arrowPadding,
+                    y: Math.min(baseY, tipY) - arrowPadding,
+                    w: Math.abs(tipX - baseX) + arrowPadding * 2,
+                    h: Math.abs(tipY - baseY) + arrowPadding * 2,
+                };
+                const combinedBox = {
+                    x: Math.min(box.x, arrowBox.x),
+                    y: Math.min(box.y, arrowBox.y),
+                    w: Math.max(box.x + box.w, arrowBox.x + arrowBox.w)
+                        - Math.min(box.x, arrowBox.x),
+                    h: Math.max(box.y + box.h, arrowBox.y + arrowBox.h)
+                        - Math.min(box.y, arrowBox.y),
+                };
+                const placement = {
+                    tipX,
+                    tipY,
+                    baseX,
+                    baseY,
+                    centerX,
+                    centerY,
+                    box,
+                    combinedBox,
+                };
+                fallbackPlacement ||= placement;
+
+                if (!placedLabelBoxes.some((existing) => boxesOverlap(existing, combinedBox))) {
+                    return placement;
                 }
             }
 
-            return null;
+            // Keeping the arrow attached to its label is more important than
+            // hiding the indicator if every edge position is occupied.
+            return fallbackPlacement;
         };
 
         const drawStarfieldBackground = () => {
@@ -1427,7 +1484,7 @@ const SolarSystemCanvas = ({
             const skyCenterX = width / 2;
             const skyCenterY = height / 2;
             const skyRadiusPx = Math.hypot(width, height) * 0.56;
-            const alphaScale = theme.palette.mode === 'dark' ? 1 : 0.72;
+            const alphaScale = theme.palette.mode === 'dark' ? 1 : 0.86;
 
             ctx.save();
             stars.forEach((star) => {
@@ -1461,13 +1518,13 @@ const SolarSystemCanvas = ({
                 if (magnitude <= 1.5) {
                     ctx.beginPath();
                     ctx.arc(sx, sy, radius + 1.1, 0, Math.PI * 2);
-                    ctx.fillStyle = resolveStarRgba(star?.bv, alpha * 0.18);
+                    ctx.fillStyle = resolveStarRgba(star?.bv, alpha * 0.18, theme.palette.mode);
                     ctx.fill();
                 }
 
                 ctx.beginPath();
                 ctx.arc(sx, sy, radius, 0, Math.PI * 2);
-                ctx.fillStyle = resolveStarRgba(star?.bv, alpha);
+                ctx.fillStyle = resolveStarRgba(star?.bv, alpha, theme.palette.mode);
                 ctx.fill();
             });
             ctx.restore();
@@ -2029,74 +2086,66 @@ const SolarSystemCanvas = ({
             const northArrowBias = uy < 0 ? (-uy) * OFFSCREEN_TARGET_NORTH_ARROW_BIAS_PX : 0;
             const verticalArrowBias = northArrowBias;
 
-            const tipX = clamp(
-                edgePoint.x,
-                OFFSCREEN_TARGET_EDGE_INSET_PX,
-                width - OFFSCREEN_TARGET_EDGE_INSET_PX,
-            );
-            const tipY = clamp(
-                edgePoint.y + verticalArrowBias,
-                OFFSCREEN_TARGET_EDGE_INSET_PX,
-                height - OFFSCREEN_TARGET_EDGE_INSET_PX,
-            );
-            const baseX = tipX - ux * OFFSCREEN_TARGET_ARROW_LENGTH_PX;
-            const baseY = tipY - uy * OFFSCREEN_TARGET_ARROW_LENGTH_PX;
-
-            ctx.save();
-            ctx.strokeStyle = target.color;
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.moveTo(baseX, baseY);
-            ctx.lineTo(tipX, tipY);
-            ctx.stroke();
-            drawArrowHead(ctx, baseX, baseY, tipX, tipY, target.color);
-
             const baseLabel = String(target.label || '').trim();
             const distanceText = formatDistanceLabel(target.distanceKm);
             const text = baseLabel && distanceText
                 ? `${baseLabel} | ${distanceText}`
                 : (baseLabel || distanceText);
-            if (text) {
-                ctx.font = '11px monospace';
-                const textWidth = Math.max(8, ctx.measureText(text).width);
-                const textHeight = 10;
-                // Keep labels away from top overlays based on arrow direction.
-                const northBias = uy < 0 ? (-uy) * OFFSCREEN_TARGET_NORTH_LABEL_BIAS_PX : 0;
-                const verticalLabelBias = northBias;
-                const labelPlacement = findOffscreenLabelPlacement({
-                    baseX,
-                    baseY,
-                    ux,
-                    uy,
-                    perpX,
-                    perpY,
-                    textWidth,
-                    textHeight,
-                    baseSideShift: stagger,
-                    verticalBias: verticalLabelBias,
-                });
-                if (!labelPlacement) {
-                    ctx.restore();
-                    return;
-                }
-                const boxX = labelPlacement.box.x;
-                const boxY = labelPlacement.box.y;
-                const boxWidth = labelPlacement.box.w;
-                const boxHeight = labelPlacement.box.h;
+            if (!text) return;
 
-                ctx.fillStyle = theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.52)' : 'rgba(255,255,255,0.76)';
-                ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
-                ctx.strokeStyle = hexToRgba(target.color, 0.62);
-                ctx.lineWidth = 1;
-                ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
-
-                ctx.fillStyle = target.color;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(text, labelPlacement.centerX, labelPlacement.centerY + 0.5);
-
-                placedLabelBoxes.push(labelPlacement.box);
+            ctx.save();
+            ctx.font = '11px monospace';
+            const textWidth = Math.max(8, ctx.measureText(text).width);
+            const textHeight = 10;
+            const indicatorPlacement = findOffscreenIndicatorPlacement({
+                edgeX: edgePoint.x,
+                edgeY: edgePoint.y,
+                ux,
+                uy,
+                perpX,
+                perpY,
+                textWidth,
+                textHeight,
+                baseSideShift: stagger,
+                verticalBias: verticalArrowBias,
+            });
+            if (!indicatorPlacement) {
+                ctx.restore();
+                return;
             }
+
+            ctx.strokeStyle = target.color;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(indicatorPlacement.baseX, indicatorPlacement.baseY);
+            ctx.lineTo(indicatorPlacement.tipX, indicatorPlacement.tipY);
+            ctx.stroke();
+            drawArrowHead(
+                ctx,
+                indicatorPlacement.baseX,
+                indicatorPlacement.baseY,
+                indicatorPlacement.tipX,
+                indicatorPlacement.tipY,
+                target.color,
+            );
+
+            const boxX = indicatorPlacement.box.x;
+            const boxY = indicatorPlacement.box.y;
+            const boxWidth = indicatorPlacement.box.w;
+            const boxHeight = indicatorPlacement.box.h;
+
+            ctx.fillStyle = theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.52)' : 'rgba(255,255,255,0.76)';
+            ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+            ctx.strokeStyle = hexToRgba(target.color, 0.62);
+            ctx.lineWidth = 1;
+            ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+
+            ctx.fillStyle = target.color;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, indicatorPlacement.centerX, indicatorPlacement.centerY + 0.5);
+
+            placedLabelBoxes.push(indicatorPlacement.combinedBox);
             ctx.restore();
         };
 
