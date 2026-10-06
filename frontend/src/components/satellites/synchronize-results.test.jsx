@@ -28,6 +28,7 @@ vi.mock('./satellite-info-page.jsx', () => ({
         <div role="dialog">
             <span>{satelliteData.name}</span>
             <span>{satelliteData.transmitters[0]?.description}</span>
+            <span>{satelliteData.position?.lat}</span>
             <button type="button" onClick={onClose}>Close details</button>
         </div>
     ),
@@ -81,6 +82,7 @@ describe('orbital sync satellite details links', () => {
                         name: request.data === 12345 ? 'NewSat' : 'ChangedSat',
                     },
                     transmitters: [{ description: `Transmitter ${request.data}` }],
+                    position: { lat: 12.5 },
                 },
             });
         });
@@ -101,6 +103,7 @@ describe('orbital sync satellite details links', () => {
             expect.any(Function),
         ));
         expect(await screen.findByRole('dialog')).toHaveTextContent(`Transmitter ${noradId}`);
+        expect(screen.getByRole('dialog')).toHaveTextContent('12.5');
         expect(screen.queryByRole('button', { name: 'GoneSat' })).not.toBeInTheDocument();
     });
 

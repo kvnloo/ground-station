@@ -51,6 +51,7 @@ const SyncResultsTable = ({
             }
             setSatelliteInfo({
                 ...response.details,
+                position: response.position || null,
                 transmitters: response.transmitters || [],
             });
         } catch (error) {

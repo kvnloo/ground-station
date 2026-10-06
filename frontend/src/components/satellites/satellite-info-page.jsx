@@ -17,8 +17,16 @@
  *
  */
 
-import {Box, Typography, Dialog, DialogTitle, DialogContent, DialogActions, IconButton} from "@mui/material";
-import {betterDateTimes, betterStatusValue, renderCountryFlagsCSV} from "../common/common.jsx";
+import {Accordion, AccordionDetails, AccordionSummary, Box, Chip, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, Stack, Tooltip, Typography} from "@mui/material";
+import {
+    betterStatusValue,
+    getFrequencyBand,
+    humanizeAltitude,
+    humanizeLatitude,
+    humanizeLongitude,
+    humanizeVelocity,
+    renderCountryFlagsCSV,
+} from "../common/common.jsx";
 import Button from "@mui/material/Button";
 import * as React from "react";
 import {useEffect, useState} from "react";
@@ -30,16 +38,24 @@ import {
     deleteSatellite
 } from "./satellite-slice.jsx";
 import {useSocket} from "../common/socket.jsx";
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import SatelliteMapContainer from "./satellite-map.jsx";
 import TransmittersTable from "./transmitters-table.jsx";
+import SatelliteEditDialog from "./satellite-edit-dialog.jsx";
+import TransmittersDialog from "./transmitters-dialog.jsx";
+import { useSatelliteTargetAction } from '../target/use-satellite-target-action.jsx';
 import { useParams, useNavigate } from 'react-router';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CloseIcon from '@mui/icons-material/Close';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import SatelliteAltIcon from '@mui/icons-material/SatelliteAlt';
+import EditIcon from '@mui/icons-material/Edit';
+import SettingsInputAntennaIcon from '@mui/icons-material/SettingsInputAntenna';
 import { toast } from '../../utils/toast-with-timestamp.jsx';
 import { useTranslation } from 'react-i18next';
+import { formatAlternativeSatelliteNames } from '../common/satellite-names.js';
+import { formatDateTime } from '../../utils/date-time.js';
 
 
 // Fix for default markers in react-leaflet
@@ -50,12 +66,118 @@ L.Icon.Default.mergeOptions({
     shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
+const SatelliteInfoField = ({ label, children, inline = false }) => (
+    <Box sx={{
+        minWidth: 0,
+        ...(inline && {
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 46%) minmax(0, 1fr)',
+            alignItems: 'baseline',
+            columnGap: 1,
+        }),
+    }}>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: inline ? 0 : 0.25 }}>
+            {String(label).replace(/[:：]\s*$/, '')}
+        </Typography>
+        <Typography component="div" variant="body2" sx={{ overflowWrap: 'anywhere', textAlign: inline ? 'right' : 'left' }}>
+            {children || '—'}
+        </Typography>
+    </Box>
+);
+
+const getSatelliteBands = (transmitters, lowKey, highKey) => {
+    const bands = new Set();
+    for (const transmitter of transmitters) {
+        for (const frequency of [transmitter[lowKey], transmitter[highKey]]) {
+            const band = getFrequencyBand(frequency);
+            if (band !== 'Unknown') bands.add(band);
+        }
+    }
+    return [...bands].sort();
+};
+
+const SatelliteIdentityHeader = ({ satelliteData, trailingAction = null, inDialog = false }) => {
+    const { t } = useTranslation('satellites');
+    const [imageError, setImageError] = useState(false);
+    const aliases = formatAlternativeSatelliteNames(satelliteData.alternative_name, satelliteData.name_other);
+
+    // A reused dialog can switch satellites without unmounting its header.
+    useEffect(() => {
+        setImageError(false);
+    }, [satelliteData.norad_id]);
+
+    return (
+        <Box
+            sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 2,
+                ...(!inDialog && {
+                    p: { xs: 1.5, sm: 2 },
+                    mb: 2,
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    borderRadius: 2,
+                    bgcolor: 'background.paper',
+                }),
+            }}
+        >
+            <Box
+                sx={{
+                    width: { xs: 64, sm: 80 },
+                    height: { xs: 64, sm: 80 },
+                    flexShrink: 0,
+                    display: 'grid',
+                    placeItems: 'center',
+                    overflow: 'hidden',
+                    borderRadius: 1.5,
+                    bgcolor: 'background.elevated',
+                }}
+            >
+                {imageError ? (
+                    <SatelliteAltIcon sx={{ fontSize: 36, color: 'text.secondary' }} />
+                ) : (
+                    <Box
+                        component="img"
+                        src={'/satimages/full/' + satelliteData.norad_id + '.png'}
+                        alt={satelliteData.name}
+                        onError={() => setImageError(true)}
+                        sx={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                    />
+                )}
+            </Box>
+            <Stack spacing={0.75} sx={{ minWidth: 0, flex: 1 }}>
+                <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap" useFlexGap>
+                    <Typography variant="h5" component="h2" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
+                        {satelliteData.name}
+                    </Typography>
+                    {betterStatusValue(satelliteData.status)}
+                </Stack>
+                <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap" useFlexGap>
+                    <Chip size="small" variant="outlined" label={'NORAD ' + satelliteData.norad_id} />
+                    {aliases && (
+                        <Typography variant="body2" color="text.secondary">
+                            {t('satellite_info.also_known_as', { names: aliases })}
+                        </Typography>
+                    )}
+                </Stack>
+            </Stack>
+            {trailingAction}
+        </Box>
+    );
+};
+
 
 // Core satellite info content component
 const SatelliteInfoContent = ({
     satelliteData,
+    livePosition = null,
     asDialog = false,
     onClose = null,
+    onSetAsTarget = null,
+    isCurrentlyTargeted = false,
+    onEditSatellite = null,
+    onManageTransmitters = null,
     showDeleteButton = true,
     deleteButtonSlot = null
 }) => {
@@ -63,8 +185,9 @@ const SatelliteInfoContent = ({
     const dispatch = useDispatch();
     const {socket} = useSocket();
     const navigate = useNavigate();
-    const [imageError, setImageError] = useState(false);
-    const [satellitePosition, setSatellitePosition] = useState([0, 0]);
+    const [currentTransmitters, setCurrentTransmitters] = useState(() => (
+        Array.isArray(satelliteData?.transmitters) ? satelliteData.transmitters : []
+    ));
     const [deleteSatelliteConfirmOpen, setDeleteSatelliteConfirmOpen] = useState(false);
 
     // Get timezone preference
@@ -74,18 +197,31 @@ const SatelliteInfoContent = ({
     });
 
     useEffect(() => {
-        if (satelliteData) {
-            if (satelliteData.latitude && satelliteData.longitude) {
-                setSatellitePosition([satelliteData.latitude, satelliteData.longitude]);
-            } else {
-                setSatellitePosition([0, 0]);
-            }
-        }
-    }, [satelliteData]);
+        setCurrentTransmitters(Array.isArray(satelliteData?.transmitters) ? satelliteData.transmitters : []);
+    }, [satelliteData?.norad_id, satelliteData?.transmitters]);
 
-    const handleImageError = () => {
-        setImageError(true);
-    };
+    const uplinkBands = getSatelliteBands(currentTransmitters, 'uplink_low', 'uplink_high');
+    const downlinkBands = getSatelliteBands(currentTransmitters, 'downlink_low', 'downlink_high');
+    const hasTleMap = Boolean(satelliteData?.tle1 && satelliteData?.tle2);
+    const isOmmOrbit = String(satelliteData?.orbit_model_kind || satelliteData?.orbit_format || '').toLowerCase() === 'omm';
+    const orbitFormat = satelliteData?.orbit_model_kind || satelliteData?.orbit_format || (hasTleMap ? 'tle' : '');
+    const formatSatelliteDate = (value) => value ? formatDateTime(value, { timezone }) || '—' : '—';
+    const rawOmmData = isOmmOrbit && satelliteData?.orbit_payload
+        ? (typeof satelliteData.orbit_payload === 'string'
+            ? satelliteData.orbit_payload
+            : JSON.stringify(satelliteData.orbit_payload, null, 2))
+        : '';
+    const tleLines = [satelliteData?.tle1, satelliteData?.tle2].filter(Boolean).join('\n');
+    // Earth View can update sky angles while the fetched ground position remains a snapshot.
+    const position = { ...(satelliteData?.position || {}), ...(livePosition || {}) };
+    const hasPosition = ['lat', 'lon', 'alt', 'vel', 'az', 'el'].some((key) => Number.isFinite(position[key]));
+    const hasCatalogDetails = Boolean(
+        satelliteData?.sat_id || satelliteData?.added || satelliteData?.updated
+        || satelliteData?.associated_satellites || satelliteData?.website || satelliteData?.citation
+        || satelliteData?.orbit_source_object_id
+    );
+    const formatAngle = (value) => Number.isFinite(value) ? `${value.toFixed(1)}°` : null;
+    const yesOrNo = (value) => t(`common:${value ? 'yes' : 'no'}`);
 
     const renderTextWithClickableLinks = (text) => {
         if (!text || text === '-') return '-';
@@ -111,7 +247,7 @@ const SatelliteInfoContent = ({
         });
     };
 
-    if (!satelliteData || satelliteData.id === null) {
+    if (satelliteData?.norad_id == null) {
         return (
             <Box sx={{ p: 3, textAlign: 'center' }}>
                 <Typography>{t('satellite_info.transmitters.no_data')}</Typography>
@@ -293,250 +429,321 @@ const SatelliteInfoContent = ({
             {/* Render delete button in custom slot if provided */}
             {deleteButtonSlot && deleteButtonSlot(() => setDeleteSatelliteConfirmOpen(true))}
 
-            {/* Main Content */}
-            <Grid
-                container
-                spacing={3}
-                sx={{
-                    width: '100%',
-                    flexShrink: 0,
-                    mb: 2
-                }}
-            >
-                {/* Row 1: Satellite Info */}
-                <Grid
-                    size={{xs: 12, md: asDialog ? 6 : 12, lg: asDialog ? 6 : 4}}
-                    sx={{
-                        backgroundColor: 'background.paper',
-                        borderRadius: '8px',
-                        padding: 3,
-                        minHeight: '300px',
-                        color: 'text.primary',
-                        boxSizing: 'border-box'
-                    }}
-                >
-                    <Box sx={{display: 'flex', flexDirection: 'column', gap: 2}}>
-                        <Box
-                            sx={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                width: '100%',
-                                padding: '8px 0',
-                                borderBottom: '1px solid',
-                                borderColor: 'border.main',
-                            }}
-                        >
-                            <strong>{t('satellite_info.fields.name')}</strong> <span>{satelliteData['name']}</span>
-                        </Box>
-                        <Box
-                            sx={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                width: '100%',
-                                padding: '8px 0',
-                                borderBottom: '1px solid',
-                                borderColor: 'border.main',
-                            }}
-                        >
-                            <strong>{t('satellite_info.fields.norad_id')}</strong> <span>{satelliteData['norad_id']}</span>
-                        </Box>
-                        <Box
-                            sx={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                width: '100%',
-                                padding: '8px 0',
-                                borderBottom: '1px solid',
-                                borderColor: 'border.main',
-                            }}
-                        >
-                            <strong>{t('satellite_info.fields.status')}</strong>
-                            <span>{betterStatusValue(satelliteData['status'])}</span>
-                        </Box>
-                        <Box
-                            sx={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                width: '100%',
-                                padding: '8px 0',
-                                borderBottom: '1px solid',
-                                borderColor: 'border.main',
-                            }}
-                        >
-                            <strong>{t('satellite_info.fields.countries')}</strong>
-                            <span>{renderCountryFlagsCSV(satelliteData['countries'])}</span>
-                        </Box>
-                        <Box
-                            sx={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                width: '100%',
-                                padding: '8px 0',
-                                borderBottom: '1px solid',
-                                borderColor: 'border.main',
-                            }}
-                        >
-                            <strong>{t('satellite_info.fields.operator')}</strong> <span>{satelliteData['operator'] || '-'}</span>
-                        </Box>
-                        <Box
-                            sx={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                width: '100%',
-                                padding: '8px 0',
-                                borderBottom: '1px solid',
-                                borderColor: 'border.main',
-                            }}
-                        >
-                            <strong>{t('satellite_info.fields.launched')}</strong>
-                            <span>{betterDateTimes(satelliteData['launched'], timezone)}</span>
-                        </Box>
-                        <Box
-                            sx={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                width: '100%',
-                                padding: '8px 0',
-                                borderBottom: '1px solid',
-                                borderColor: 'border.main',
-                            }}
-                        >
-                            <strong>{t('satellite_info.fields.deployed')}</strong>
-                            <span>{betterDateTimes(satelliteData['deployed'], timezone)}</span>
-                        </Box>
-                        <Box
-                            sx={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                width: '100%',
-                                padding: '8px 0',
-                                borderBottom: '1px solid',
-                                borderColor: 'border.main',
-                            }}
-                        >
-                            <strong>{t('satellite_info.fields.decayed')}</strong>
-                            <span>{betterDateTimes(satelliteData['decayed'], timezone)}</span>
-                        </Box>
-                        <Box
-                            sx={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                width: '100%',
-                                padding: '8px 0',
-                                borderBottom: '1px solid',
-                                borderColor: 'border.main',
-                            }}
-                        >
-                            <strong>{t('satellite_info.fields.updated')}</strong>
-                            <span>{betterDateTimes(satelliteData['updated'], timezone)}</span>
-                        </Box>
-                        <Box
-                            sx={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                width: '100%',
-                                padding: '8px 0',
-                                borderBottom: '1px solid',
-                                borderColor: 'border.main',
-                            }}
-                        >
-                            <strong>{t('satellite_info.fields.website')}</strong>
-                            <span>
-                                {renderTextWithClickableLinks(satelliteData['website'])}
-                            </span>
-                        </Box>
-                        <Box
-                            sx={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                width: '100%',
-                                padding: '8px 0',
-                                borderBottom: '1px solid',
-                                borderColor: 'border.main',
-                            }}
-                        >
-                            <strong>{t('satellite_info.fields.citation')}</strong>
-                            <span>
-                                {renderTextWithClickableLinks(satelliteData['citation'])}
-                            </span>
+            {!asDialog && <SatelliteIdentityHeader satelliteData={satelliteData} />}
+
+            {asDialog && (
+                <Stack direction="row" gap={1} flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
+                    <Button variant="contained" color="primary" disabled={isCurrentlyTargeted} onClick={onSetAsTarget}>
+                        {isCurrentlyTargeted
+                            ? t('earthview:satellite_info.currently_targeted')
+                            : t('earthview:satellite_info.set_as_target')}
+                    </Button>
+                    <Button variant="outlined" startIcon={<EditIcon />} onClick={onEditSatellite}>
+                        {t('edit_satellite')}
+                    </Button>
+                    <Button variant="outlined" startIcon={<SettingsInputAntennaIcon />} onClick={onManageTransmitters}>
+                        {t('satellite_info.manage_transmitters')}
+                    </Button>
+                </Stack>
+            )}
+
+            <Grid container spacing={2} sx={{ mb: 2 }}>
+                <Grid size={{ xs: 12, md: asDialog ? 7 : 8 }}>
+                    <Box
+                        sx={{
+                            height: '100%',
+                            overflow: 'hidden',
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: 2,
+                            bgcolor: 'background.paper',
+                        }}
+                    >
+                        <Typography variant="subtitle1" sx={{ px: 2, py: 1.25, fontWeight: 600 }}>
+                            {t('satellite_info.coverage_map')}
+                        </Typography>
+                        <Box sx={{ height: { xs: 290, sm: 340, md: 380 }, bgcolor: 'background.default' }}>
+                            {hasTleMap ? (
+                                <SatelliteMapContainer satelliteData={satelliteData} />
+                            ) : (
+                                <Box sx={{ height: '100%', display: 'grid', placeItems: 'center', p: 3 }}>
+                                    <Typography variant="body2" color="text.secondary" align="center">
+                                        {isOmmOrbit
+                                            ? t('satellite_info.map_omm_unavailable')
+                                            : t('satellite_info.map_unavailable')}
+                                    </Typography>
+                                </Box>
+                            )}
                         </Box>
                     </Box>
                 </Grid>
-
-                {/* Row 1: Image */}
-                <Grid
-                    size={{ xs: 12, md: asDialog ? 6 : 12, lg: asDialog ? 6 : 4 }}
-                    sx={{
-                        textAlign: 'center',
-                        minHeight: '300px',
-                        display: 'flex',
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                        backgroundColor: 'background.paper',
-                        borderRadius: '8px',
-                        boxSizing: 'border-box'
-                    }}
-                >
-                    <Box sx={{textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1}}>
-                        {!imageError ? (
-                            <img
-                                src={`/satimages/full/${satelliteData['norad_id']}.png`}
-                                alt={`Satellite ${satelliteData['norad_id']}`}
-                                onError={handleImageError}
-                                style={{
-                                    maxWidth: '100%',
-                                    height: 'auto',
-                                    borderRadius: '4px',
-                                }}
-                            />
-                        ) : (
-                            <Box
-                                sx={{
-                                    width: '200px',
-                                    height: '150px',
-                                    border: '1px solid',
-                                    borderColor: 'border.main',
-                                    borderRadius: '4px',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    justifyContent: 'center',
-                                    alignItems: 'center',
-                                    backgroundColor: 'background.elevated',
-                                    color: 'text.disabled',
-                                    gap: 1
-                                }}
-                            >
-                                <Typography variant="caption" sx={{ color: 'text.disabled', textAlign: 'center' }}>
-                                    {t('satellite_info.no_image')}
-                                </Typography>
-                            </Box>
-                        )}
-                    </Box>
-                </Grid>
-
-                {/* Row 2: Map */}
-                <Grid
-                    size={{ xs: 12, lg: asDialog ? 12 : 4 }}
-                    sx={{
-                        backgroundColor: 'background.paper',
-                        borderRadius: '8px',
-                        minHeight: '300px',
-                        boxSizing: 'border-box',
-                        overflow: 'hidden'
-                    }}
-                >
-                    <Box sx={{ height: '100%', position: 'relative' }}>
-                        <Box sx={{ height: 'calc(100%)', minHeight: '240px' }}>
-                            <SatelliteMapContainer satelliteData={satelliteData}/>
+                <Grid size={{ xs: 12, md: asDialog ? 5 : 4 }}>
+                    <Box
+                        sx={{
+                            height: '100%',
+                            p: 2,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: 2,
+                            bgcolor: 'background.paper',
+                        }}
+                    >
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1.5 }}>
+                            {t('satellite_info.mission_and_orbit')}
+                        </Typography>
+                        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr', gap: 1 }}>
+                            <SatelliteInfoField inline label={t('satellite_info.fields.operator')}>
+                                {satelliteData.operator}
+                            </SatelliteInfoField>
+                            <SatelliteInfoField inline label={t('satellite_info.fields.countries')}>
+                                {satelliteData.countries && renderCountryFlagsCSV(satelliteData.countries)}
+                            </SatelliteInfoField>
+                            <SatelliteInfoField inline label={t('satellite_info.fields.launched')}>
+                                {formatSatelliteDate(satelliteData.launched)}
+                            </SatelliteInfoField>
+                            {satelliteData.deployed && (
+                                <SatelliteInfoField inline label={t('satellite_info.fields.deployed')}>
+                                    {formatSatelliteDate(satelliteData.deployed)}
+                                </SatelliteInfoField>
+                            )}
+                            {satelliteData.decayed && (
+                                <SatelliteInfoField inline label={t('satellite_info.fields.decayed')}>
+                                    {formatSatelliteDate(satelliteData.decayed)}
+                                </SatelliteInfoField>
+                            )}
+                            <SatelliteInfoField inline label={t('satellite_database.source')}>
+                                {satelliteData.source}
+                            </SatelliteInfoField>
+                            <SatelliteInfoField inline label={t('satellite_info.orbit_format')}>
+                                {orbitFormat && String(orbitFormat).toUpperCase()}
+                            </SatelliteInfoField>
+                            {satelliteData.orbit_central_body && (
+                                <SatelliteInfoField inline label={t('satellite_info.orbit_central_body')}>
+                                    {satelliteData.orbit_central_body}
+                                </SatelliteInfoField>
+                            )}
+                            {typeof satelliteData.is_geostationary === 'boolean' && (
+                                <SatelliteInfoField inline label={t('satellite_info.geostationary')}>
+                                    {yesOrNo(satelliteData.is_geostationary)}
+                                </SatelliteInfoField>
+                            )}
+                            <SatelliteInfoField inline label={t('satellite_database.orbit_epoch_short')}>
+                                {formatSatelliteDate(satelliteData.orbit_epoch)}
+                            </SatelliteInfoField>
+                            <SatelliteInfoField inline label={t('satellite_info.orbit_fetched')}>
+                                {formatSatelliteDate(satelliteData.orbit_fetched_at)}
+                            </SatelliteInfoField>
+                            {satelliteData.orbit_changed_at && (
+                                <SatelliteInfoField inline label={t('satellite_info.orbit_changed')}>
+                                    {formatSatelliteDate(satelliteData.orbit_changed_at)}
+                                </SatelliteInfoField>
+                            )}
+                            {satelliteData.orbit_first_seen_at && (
+                                <SatelliteInfoField inline label={t('satellite_info.orbit_first_seen')}>
+                                    {formatSatelliteDate(satelliteData.orbit_first_seen_at)}
+                                </SatelliteInfoField>
+                            )}
+                            {satelliteData.orbit_source_updated_at && (
+                                <SatelliteInfoField inline label={t('satellite_info.orbit_source_updated')}>
+                                    {formatSatelliteDate(satelliteData.orbit_source_updated_at)}
+                                </SatelliteInfoField>
+                            )}
                         </Box>
                     </Box>
                 </Grid>
             </Grid>
 
-            {/* Transmitters section */}
-            <TransmittersTable
-                satelliteData={satelliteData}
-            />
+            {(hasPosition || hasCatalogDetails) && (
+                <Grid container spacing={2} sx={{ mb: 2 }}>
+                    {hasPosition && (
+                        <Grid size={{ xs: 12, md: hasCatalogDetails ? 6 : 12 }}>
+                            <Box sx={{
+                                p: 1.5,
+                                border: '1px solid',
+                                borderColor: 'divider',
+                                borderRadius: 2,
+                                bgcolor: 'background.paper',
+                            }}>
+                                <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+                                    {t('satellite_info.position_snapshot')}
+                                </Typography>
+                                <Box sx={{ display: 'grid', gap: 0.75 }}>
+                                    {Number.isFinite(position.lat) && (
+                                        <SatelliteInfoField inline label={t('satellite_info.latitude')}>
+                                            {humanizeLatitude(position.lat)}
+                                        </SatelliteInfoField>
+                                    )}
+                                    {Number.isFinite(position.lon) && (
+                                        <SatelliteInfoField inline label={t('satellite_info.longitude')}>
+                                            {humanizeLongitude(position.lon)}
+                                        </SatelliteInfoField>
+                                    )}
+                                    {Number.isFinite(position.alt) && (
+                                        <SatelliteInfoField inline label={t('satellite_info.altitude')}>
+                                            {humanizeAltitude(position.alt, 1, 'km', true)}
+                                        </SatelliteInfoField>
+                                    )}
+                                    {Number.isFinite(position.vel) && (
+                                        <SatelliteInfoField inline label={t('satellite_info.velocity')}>
+                                            {humanizeVelocity(position.vel, 2, 'km/s', true)}
+                                        </SatelliteInfoField>
+                                    )}
+                                    {Number.isFinite(position.az) && (
+                                        <SatelliteInfoField inline label={t('satellite_info.azimuth')}>
+                                            {formatAngle(position.az)}
+                                        </SatelliteInfoField>
+                                    )}
+                                    {Number.isFinite(position.el) && (
+                                        <>
+                                            <SatelliteInfoField inline label={t('satellite_info.elevation')}>
+                                                {formatAngle(position.el)}
+                                            </SatelliteInfoField>
+                                            <SatelliteInfoField inline label={t('satellite_info.visibility')}>
+                                                {position.el > 0
+                                                    ? t('satellite_info.visible')
+                                                    : t('satellite_info.below_horizon')}
+                                            </SatelliteInfoField>
+                                        </>
+                                    )}
+                                </Box>
+                            </Box>
+                        </Grid>
+                    )}
+                    {hasCatalogDetails && (
+                        <Grid size={{ xs: 12, md: hasPosition ? 6 : 12 }}>
+                            <Box sx={{
+                                p: 1.5,
+                                border: '1px solid',
+                                borderColor: 'divider',
+                                borderRadius: 2,
+                                bgcolor: 'background.paper',
+                            }}>
+                                <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+                                    {t('satellite_info.catalog_details')}
+                                </Typography>
+                                <Box sx={{ display: 'grid', gap: 0.75 }}>
+                                    {satelliteData.sat_id && (
+                                        <SatelliteInfoField inline label={t('satellite_database.sat_id')}>
+                                            {satelliteData.sat_id}
+                                        </SatelliteInfoField>
+                                    )}
+                                    {satelliteData.orbit_source_object_id && (
+                                        <SatelliteInfoField inline label={t('satellite_info.orbit_source_object_id')}>
+                                            {satelliteData.orbit_source_object_id}
+                                        </SatelliteInfoField>
+                                    )}
+                                    {satelliteData.added && (
+                                        <SatelliteInfoField inline label={t('satellite_info.added_to_catalog')}>
+                                            {formatSatelliteDate(satelliteData.added)}
+                                        </SatelliteInfoField>
+                                    )}
+                                    {satelliteData.updated && (
+                                        <SatelliteInfoField inline label={t('satellite_info.fields.updated')}>
+                                            {formatSatelliteDate(satelliteData.updated)}
+                                        </SatelliteInfoField>
+                                    )}
+                                    {satelliteData.associated_satellites && (
+                                        <SatelliteInfoField inline label={t('satellite_info.associated_satellites')}>
+                                            {satelliteData.associated_satellites}
+                                        </SatelliteInfoField>
+                                    )}
+                                    {satelliteData.website && (
+                                        <SatelliteInfoField inline label={t('satellite_info.fields.website')}>
+                                            <Tooltip title={satelliteData.website} arrow>
+                                                <Box component="span" sx={{ display: 'block', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                    {renderTextWithClickableLinks(satelliteData.website)}
+                                                </Box>
+                                            </Tooltip>
+                                        </SatelliteInfoField>
+                                    )}
+                                    {satelliteData.citation && (
+                                        <SatelliteInfoField inline label={t('satellite_info.fields.citation')}>
+                                            {renderTextWithClickableLinks(satelliteData.citation)}
+                                        </SatelliteInfoField>
+                                    )}
+                                </Box>
+                            </Box>
+                        </Grid>
+                    )}
+                </Grid>
+            )}
+
+            {!asDialog && tleLines && (
+                <Box sx={{ p: { xs: 1.5, sm: 2 }, mb: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2, bgcolor: 'background.paper' }}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+                        {t('satellite_info.orbit_data')}
+                    </Typography>
+                    <Box component="pre" sx={{ m: 0, p: 1.5, overflowX: 'auto', borderRadius: 1, bgcolor: 'background.default', fontSize: '0.75rem' }}>
+                        {tleLines}
+                    </Box>
+                </Box>
+            )}
+
+            {!asDialog && (
+                <Box
+                    sx={{
+                        p: { xs: 1.5, sm: 2 },
+                        mb: 2,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: 2,
+                        bgcolor: 'background.paper',
+                    }}
+                >
+                    <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap" useFlexGap sx={{ mb: 1 }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                            {t('satellite_info.transmitters.title')}
+                        </Typography>
+                        <Chip size="small" label={t('satellite_info.transmitter_count', { count: currentTransmitters.length })} />
+                    </Stack>
+                    {(uplinkBands.length > 0 || downlinkBands.length > 0) && (
+                        <Stack direction="row" gap={0.75} flexWrap="wrap" useFlexGap sx={{ mb: 1.5 }}>
+                            {uplinkBands.map((band) => (
+                                <Chip
+                                    key={'uplink-' + band}
+                                    size="small"
+                                    variant="outlined"
+                                    color="primary"
+                                    label={t('satellite_info.uplink_band', { band })}
+                                />
+                            ))}
+                            {downlinkBands.map((band) => (
+                                <Chip
+                                    key={'downlink-' + band}
+                                    size="small"
+                                    variant="outlined"
+                                    color="secondary"
+                                    label={t('satellite_info.downlink_band', { band })}
+                                />
+                            ))}
+                        </Stack>
+                    )}
+                    <TransmittersTable
+                        satelliteData={satelliteData}
+                        showTitle={false}
+                        onTransmittersChange={setCurrentTransmitters}
+                    />
+                </Box>
+            )}
+
+            {rawOmmData && (
+                <Accordion
+                    disableGutters
+                    elevation={0}
+                    sx={{ border: '1px solid', borderColor: 'divider', borderRadius: '8px !important', overflow: 'hidden' }}
+                >
+                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                            {t('satellite_info.omm_data')}
+                        </Typography>
+                    </AccordionSummary>
+                    <AccordionDetails sx={{ pt: 0 }}>
+                        <Box component="pre" sx={{ m: 0, p: 1.5, maxHeight: 260, overflow: 'auto', borderRadius: 1, bgcolor: 'background.default', fontSize: '0.75rem' }}>
+                            {rawOmmData}
+                        </Box>
+                    </AccordionDetails>
+                </Accordion>
+            )}
         </Box>
     );
 };
@@ -651,6 +858,7 @@ const SatelliteInfoPage = () => {
                 backgroundColor: 'background.default',
             }}>
             <SatelliteInfoContent
+                key={clickedSatellite.norad_id}
                 satelliteData={clickedSatellite}
                 asDialog={false}
                 showDeleteButton={true}
@@ -661,7 +869,7 @@ const SatelliteInfoPage = () => {
                                 <ArrowBackIcon/>
                             </IconButton>
                             <Typography variant="h6">
-                                {clickedSatellite.name} - {t('satellite_info.title')}
+                                {t('satellite_info.title')}
                             </Typography>
                         </Box>
                         <Button
@@ -679,41 +887,137 @@ const SatelliteInfoPage = () => {
 };
 
 // Dialog wrapper component for use in other parts of the app
-export const SatelliteInfoDialog = ({ open, onClose, satelliteData }) => {
+export const SatelliteInfoDialog = ({ open, onClose, satelliteData, livePosition = null, onUpdated = null, targetGroupId = null }) => {
     const { t } = useTranslation('satellites');
+    const dispatch = useDispatch();
+    const { socket } = useSocket();
+    const [activeEditor, setActiveEditor] = useState(null);
+    const [refreshedSatellite, setRefreshedSatellite] = useState(null);
+    const refreshSequence = React.useRef(0);
+    const noradId = satelliteData?.norad_id;
+    const currentSatellite = refreshedSatellite && refreshedSatellite.noradId === noradId
+        ? refreshedSatellite.data
+        : satelliteData;
+    const {
+        setAsTarget,
+        isCurrentlyTargeted,
+        dialog: targetSelectionDialog,
+    } = useSatelliteTargetAction({ satellite: currentSatellite, groupId: targetGroupId });
+
+    useEffect(() => {
+        // Ignore in-flight refreshes when the information dialog closes or switches satellites.
+        refreshSequence.current += 1;
+        setRefreshedSatellite(null);
+        setActiveEditor(null);
+    }, [open, noradId]);
+
+    const refreshSatellite = async () => {
+        if (!socket || noradId == null) return;
+        const sequence = ++refreshSequence.current;
+        try {
+            const response = await dispatch(fetchSatellite({ socket, noradId: Number(noradId) })).unwrap();
+            if (sequence !== refreshSequence.current) return;
+            if (Number(response?.details?.norad_id) !== Number(noradId)) {
+                throw new Error('Satellite details unavailable');
+            }
+            setRefreshedSatellite({
+                noradId,
+                data: {
+                    ...response.details,
+                    position: response.position || null,
+                    transmitters: response.transmitters || [],
+                },
+            });
+            onUpdated?.(response);
+        } catch (error) {
+            if (sequence === refreshSequence.current) {
+                console.error('Failed to refresh satellite information:', error);
+                toast.error(t('satellite_database.failed_load'));
+            }
+        }
+    };
+
+    const handleEditorClose = () => {
+        setActiveEditor(null);
+    };
+
+    const handleTransmittersClose = () => {
+        setActiveEditor(null);
+        void refreshSatellite();
+    };
 
     return (
-        <Dialog
-            open={open}
-            onClose={onClose}
-            maxWidth="lg"
-            fullWidth
-            PaperProps={{
-                sx: {
-                    minHeight: '80vh',
-                    maxHeight: '90vh'
-                }
-            }}
-        >
-            <DialogTitle>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Typography variant="h6">
-                        {satelliteData?.name} - {t('satellite_info.title')}
-                    </Typography>
-                    <IconButton onClick={onClose} size="small">
-                        <CloseIcon />
-                    </IconButton>
-                </Box>
-            </DialogTitle>
-            <DialogContent dividers sx={{ p: 3 }}>
-                <SatelliteInfoContent
-                    satelliteData={satelliteData}
-                    asDialog={true}
-                    onClose={onClose}
-                    showDeleteButton={false}
-                />
-            </DialogContent>
-        </Dialog>
+        <>
+            <Dialog
+                open={open}
+                onClose={onClose}
+                maxWidth="lg"
+                fullWidth
+                PaperProps={{
+                    sx: {
+                        minHeight: { xs: '100dvh', sm: '80vh' },
+                        maxHeight: { xs: '100dvh', sm: '90vh' },
+                        m: { xs: 0, sm: 2 },
+                        width: { xs: '100%', sm: 'calc(100% - 32px)' },
+                    }
+                }}
+            >
+                <DialogTitle
+                    component="div"
+                    aria-label={currentSatellite?.name || t('satellite_info.title')}
+                    sx={{ px: { xs: 1.5, sm: 2.5 }, py: 1.5 }}
+                >
+                    {currentSatellite?.norad_id != null ? (
+                        <SatelliteIdentityHeader
+                            satelliteData={currentSatellite}
+                            inDialog
+                            trailingAction={(
+                                <IconButton onClick={onClose} size="small" aria-label={t('common:close')} sx={{ alignSelf: 'flex-start' }}>
+                                    <CloseIcon />
+                                </IconButton>
+                            )}
+                        />
+                    ) : (
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Typography variant="h6" component="h2">{t('satellite_info.title')}</Typography>
+                            <IconButton onClick={onClose} size="small" aria-label={t('common:close')}>
+                                <CloseIcon />
+                            </IconButton>
+                        </Box>
+                    )}
+                </DialogTitle>
+                <DialogContent dividers sx={{ p: { xs: 1.5, sm: 2.5 } }}>
+                    <SatelliteInfoContent
+                        key={currentSatellite?.norad_id}
+                        satelliteData={currentSatellite}
+                        livePosition={livePosition}
+                        asDialog={true}
+                        onClose={onClose}
+                        onSetAsTarget={setAsTarget}
+                        isCurrentlyTargeted={isCurrentlyTargeted}
+                        onEditSatellite={() => setActiveEditor('satellite')}
+                        onManageTransmitters={() => setActiveEditor('transmitters')}
+                        showDeleteButton={false}
+                    />
+                </DialogContent>
+            </Dialog>
+            <SatelliteEditDialog
+                open={open && activeEditor === 'satellite'}
+                onClose={handleEditorClose}
+                satelliteData={currentSatellite}
+                onSaved={() => { void refreshSatellite(); }}
+            />
+            <TransmittersDialog
+                open={open && activeEditor === 'transmitters'}
+                onClose={handleTransmittersClose}
+                title={t('satellite_database.edit_transmitters_title', {
+                    name: currentSatellite?.name || noradId || '',
+                })}
+                satelliteData={currentSatellite}
+                variant="paper"
+            />
+            {targetSelectionDialog}
+        </>
     );
 };
 

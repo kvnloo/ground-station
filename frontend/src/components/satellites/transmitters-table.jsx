@@ -115,7 +115,7 @@ const mapTransmittersToRows = (transmitters = []) => (
     }))
 );
 
-const TransmittersTable = ({ satelliteData, inDialog = false, actionsPortalTarget = null }) => {
+const TransmittersTable = ({ satelliteData, inDialog = false, actionsPortalTarget = null, showTitle = true, onTransmittersChange = null }) => {
     const { t } = useTranslation('satellites');
     const [editModalOpen, setEditModalOpen] = useState(false);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -157,6 +157,7 @@ const TransmittersTable = ({ satelliteData, inDialog = false, actionsPortalTarge
                     return;
                 }
                 setRows(mapTransmittersToRows(result));
+                onTransmittersChange?.(result);
                 dispatch(
                     setTargetTransmitters({
                         noradId: transmitterOwner?.satelliteId,
@@ -174,7 +175,7 @@ const TransmittersTable = ({ satelliteData, inDialog = false, actionsPortalTarge
         return () => {
             active = false;
         };
-    }, [dispatch, socket, transmitterOwner?.satelliteId, transmitterOwner?.targetKey]);
+    }, [dispatch, socket, transmitterOwner?.satelliteId, transmitterOwner?.targetKey, onTransmittersChange]);
 
     const handleAddClick = () => {
         setEditingTransmitter(null);
@@ -243,9 +244,11 @@ const TransmittersTable = ({ satelliteData, inDialog = false, actionsPortalTarge
                     })
                 );
                 setRows(mapTransmittersToRows(latestTransmitters));
+                onTransmittersChange?.(latestTransmitters);
             } else {
                 const updatedTransmitters = rows.filter(row => !selected.includes(row.id));
                 setRows(updatedTransmitters);
+                onTransmittersChange?.(updatedTransmitters.map(row => row._original));
             }
             setSelected([]);
 
@@ -269,8 +272,9 @@ const TransmittersTable = ({ satelliteData, inDialog = false, actionsPortalTarge
             return;
         }
         setRows(mapTransmittersToRows(latestTransmitters));
+        onTransmittersChange?.(latestTransmitters);
         setSelected([]);
-    }, []);
+    }, [onTransmittersChange]);
 
     const columns = useMemo(() => [
         {field: "description", headerName: t('satellite_info.transmitters.columns.description'), flex: 1.2, minWidth: 150},
@@ -381,9 +385,11 @@ const TransmittersTable = ({ satelliteData, inDialog = false, actionsPortalTarge
     if (!satelliteData || !transmitterOwner) {
         return (
             <Box sx={{flexShrink: 0}}>
-                <Typography variant="h6" component="h3" sx={{mb: 2}}>
-                    {t('satellite_info.transmitters.title')}
-                </Typography>
+                {showTitle && (
+                    <Typography variant="h6" component="h3" sx={{mb: 2}}>
+                        {t('satellite_info.transmitters.title')}
+                    </Typography>
+                )}
                 <div style={{textAlign: 'center'}}>
                     <span>{t('satellite_info.transmitters.no_data')}</span>
                 </div>
@@ -393,7 +399,7 @@ const TransmittersTable = ({ satelliteData, inDialog = false, actionsPortalTarge
 
     return (
         <Box sx={{flexShrink: 0}}>
-            {!inDialog && (
+            {!inDialog && showTitle && (
                 <Typography variant="h6" component="h3" sx={{mb: 2}}>
                     {t('satellite_info.transmitters.title')}
                 </Typography>

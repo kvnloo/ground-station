@@ -35,6 +35,7 @@ describe('satellite state slices', () => {
         state = satelliteReducer(state, fetchSatellite.pending('request'));
         state = satelliteReducer(state, fetchSatellite.fulfilled({
             details: { id: 'sat-1', name: 'NOAA 19' },
+            position: { lat: 12.5 },
             transmitters: [{ id: 'tx-1', frequency: 137100000 }],
         }, 'request'));
         state = satelliteReducer(state, submitOrEditSatellite.fulfilled([
@@ -49,6 +50,7 @@ describe('satellite state slices', () => {
             satellites: [{ id: 'sat-1', name: 'NOAA 19' }],
             clickedSatellite: {
                 name: 'NOAA 19',
+                position: { lat: 12.5 },
                 transmitters: [{ id: 'tx-1', frequency: 137100000 }],
             },
         });

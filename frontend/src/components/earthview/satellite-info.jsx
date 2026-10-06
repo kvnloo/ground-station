@@ -2,7 +2,8 @@ import React, {useEffect, useState} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 import {useNavigate} from 'react-router';
 import {
-    fetchSatelliteData
+    fetchSatelliteData,
+    setSatelliteData,
 } from './earthview-slice.jsx';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import ExploreIcon from '@mui/icons-material/Explore';
@@ -43,15 +44,13 @@ import {
 } from "../common/common.jsx";
 import Grid from "@mui/material/Grid";
 import {useSocket} from "../common/socket.jsx";
-import { setRotator, setTrackerId, setTrackingStateInBackend } from "../target/target-slice.jsx";
-import { toast } from '../../utils/toast-with-timestamp.jsx';
 import SettingsInputAntennaIcon from "@mui/icons-material/SettingsInputAntenna";
 import PublicIcon from "@mui/icons-material/Public";
 import { useTranslation } from 'react-i18next';
 import { SatelliteInfoDialog } from '../satellites/satellite-info-page.jsx';
 import SatelliteEditDialog from "../satellites/satellite-edit-dialog.jsx";
 import TransmittersDialog from "../satellites/transmitters-dialog.jsx";
-import { useTargetRotatorSelectionDialog } from '../target/use-target-rotator-selection-dialog.jsx';
+import { useSatelliteTargetAction } from '../target/use-satellite-target-action.jsx';
 // ElevationDisplay removed per request; display raw value instead
 
 const EarthViewSatelliteInfoCard = () => {
@@ -72,13 +71,6 @@ const EarthViewSatelliteInfoCard = () => {
         selectedSatGroupId,
         selectedSatellitePositions
     } = useSelector((state) => state.earthViewTrack);
-    const {
-        trackingState,
-        satelliteId: trackingSatelliteId,
-        trackerViews,
-    } = useSelector(state => state.targetSatTrack);
-    const trackerInstances = useSelector((state) => state.trackerInstances?.instances || []);
-    const { requestRotatorForTarget, dialog: rotatorSelectionDialog } = useTargetRotatorSelectionDialog();
     const selectedNoradId = satelliteData?.details?.norad_id || selectedSatelliteId || null;
     const selectedSatelliteName = satelliteData?.details?.name || '';
     const transmitters = satelliteData?.transmitters || [];
@@ -88,6 +80,14 @@ const EarthViewSatelliteInfoCard = () => {
         name: selectedSatelliteName,
         transmitters,
     };
+    const {
+        setAsTarget,
+        isCurrentlyTargeted,
+        dialog: rotatorSelectionDialog,
+    } = useSatelliteTargetAction({
+        satellite: { norad_id: selectedSatelliteId, name: selectedSatelliteName },
+        groupId: selectedSatGroupId,
+    });
 
     // Get timezone preference
     const timezone = useSelector((state) => {
@@ -100,94 +100,6 @@ const EarthViewSatelliteInfoCard = () => {
             dispatch(fetchSatelliteData({socket: socket, noradId: selectedSatelliteId}));
         }
     }, [selectedSatelliteId, dispatch]);
-
-    const handleSetTrackingOnBackend = async () => {
-        const selectedAssignment = await requestRotatorForTarget(satelliteData?.details?.name);
-        if (!selectedAssignment) {
-            return;
-        }
-        const assignmentAction = String(selectedAssignment?.action || 'retarget_current_slot');
-        const isCreateNewSlot = assignmentAction === 'create_new_slot';
-        const trackerId = String(selectedAssignment?.trackerId || '');
-        const rotatorId = String(selectedAssignment?.rotatorId || 'none');
-        const assignmentRigId = String(selectedAssignment?.rigId || 'none');
-        if (!trackerId) {
-            return;
-        }
-
-        const selectedTrackerInstance = trackerInstances.find(
-            (instance) => String(instance?.tracker_id || '') === trackerId
-        );
-        const selectedTrackerView = trackerViews?.[trackerId] || {};
-        const selectedTrackerState = selectedTrackerView?.trackingState || selectedTrackerInstance?.tracking_state || {};
-        const nextRigId = isCreateNewSlot
-            ? assignmentRigId
-            : String(
-                selectedTrackerView?.selectedRadioRig
-                ?? selectedTrackerState?.rig_id
-                ?? assignmentRigId
-                ?? 'none'
-            );
-        const nextRotatorId = isCreateNewSlot ? 'none' : rotatorId;
-        const nextTransmitterId = isCreateNewSlot
-            ? 'none'
-            : String(selectedTrackerState?.transmitter_id || 'none');
-        const nextGroupId = selectedSatGroupId || selectedTrackerState?.group_id || trackingState?.group_id || '';
-
-        dispatch(setTrackerId(trackerId));
-        dispatch(setRotator({ value: nextRotatorId, trackerId }));
-
-        // Always overwrite target identity fields when retargeting to a satellite slot.
-        const normalizedTargetName = String(
-            satelliteData?.details?.name
-            || selectedSatelliteId
-            || ''
-        ).trim();
-        const satelliteTargetPatch = {
-            target_type: 'satellite',
-            target_name: normalizedTargetName || String(selectedSatelliteId || '').trim(),
-            command: null,
-            body_id: null,
-        };
-
-        const newTrackingState = isCreateNewSlot
-            ? {
-                tracker_id: trackerId,
-                norad_id: selectedSatelliteId,
-                group_id: nextGroupId,
-                ...satelliteTargetPatch,
-                rig_id: nextRigId,
-                rotator_id: nextRotatorId,
-                transmitter_id: 'none',
-                rig_state: 'disconnected',
-                rotator_state: 'disconnected',
-                rig_vfo: 'none',
-                vfo1: 'uplink',
-                vfo2: 'downlink',
-            }
-            : {
-                ...selectedTrackerState,
-                tracker_id: trackerId,
-                norad_id: selectedSatelliteId,
-                group_id: nextGroupId,
-                ...satelliteTargetPatch,
-                rig_id: nextRigId,
-                rotator_id: nextRotatorId,
-                transmitter_id: nextTransmitterId,
-            };
-
-        dispatch(setTrackingStateInBackend({socket: socket, data: newTrackingState}))
-            .unwrap()
-            .then((response) => {
-                // Success handling
-            })
-            .catch((error) => {
-                toast.error(
-                    t('satellite_info.failed_tracking')
-                    + `: ${error?.message || error?.error || 'Unknown error'}`
-                );
-            });
-    };
 
     const handleSatelliteSaved = () => {
         if (!selectedNoradId) {
@@ -670,10 +582,10 @@ const EarthViewSatelliteInfoCard = () => {
                     }}>
                         <Box sx={{ display: 'flex', gap: 1 }}>
                             <Button
-                                disabled={!selectedSatelliteId || trackingSatelliteId === selectedSatelliteId}
+                                disabled={!selectedSatelliteId || isCurrentlyTargeted}
                                 variant="contained"
                                 color="primary"
-                                onClick={handleSetTrackingOnBackend}
+                                onClick={setAsTarget}
                                 sx={{
                                     flex: 1,
                                     py: 1.5,
@@ -681,7 +593,7 @@ const EarthViewSatelliteInfoCard = () => {
                                     borderRadius: 2
                                 }}
                             >
-                                {trackingSatelliteId === selectedSatelliteId ? t('satellite_info.currently_targeted') : t('satellite_info.set_as_target')}
+                                {isCurrentlyTargeted ? t('satellite_info.currently_targeted') : t('satellite_info.set_as_target')}
                             </Button>
                             <IconButton
                                 disabled={!selectedSatelliteId}
@@ -711,8 +623,12 @@ const EarthViewSatelliteInfoCard = () => {
                 <SatelliteInfoDialog
                     open={dialogOpen}
                     onClose={() => setDialogOpen(false)}
+                    onUpdated={(updatedSatellite) => dispatch(setSatelliteData(updatedSatellite))}
+                    targetGroupId={selectedSatGroupId}
+                    livePosition={selectedSatellitePositions?.[satelliteData?.details?.norad_id] || null}
                     satelliteData={{
                         ...satelliteData['details'],
+                        position: satelliteData['position'] || null,
                         transmitters: satelliteData['transmitters'] || []
                     }}
                 />

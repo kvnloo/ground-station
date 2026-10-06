@@ -484,7 +484,11 @@ const satellitesSlice = createSlice({
             .addCase(fetchSatellite.fulfilled, (state, action) => {
                 state.status = 'succeeded';
                 state.loading = false;
-                state.clickedSatellite = {...action.payload['details'], transmitters: action.payload['transmitters']};
+                state.clickedSatellite = {
+                    ...action.payload.details,
+                    position: action.payload.position || null,
+                    transmitters: action.payload.transmitters,
+                };
             })
             .addCase(fetchSatellite.rejected, (state, action) => {
                 state.status = 'failed';
