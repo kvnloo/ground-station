@@ -232,26 +232,32 @@ class DeepgramTranscriptionWorker(TranscriptionWorker):
 
     async def _disconnect(self):
         """Disconnect from Deepgram WebSocket API"""
+        # Take ownership before awaiting: another shutdown call may run while
+        # CloseStream is in flight, and must not close the same socket twice.
+        websocket = self.websocket
+        self.websocket = None
+        self.connected = False
+        keepalive_task = self.keepalive_task
+        self.keepalive_task = None
+
         try:
             # Cancel keepalive task
-            if self.keepalive_task and not self.keepalive_task.done():
-                self.keepalive_task.cancel()
+            if keepalive_task and not keepalive_task.done():
+                keepalive_task.cancel()
                 try:
-                    await self.keepalive_task
+                    await keepalive_task
                 except asyncio.CancelledError:
                     pass
 
             # Close WebSocket
-            if self.websocket:
+            if websocket is not None:
                 # Send close message
                 try:
-                    await self.websocket.send(json.dumps({"type": "CloseStream"}))
+                    await websocket.send(json.dumps({"type": "CloseStream"}))
                 except Exception:
                     pass
-                await self.websocket.close()
-                self.websocket = None
+                await websocket.close()
 
-            self.connected = False
         except Exception as e:
             logger.error(f"Error closing Deepgram connection: {e}")
 
@@ -457,14 +463,3 @@ class DeepgramTranscriptionWorker(TranscriptionWorker):
         else:
             # No translation needed
             await super()._emit_transcription(text, language, is_final, confidence)
-
-    def stop(self):
-        """Stop the Deepgram worker"""
-        super().stop()
-
-        # Close WebSocket connection
-        if self.websocket and self.provider_loop:
-            try:
-                asyncio.run_coroutine_threadsafe(self._disconnect(), self.provider_loop)
-            except Exception as e:
-                logger.error(f"Error closing Deepgram WebSocket: {e}")
