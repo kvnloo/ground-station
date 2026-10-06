@@ -55,12 +55,10 @@ export const DecoderStatusDisplay = ({
             }
         }
 
-        // Transcription request stats
-        if (info.transcriptions_sent !== undefined && info.transcriptions_received !== undefined) {
-            const successRate = info.transcriptions_sent > 0
-                ? Math.round((info.transcriptions_received / info.transcriptions_sent) * 100)
-                : 0;
-            statusParts.push(`${info.transcriptions_received}/${info.transcriptions_sent} (${successRate}%)`);
+        // Audio chunks and speech segments have different counts, especially
+        // with short Live API chunks, so their ratio is not a success rate.
+        if (info.transcriptions_received !== undefined) {
+            statusParts.push(`${info.transcriptions_received} CAPTIONS`);
         }
 
         // Show errors if any

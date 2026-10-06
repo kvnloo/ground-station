@@ -603,11 +603,14 @@ class TranscriptionWorker(ABC, threading.Thread):
                 cleanup_future = asyncio.run_coroutine_threadsafe(
                     self._cleanup_provider_resources(), self.provider_loop
                 )
-                cleanup_future.result(timeout=3.0)
+                cleanup_future.result(timeout=getattr(self, "cleanup_timeout_seconds", 3.0))
             except Exception:
                 pass
             self._stop_provider_loop()
 
+        # Provider cleanup may finish a final transcription after stop() was called.
+        self._close_transcription_file()
+        self._send_status_to_ui("closed")
         logger.info(f"{self.provider_name.capitalize()} transcription worker stopped")
 
     def _send_status_to_ui(self, status: str):
@@ -786,6 +789,8 @@ class TranscriptionWorker(ABC, threading.Thread):
         logger.info(f"Stopping {self.provider_name} transcription worker...")
         self.running = False
 
+    def _close_transcription_file(self):
+        """Flush and close the file after provider work has finished."""
         # Close transcription file
         if self.transcription_file:
             try:
@@ -812,9 +817,6 @@ class TranscriptionWorker(ABC, threading.Thread):
                 logger.error(f"Error closing transcription file: {e}")
             finally:
                 self.transcription_file = None
-
-        # Send final status to UI
-        self._send_status_to_ui("closed")
 
     # Abstract methods that must be implemented by subclasses
 

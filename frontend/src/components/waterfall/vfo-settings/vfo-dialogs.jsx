@@ -58,9 +58,6 @@ export const TranscriptionParamsDialog = ({
     const isTranscribing = decoderInfo && decoderInfo.decoder_type === 'transcription';
     const info = decoderInfo?.info || {};
     const isConnected = decoderInfo?.status === 'transcribing';
-    const successRate = info.transcriptions_sent > 0
-        ? Math.round((info.transcriptions_received / info.transcriptions_sent) * 100)
-        : 0;
 
     return (
         <Dialog
@@ -206,7 +203,7 @@ export const TranscriptionParamsDialog = ({
                                 color: 'text.secondary',
                                 display: 'block'
                             }}>
-                                Sent: {info.transcriptions_sent || 0} • Received: {info.transcriptions_received || 0} • Success Rate: {successRate}%
+                                Audio chunks sent: {info.transcriptions_sent || 0} • Captions: {info.transcriptions_received || 0}
                             </Typography>
                             {info.errors > 0 && (
                                 <Typography variant="body2" sx={{
