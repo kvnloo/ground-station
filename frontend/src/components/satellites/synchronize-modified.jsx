@@ -1,12 +1,11 @@
 import React from 'react';
-import { Box, Typography, Paper, Tooltip, Chip } from '@mui/material';
-import UpdateIcon from '@mui/icons-material/Update';
+import { Box, Typography, Paper, Tooltip, Chip, Link, CircularProgress } from '@mui/material';
 import SatelliteAltIcon from '@mui/icons-material/SatelliteAlt';
 import RadioIcon from '@mui/icons-material/Radio';
 import PropTypes from 'prop-types';
 import { useTranslation } from 'react-i18next';
 
-const ModifiedItemsTable = ({ modifiedSatellitesCount, modifiedTransmittersCount, syncState }) => {
+const ModifiedItemsTable = ({ modifiedSatellitesCount, modifiedTransmittersCount, syncState, onOpenSatellite, loadingNoradId }) => {
     const { t } = useTranslation('satellites');
     return (
         <Paper
@@ -164,9 +163,25 @@ const ModifiedItemsTable = ({ modifiedSatellitesCount, modifiedTransmittersCount
                             textAlign: 'left',
                             pl: { xs: 0.5, sm: 0.75, md: 1 },
                         }}>
-                            <Tooltip title={`${sat.name} (${sat.norad_id})`} placement="top">
-                                <span>{sat.name}</span>
-                            </Tooltip>
+                            <Link
+                                component="button"
+                                type="button"
+                                underline="always"
+                                onClick={() => onOpenSatellite(sat)}
+                                aria-busy={loadingNoradId === Number(sat.norad_id)}
+                                sx={{
+                                    display: 'block',
+                                    maxWidth: '100%',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    textAlign: 'left',
+                                    font: 'inherit',
+                                }}
+                            >
+                                {sat.name || sat.norad_id}
+                                {loadingNoradId === Number(sat.norad_id) && <CircularProgress size={10} sx={{ ml: 0.5 }} />}
+                            </Link>
                         </Box>
                         <Box sx={{
                             color: 'text.secondary',
@@ -297,6 +312,8 @@ ModifiedItemsTable.propTypes = {
     modifiedSatellitesCount: PropTypes.number.isRequired,
     modifiedTransmittersCount: PropTypes.number.isRequired,
     syncState: PropTypes.object.isRequired,
+    onOpenSatellite: PropTypes.func.isRequired,
+    loadingNoradId: PropTypes.number,
 };
 
 export default ModifiedItemsTable;

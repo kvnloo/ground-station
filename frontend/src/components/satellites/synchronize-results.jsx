@@ -1,9 +1,15 @@
-import React from 'react';
-import {Box, Typography} from '@mui/material';
+import React, { useEffect, useRef, useState } from 'react';
+import {Box} from '@mui/material';
 import Grid from '@mui/material/Grid';
+import { useDispatch } from 'react-redux';
+import { useTranslation } from 'react-i18next';
 import AddedItemsTable from './synchronize-added.jsx';
 import ModifiedItemsTable from './synchronize-modified.jsx';
 import RemovedItemsTable from './synchronize-removed.jsx';
+import { SatelliteInfoDialog } from './satellite-info-page.jsx';
+import { fetchSatellite } from './satellite-slice.jsx';
+import { useSocket } from '../common/socket.jsx';
+import { toast } from '../../utils/toast-with-timestamp.jsx';
 import PropTypes from 'prop-types';
 
 const SyncResultsTable = ({
@@ -18,6 +24,48 @@ const SyncResultsTable = ({
                               removedTransmittersCount=0,
                               syncState
                           }) => {
+    const dispatch = useDispatch();
+    const { socket } = useSocket();
+    const { t } = useTranslation('satellites');
+    const [satelliteInfo, setSatelliteInfo] = useState(null);
+    const [loadingNoradId, setLoadingNoradId] = useState(null);
+    const latestRequestRef = useRef(0);
+
+    useEffect(() => () => {
+        latestRequestRef.current += 1;
+    }, []);
+
+    const handleOpenSatellite = async (satellite) => {
+        const noradId = Number(satellite?.norad_id);
+        if (!socket || !Number.isInteger(noradId) || noradId <= 0) return;
+
+        // A later click or an unmount must not open an earlier request's dialog.
+        const requestId = ++latestRequestRef.current;
+        setLoadingNoradId(noradId);
+        setSatelliteInfo(null);
+        try {
+            const response = await dispatch(fetchSatellite({ socket, noradId })).unwrap();
+            if (latestRequestRef.current !== requestId) return;
+            if (Number(response?.details?.norad_id) !== noradId) {
+                throw new Error('Satellite details unavailable');
+            }
+            setSatelliteInfo({
+                ...response.details,
+                transmitters: response.transmitters || [],
+            });
+        } catch (error) {
+            if (latestRequestRef.current === requestId) {
+                toast.error(t('satellite_database.failed_load'));
+            }
+        } finally {
+            if (latestRequestRef.current === requestId) setLoadingNoradId(null);
+        }
+    };
+
+    const handleCloseSatellite = () => {
+        latestRequestRef.current += 1;
+        setSatelliteInfo(null);
+    };
 
     //if (!hasNewItems && !hasModifiedItems && !hasRemovedItems) return null;
 
@@ -36,6 +84,8 @@ const SyncResultsTable = ({
                         newSatellitesCount={newSatellitesCount}
                         newTransmittersCount={newTransmittersCount}
                         syncState={syncState}
+                        onOpenSatellite={handleOpenSatellite}
+                        loadingNoradId={loadingNoradId}
                     />
                 </Grid>
 
@@ -44,6 +94,8 @@ const SyncResultsTable = ({
                         modifiedSatellitesCount={modifiedSatellitesCount}
                         modifiedTransmittersCount={modifiedTransmittersCount}
                         syncState={syncState}
+                        onOpenSatellite={handleOpenSatellite}
+                        loadingNoradId={loadingNoradId}
                     />
                 </Grid>
 
@@ -55,6 +107,11 @@ const SyncResultsTable = ({
                     />
                 </Grid>
             </Grid>
+            <SatelliteInfoDialog
+                open={Boolean(satelliteInfo)}
+                onClose={handleCloseSatellite}
+                satelliteData={satelliteInfo}
+            />
         </Box>
     );
 };
