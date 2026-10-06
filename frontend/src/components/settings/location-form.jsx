@@ -38,7 +38,6 @@ import {
 import { alpha } from '@mui/material/styles';
 import Grid from '@mui/material/Grid';
 import ZoomInIcon from '@mui/icons-material/ZoomIn';
-import ZoomOutIcon from '@mui/icons-material/ZoomOut';
 import { useTranslation } from 'react-i18next';
 import { tz } from 'moment-timezone';
 import Map, { Layer, Marker, Source } from 'react-map-gl/maplibre';
@@ -471,15 +470,6 @@ const LocationPage = ({
         if (!liveMap) return;
         liveMap.easeTo({
             zoom: Math.min(MAPLIBRE_LOCATION_MAX_ZOOM, liveMap.getZoom() + 0.25),
-            duration: 120,
-        });
-    };
-
-    const handleZoomOut = () => {
-        const liveMap = mapRef.current?.getMap?.();
-        if (!liveMap) return;
-        liveMap.easeTo({
-            zoom: Math.max(MAPLIBRE_LOCATION_MIN_ZOOM, liveMap.getZoom() - 0.25),
             duration: 120,
         });
     };
@@ -990,9 +980,6 @@ const LocationPage = ({
         >
             <Fab size="small" color="primary" aria-label={t('map_controls.zoom_in', { defaultValue: 'Zoom in' })} onClick={handleZoomIn}>
                 <ZoomInIcon />
-            </Fab>
-            <Fab size="small" color="primary" aria-label={t('map_controls.zoom_out', { defaultValue: 'Zoom out' })} onClick={handleZoomOut}>
-                <ZoomOutIcon />
             </Fab>
         </Box>
     );
