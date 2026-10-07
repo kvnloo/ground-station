@@ -14,7 +14,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import asyncio
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 
 import crud
 from common.pathguard import resolve_sigmf_meta_path
@@ -127,38 +127,12 @@ def _list_other_sdr_clients(sdr_id: str, client_id: str) -> List[str]:
     return sorted(str(sid) for sid in clients if str(sid) != normalized_client_id)
 
 
-def _is_center_frequency_change(sdr_id: str, requested_center_freq: float) -> bool:
-    """
-    Compare requested center frequency against the running SDR process config.
-
-    We intentionally compare with the process-level effective config instead of the
-    caller's cached session config because the caller can be stale while other
-    sessions are actively using and retuning the same SDR.
-    """
-    try:
-        process_info = process_manager.processes.get(sdr_id, {})
-    except Exception:
-        return False
-    if not process_info:
-        return False
-    running_config = process_info.get("config", {}) or {}
-    running_center = running_config.get("center_freq")
-    if running_center is None:
-        # Unknown running center while process is active; treat as potentially disruptive.
-        return True
-    try:
-        return abs(float(running_center) - float(requested_center_freq)) > 1e-6
-    except Exception:
-        # Non-numeric running center cannot be compared safely; require confirmation.
-        return True
-
-
 def _build_sdr_in_use_conflict(
     sdr_id: str,
     other_clients: List[str],
     operation: str,
     message: Optional[str] = None,
-) -> Dict[str, Union[str, int, bool, list]]:
+) -> Dict[str, Any]:
     """Create a structured conflict payload for frontend takeover confirmation."""
     other_sessions: List[Dict[str, Union[str, bool, None]]] = []
     includes_internal_observation = False
@@ -177,7 +151,7 @@ def _build_sdr_in_use_conflict(
 
     default_message = (
         f"SDR '{sdr_id}' is currently in use by {len(other_clients)} other session(s). "
-        f"Confirm takeover to continue."
+        "Choose Watch to view its live waterfall, or Take Over to change it."
     )
     return {
         "error_code": SDR_IN_USE_CONFLICT_CODE,
@@ -187,8 +161,41 @@ def _build_sdr_in_use_conflict(
         "other_sessions": other_sessions,
         "includes_internal_observation": includes_internal_observation,
         "requires_force_takeover": True,
+        "config": _live_sdr_config(sdr_id, process_manager.processes.get(sdr_id, {})),
         "message": message or default_message,
     }
+
+
+def _running_sdr_info(sdr_id: str) -> Optional[Dict[str, Any]]:
+    """Return a live process only; stale process entries must not invite watchers."""
+    process_info = process_manager.processes.get(sdr_id)
+    if process_info and process_manager.is_sdr_process_running(sdr_id):
+        return cast(Dict[str, Any], process_info)
+    return None
+
+
+def _live_sdr_config(sdr_id: str, process_info: Dict[str, Any]) -> Dict[str, Any]:
+    """Expose the worker's effective settings, never a browser's draft settings."""
+    fields = (
+        "center_freq",
+        "sample_rate",
+        "gain",
+        "fft_size",
+        "fft_window",
+        "fft_averaging",
+        "fft_overlap_percent",
+        "fft_overlap_depth",
+        "bias_t",
+        "tuner_agc",
+        "rtl_agc",
+        "soapy_agc",
+        "antenna",
+        "offset_freq",
+        "sdr_settings",
+        "recording_path",
+    )
+    config = process_info.get("config") or {}
+    return {"sdr_id": sdr_id, **{key: config[key] for key in fields if key in config}}
 
 
 async def sdr_command_routing(
@@ -200,7 +207,63 @@ async def sdr_command_routing(
 
         logger.info(f"SDR command received: {cmd}")
 
-        if cmd == "configure-sdr":
+        if cmd == "inspect-sdr":
+            target_sdr_id = str(data.get("selectedSDRId") or "")
+            process_info = _running_sdr_info(target_sdr_id)
+            other_clients = (
+                _list_other_sdr_clients(target_sdr_id, client_id) if process_info else []
+            )
+            reply["success"] = True
+            reply["data"] = {
+                "active": bool(process_info),
+                "config": (_live_sdr_config(target_sdr_id, process_info) if process_info else None),
+                "conflict": (
+                    _build_sdr_in_use_conflict(target_sdr_id, other_clients, "select-sdr")
+                    if other_clients
+                    else None
+                ),
+            }
+
+        elif cmd == "watch-sdr":
+            target_sdr_id = str(data.get("selectedSDRId") or "")
+            process_info = _running_sdr_info(target_sdr_id)
+            if not process_info:
+                reply["error"] = "SDR is no longer streaming"
+            elif client_id in process_info.get("clients", set()):
+                # A controller already owns a worker session. Treating it as a
+                # watcher would make Unwatch remove its active FFT room.
+                reply["error"] = "Stop your SDR stream before watching it"
+            else:
+                live_config = _live_sdr_config(target_sdr_id, process_info)
+                if "center_freq" not in live_config or "sample_rate" not in live_config:
+                    reply["error"] = "Live SDR settings are unavailable"
+                    return reply
+                # Watching only joins the FFT room. It never enters process clients,
+                # creates a session config, or writes to the worker's config queue.
+                await sio.enter_room(client_id, target_sdr_id)
+                if process_manager.processes.get(
+                    target_sdr_id
+                ) is not process_info or not process_manager.is_sdr_process_running(target_sdr_id):
+                    await sio.leave_room(client_id, target_sdr_id)
+                    reply["error"] = "SDR stopped before watching began"
+                    return reply
+                # A reconfiguration may have completed while the room was joined.
+                live_config = _live_sdr_config(target_sdr_id, process_info)
+                process_info.setdefault("watchers", set()).add(client_id)
+                reply["success"] = True
+                reply["data"] = {"config": live_config}
+
+        elif cmd == "unwatch-sdr":
+            target_sdr_id = str(data.get("selectedSDRId") or "")
+            process_info = process_manager.processes.get(target_sdr_id)
+            if not process_info or client_id not in process_info.get("watchers", set()):
+                reply["error"] = "No active watch for this SDR"
+            else:
+                process_info["watchers"].discard(client_id)
+                await sio.leave_room(client_id, target_sdr_id)
+                reply["success"] = True
+
+        elif cmd == "configure-sdr":
             try:
                 # SDR device id
                 sdr_id = data.get("selectedSDRId", None)
@@ -365,22 +428,17 @@ async def sdr_command_routing(
                     sdr_settings=sdr_settings,
                 ).to_dict()
 
-                # Takeover guard:
-                # If this SDR is actively used by other sessions and the requested center
-                # frequency would retune the running process, require explicit override.
+                # A configure request carries the whole browser draft and always writes
+                # to the shared worker. Require consent for every such request.
                 other_clients = _list_other_sdr_clients(str(sdr_id), client_id)
-                if (
-                    other_clients
-                    and not force_takeover
-                    and _is_center_frequency_change(str(sdr_id), center_freq)
-                ):
+                if other_clients and not force_takeover:
                     conflict = _build_sdr_in_use_conflict(
                         str(sdr_id),
                         other_clients,
-                        operation="configure-sdr:center-frequency",
+                        operation="configure-sdr",
                     )
                     logger.warning(
-                        "Blocked SDR configure center-frequency update for session %s on SDR %s "
+                        "Blocked SDR configure update for session %s on SDR %s "
                         "because %d other session(s) are active; force takeover required.",
                         client_id,
                         sdr_id,
@@ -395,19 +453,6 @@ async def sdr_command_routing(
                 # Create or update SDR session via SessionService (also updates tracker)
                 logger.info(f"Creating an SDR session for client {client_id}")
                 await session_service.configure_sdr(client_id, sdr_device, sdr_config)
-
-                # Check if other clients are already connected in the same room (SDR),
-                # if so then send them an update
-                if process_manager.processes.get(sdr_id, None) is not None:
-                    other_clients = [
-                        client
-                        for client in process_manager.processes[sdr_id]["clients"]
-                        if client != client_id
-                    ]
-
-                    # For every other client id, send an update
-                    for other_client in other_clients:
-                        await sio.emit("sdr-config", sdr_config, room=other_client)
 
                 is_running = process_manager.is_sdr_process_running(sdr_id)
                 if is_running:
@@ -557,7 +602,20 @@ async def sdr_command_routing(
                 if sdr_id != "sigmf-playback":
                     raise Exception("Playback seeking is only supported for SigMF Playback SDR")
 
-                if not session_service.session_exists(client_id):
+                other_clients = _list_other_sdr_clients(str(sdr_id), client_id)
+                force_takeover = _coerce_bool(
+                    data.get("forceTakeover", False), False, "forceTakeover", logger
+                )
+                if other_clients and not force_takeover:
+                    conflict = _build_sdr_in_use_conflict(
+                        str(sdr_id), other_clients, operation="seek-playback"
+                    )
+                    reply["error"] = str(conflict["message"])
+                    reply["error_code"] = SDR_IN_USE_CONFLICT_CODE
+                    reply["data"] = conflict
+                    return reply
+
+                if not session_service.session_exists(client_id) and not force_takeover:
                     raise Exception(f"Client with id: {client_id} not registered")
 
                 if not process_manager.is_sdr_process_running(sdr_id):
@@ -1069,6 +1127,9 @@ def register_handlers(registry):
     """Register SDR command handlers with the unified command registry."""
     commands = (
         "configure-sdr",
+        "inspect-sdr",
+        "watch-sdr",
+        "unwatch-sdr",
         "start-streaming",
         "stop-streaming",
         "seek-playback",

@@ -228,6 +228,7 @@ const initialState = {
     errorMessage: null,
     errorDialogOpen: false,
     isStreaming: false,
+    watchingSdrId: null,
     isPlaying: false,
     targetFPS: 10,
     settingsDialogOpen: false,
@@ -352,6 +353,9 @@ export const waterfallSlice = createSlice({
         },
         setIsStreaming: (state, action) => {
             state.isStreaming = action.payload;
+        },
+        setWatchingSdrId: (state, action) => {
+            state.watchingSdrId = action.payload;
         },
         setTargetFPS: (state, action) => {
             state.targetFPS = action.payload;
@@ -499,6 +503,26 @@ export const waterfallSlice = createSlice({
         setSelectedSDRId(state, action) {
             state.selectedSDRId = action.payload;
         },
+        selectSdrForWatch(state, action) {
+            if (state.selectedSDRId !== action.payload) {
+                // Capability choices from a previously selected device must not
+                // appear as available controls for a passively watched SDR.
+                state.gainValues = [];
+                state.sampleRateValues = [];
+                state.fftSizeValues = [];
+                state.fftWindowValues = [];
+                state.antennasList = { tx: [], rx: [] };
+                state.hasBiasT = false;
+                state.hasTunerAgc = false;
+                state.hasRtlAgc = false;
+                state.hasSoapyAgc = false;
+            }
+            state.selectedSDRId = action.payload;
+        },
+        restoreSdrSelection(state, action) {
+            // A canceled selection must restore both its controls and capability lists.
+            Object.assign(state, action.payload);
+        },
         setStartStreamingLoading(state, action) {
             state.startStreamingLoading = action.payload;
         },
@@ -576,22 +600,67 @@ export const waterfallSlice = createSlice({
             // Update all SDR configuration parameters at once
             const config = action.payload;
             if (config.center_freq !== undefined) state.centerFrequency = config.center_freq;
-            if (config.sample_rate !== undefined) state.sampleRate = config.sample_rate;
-            if (config.gain !== undefined) state.gain = config.gain;
-            if (config.fft_size !== undefined) state.fftSize = config.fft_size;
-            if (config.fft_window !== undefined) state.fftWindow = config.fft_window;
+            if (config.sample_rate !== undefined) {
+                state.sampleRate = config.sample_rate;
+                if (!Array.isArray(state.sampleRateValues)) state.sampleRateValues = [];
+                if (!state.sampleRateValues.includes(config.sample_rate)) state.sampleRateValues.push(config.sample_rate);
+            }
+            if (config.gain !== undefined) {
+                state.gain = config.gain;
+                if (!Array.isArray(state.gainValues)) state.gainValues = [];
+                if (!state.gainValues.includes(config.gain)) state.gainValues.push(config.gain);
+            }
+            if (config.fft_size !== undefined) {
+                state.fftSize = config.fft_size;
+                if (!Array.isArray(state.fftSizeValues)) state.fftSizeValues = [];
+                if (!state.fftSizeValues.includes(config.fft_size)) state.fftSizeValues.push(config.fft_size);
+            }
+            if (config.fft_window !== undefined) {
+                state.fftWindow = config.fft_window;
+                if (!Array.isArray(state.fftWindowValues)) state.fftWindowValues = [];
+                if (!state.fftWindowValues.includes(config.fft_window)) state.fftWindowValues.push(config.fft_window);
+            }
             if (config.fft_overlap_percent !== undefined) {
                 state.fftOverlapPercent = config.fft_overlap_percent;
             }
             if (config.fft_overlap_depth !== undefined) {
                 state.fftOverlapDepth = config.fft_overlap_depth;
             }
+            if (config.antenna !== undefined) {
+                state.selectedAntenna = config.antenna;
+                if (config.antenna && Array.isArray(state.antennasList?.rx)
+                    && !state.antennasList.rx.includes(config.antenna)) {
+                    state.antennasList.rx.push(config.antenna);
+                }
+            }
+            if (config.recording_path !== undefined && config.sdr_id === 'sigmf-playback') {
+                state.playbackRecordingPath = config.recording_path;
+            }
+            if (config.offset_freq !== undefined) {
+                state.selectedOffsetValue = config.offset_freq;
+                const presetOffsets = new Set([
+                    -6800000000, 125000000, -10700000000, -9750000000, -1998000000, 120000000,
+                ]);
+                state.selectedOffsetMode = config.offset_freq === 0
+                    ? 'none'
+                    : (presetOffsets.has(Number(config.offset_freq)) ? String(config.offset_freq) : 'manual');
+            }
+            if (config.sdr_settings && config.sdr_id) {
+                if (!state.sdrSettingsById[config.sdr_id]) {
+                    state.sdrSettingsById[config.sdr_id] = { draft: {}, applied: {} };
+                }
+                if (state.watchingSdrId === config.sdr_id || config.force_live) {
+                    state.sdrSettingsById[config.sdr_id].draft = { ...config.sdr_settings };
+                }
+                state.sdrSettingsById[config.sdr_id].applied = { ...config.sdr_settings };
+            }
             if (config.bias_t !== undefined && config.sdr_id) {
                 if (!state.sdrSettingsById[config.sdr_id]) {
                     state.sdrSettingsById[config.sdr_id] = { draft: {}, applied: {} };
                 }
                 state.sdrSettingsById[config.sdr_id].applied.biasT = config.bias_t;
-                if (state.sdrSettingsById[config.sdr_id].draft.biasT === undefined) {
+                if (state.watchingSdrId === config.sdr_id || config.force_live
+                    || state.sdrSettingsById[config.sdr_id].draft.biasT === undefined) {
                     state.sdrSettingsById[config.sdr_id].draft.biasT = config.bias_t;
                 }
             }
@@ -600,7 +669,8 @@ export const waterfallSlice = createSlice({
                     state.sdrSettingsById[config.sdr_id] = { draft: {}, applied: {} };
                 }
                 state.sdrSettingsById[config.sdr_id].applied.tunerAgc = config.tuner_agc;
-                if (state.sdrSettingsById[config.sdr_id].draft.tunerAgc === undefined) {
+                if (state.watchingSdrId === config.sdr_id || config.force_live
+                    || state.sdrSettingsById[config.sdr_id].draft.tunerAgc === undefined) {
                     state.sdrSettingsById[config.sdr_id].draft.tunerAgc = config.tuner_agc;
                 }
             }
@@ -609,7 +679,8 @@ export const waterfallSlice = createSlice({
                     state.sdrSettingsById[config.sdr_id] = { draft: {}, applied: {} };
                 }
                 state.sdrSettingsById[config.sdr_id].applied.rtlAgc = config.rtl_agc;
-                if (state.sdrSettingsById[config.sdr_id].draft.rtlAgc === undefined) {
+                if (state.watchingSdrId === config.sdr_id || config.force_live
+                    || state.sdrSettingsById[config.sdr_id].draft.rtlAgc === undefined) {
                     state.sdrSettingsById[config.sdr_id].draft.rtlAgc = config.rtl_agc;
                 }
             }
@@ -618,7 +689,8 @@ export const waterfallSlice = createSlice({
                     state.sdrSettingsById[config.sdr_id] = { draft: {}, applied: {} };
                 }
                 state.sdrSettingsById[config.sdr_id].applied.soapyAgc = config.soapy_agc;
-                if (state.sdrSettingsById[config.sdr_id].draft.soapyAgc === undefined) {
+                if (state.watchingSdrId === config.sdr_id || config.force_live
+                    || state.sdrSettingsById[config.sdr_id].draft.soapyAgc === undefined) {
                     state.sdrSettingsById[config.sdr_id].draft.soapyAgc = config.soapy_agc;
                 }
             }
@@ -780,6 +852,7 @@ export const {
     setCenterFrequency,
     setErrorMessage,
     setIsStreaming,
+    setWatchingSdrId,
     setTargetFPS,
     setIsPlaying,
     setSettingsDialogOpen,
@@ -802,6 +875,8 @@ export const {
     setWaterFallPositionX,
     setExpandedPanels,
     setSelectedSDRId,
+    selectSdrForWatch,
+    restoreSdrSelection,
     setStartStreamingLoading,
     setErrorDialogOpen,
     setWaterFallCanvasHeight,

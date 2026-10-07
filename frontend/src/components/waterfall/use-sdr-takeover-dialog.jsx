@@ -40,21 +40,21 @@ export const useSdrTakeoverDialog = ({ defaultSdrId } = {}) => {
     const [pendingActionLabel, setPendingActionLabel] = React.useState('');
     const resolverRef = React.useRef(null);
 
-    const closeWithResult = React.useCallback((confirmed) => {
+    const closeWithResult = React.useCallback((choice) => {
         const resolver = resolverRef.current;
         resolverRef.current = null;
         setOpen(false);
         setPendingConflict(null);
         setPendingActionLabel('');
         if (typeof resolver === 'function') {
-            resolver(Boolean(confirmed));
+            resolver(choice);
         }
     }, []);
 
     const requestTakeoverConfirmation = React.useCallback((conflict, actionLabel) => {
         return new Promise((resolve) => {
             if (typeof resolverRef.current === 'function') {
-                resolverRef.current(false);
+                resolverRef.current('cancel');
             }
             resolverRef.current = resolve;
             setPendingConflict(conflict && typeof conflict === 'object' ? conflict : {});
@@ -66,7 +66,7 @@ export const useSdrTakeoverDialog = ({ defaultSdrId } = {}) => {
     React.useEffect(() => {
         return () => {
             if (typeof resolverRef.current === 'function') {
-                resolverRef.current(false);
+                resolverRef.current('cancel');
                 resolverRef.current = null;
             }
         };
@@ -85,13 +85,13 @@ export const useSdrTakeoverDialog = ({ defaultSdrId } = {}) => {
     const dialog = (
         <Dialog
             open={open}
-            onClose={() => closeWithResult(false)}
+            onClose={() => closeWithResult('cancel')}
             maxWidth="sm"
             fullWidth
         >
             <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <WarningAmberIcon color="warning" />
-                Confirm SDR Takeover
+                SDR in use
             </DialogTitle>
             <DialogContent
                 sx={{
@@ -107,7 +107,7 @@ export const useSdrTakeoverDialog = ({ defaultSdrId } = {}) => {
                     {message}
                 </Typography>
                 <Typography variant="body2" sx={{ mb: 2 }}>
-                    You are about to {pendingActionLabel || 'continue'} on this SDR. This may disrupt active sessions.
+                    You are about to {pendingActionLabel || 'continue'} on this SDR. Watching uses its current settings; taking over may disrupt active sessions.
                 </Typography>
                 {pendingConflict?.includes_internal_observation && (
                     <Alert severity="warning" sx={{ mb: 2 }}>
@@ -150,10 +150,13 @@ export const useSdrTakeoverDialog = ({ defaultSdrId } = {}) => {
                 )}
             </DialogContent>
             <DialogActions>
-                <Button onClick={() => closeWithResult(false)}>
+                <Button onClick={() => closeWithResult('cancel')}>
                     Cancel
                 </Button>
-                <Button onClick={() => closeWithResult(true)} color="warning" variant="contained">
+                <Button onClick={() => closeWithResult('watch')} variant="outlined">
+                    Watch
+                </Button>
+                <Button onClick={() => closeWithResult('takeover')} color="warning" variant="contained">
                     Take Over
                 </Button>
             </DialogActions>

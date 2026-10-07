@@ -19,7 +19,7 @@
 
 
 import React, {useImperativeHandle, forwardRef, useCallback, useEffect, useState, useRef, useMemo} from 'react';
-import {Box, Typography, IconButton} from '@mui/material';
+import {Box, Typography, IconButton, Chip} from '@mui/material';
 import {UnfoldMore, UnfoldLess} from '@mui/icons-material';
 import {
     getClassNamesBasedOnGridEditing,
@@ -49,6 +49,7 @@ import {
     setCenterFrequency,
     setErrorMessage,
     setIsStreaming,
+    updateSDRConfig,
     setTargetFPS,
     setSettingsDialogOpen,
     setAutoDBRange,
@@ -62,6 +63,7 @@ import {
     setFFTWindow,
     setExpandedPanels,
     setSelectedSDRId,
+    restoreSdrSelection,
     setSelectedAntenna,
     setSdrSoapyAgc,
     setSelectedTransmitterId,
@@ -108,9 +110,20 @@ import { useTranslation } from 'react-i18next';
 import { selectRunningRigTransmitterOptions } from "../target/transmitter-selectors.js";
 import { fetchPlaybackRecordings } from "../filebrowser/filebrowser-slice.jsx";
 import { useSdrTakeoverDialog } from './use-sdr-takeover-dialog.jsx';
+import { callSdrApi, liveConfigToUpdates, watchSdr } from './sdr-watch.js';
 import { DevRenderProfiler } from './render-profiler.jsx';
 
 const PLAYBACK_DEFAULT_FFT_OVERLAP_PERCENT = 50;
+
+const SDR_SELECTION_FIELDS = [
+    'selectedSDRId', 'centerFrequency', 'sampleRate', 'gain', 'fftSize',
+    'fftWindow', 'fftAveraging', 'fftOverlapPercent', 'fftOverlapDepth',
+    'selectedAntenna', 'selectedOffsetMode', 'selectedOffsetValue',
+    'gainValues', 'sampleRateValues', 'fftSizeValues', 'fftWindowValues',
+    'antennasList', 'sdrCapabilities', 'sdrSettingsById',
+    'hasBiasT', 'hasTunerAgc', 'hasRtlAgc', 'hasSoapyAgc', 'playbackRecordingPath',
+    'selectedPlaybackRecording', 'expandedPanels',
+];
 
 const haveSameNumericEntries = (previous, next) => {
     const previousKeys = Object.keys(previous);
@@ -137,6 +150,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
         selectedOffsetValue,
         errorMessage,
         isStreaming,
+        watchingSdrId,
         targetFPS,
         settingsDialogOpen,
         autoDBRange,
@@ -190,6 +204,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
             selectedOffsetValue: state.waterfall.selectedOffsetValue,
             errorMessage: state.waterfall.errorMessage,
             isStreaming: state.waterfall.isStreaming,
+            watchingSdrId: state.waterfall.watchingSdrId,
             targetFPS: state.waterfall.targetFPS,
             settingsDialogOpen: state.waterfall.settingsDialogOpen,
             autoDBRange: state.waterfall.autoDBRange,
@@ -398,7 +413,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
 
     useEffect(() => {
         // Only run once on mount if selectedSDRId exists and we haven't initialized yet
-        if (selectedSDRId && !hasInitializedRef.current) {
+        if (selectedSDRId && !isStreaming && !hasInitializedRef.current) {
             hasInitializedRef.current = true;
             handleSDRChange({target: {value: selectedSDRId}});
         }
@@ -481,8 +496,26 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
             return { ...(initialResponse || {}), takeoverConfirmed: false };
         }
 
-        const confirmed = await requestTakeoverConfirmation(conflict, actionLabel);
-        if (!confirmed) {
+        const choice = await requestTakeoverConfirmation(conflict, actionLabel);
+        if (choice === 'watch') {
+            // Apply the authoritative worker settings before joining its FFT room.
+            if (conflict.config) dispatch(updateSDRConfig({ ...conflict.config, force_live: true }));
+            const watchResponse = await watchSdr(socket, dispatch, conflict.sdr_id || payload.selectedSDRId);
+            if (!watchResponse?.success) toast.error(watchResponse?.error || 'Could not watch SDR');
+            return {
+                ...(watchResponse || {}),
+                success: false,
+                canceled: true,
+                watched: Boolean(watchResponse?.success),
+                takeoverConfirmed: false,
+            };
+        }
+        if (choice !== 'takeover') {
+            if (conflict.config?.sdr_id === selectedSDRId) {
+                // The attempted control change was optimistic; restore the
+                // worker's actual settings when the user cancels it.
+                dispatch(updateSDRConfig({ ...conflict.config, force_live: true }));
+            }
             return {
                 ...(initialResponse || {}),
                 canceled: true,
@@ -499,7 +532,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
             ...(forcedResponse || { success: false, error: 'No response from server' }),
             takeoverConfirmed: true,
         };
-    }, [emitApiCall, getSdrInUseConflict, requestTakeoverConfirmation]);
+    }, [emitApiCall, getSdrInUseConflict, requestTakeoverConfirmation, dispatch, socket, selectedSDRId]);
 
     // Convert to useCallback to ensure stability of the function reference
     const sendSDRConfigToBackend = useCallback((updates = {}) => {
@@ -509,7 +542,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                 // For sigmfplayback, NEVER send configure without a recording path
                 // This prevents overwriting the session with empty recording_path
                 if (targetSDRId === "sigmf-playback" && !effectivePlaybackRecordingPath) {
-                    return;
+                    return Promise.resolve({ success: false, skipped: true });
                 }
 
                 let SDRSettings = {
@@ -593,7 +626,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
         ]
     );
 
-    const applyLoadedSDRParameters = useCallback((selectedValue, response) => {
+    const applyLoadedSDRParameters = useCallback((selectedValue, response, liveConfig = null) => {
         const caps = response?.capabilities || {};
         const rxGainElements = Array.isArray(caps?.gain_elements?.rx)
             ? caps.gain_elements.rx
@@ -608,9 +641,9 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
 
         const existingSettings = sdrSettingsById?.[selectedValue]?.draft || {};
         const nextSdrSettings = {
-            ...(existingSettings || {}),
+            ...(liveConfig?.sdr_settings || existingSettings || {}),
             gains: {
-                ...(existingSettings?.gains || {}),
+                ...(liveConfig?.sdr_settings?.gains || existingSettings?.gains || {}),
             },
         };
 
@@ -663,9 +696,11 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
 
         dispatch(setSdrSettings({ sdrId: selectedValue, settings: nextSdrSettings }));
         dispatch(setSdrSettingsApplied({ sdrId: selectedValue, settings: nextSdrSettings }));
-        sendSDRConfigToBackend({
+        return sendSDRConfigToBackend({
+            ...liveConfigToUpdates(liveConfig),
             selectedSDRId: selectedValue,
             sdrSettings: nextSdrSettings,
+            forceTakeover: Boolean(liveConfig),
         });
     }, [dispatch, sdrSettingsById, sendSDRConfigToBackend]);
 
@@ -686,9 +721,40 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
     }, [dispatch, socket]);
 
     // Convert to useCallback to ensure stability of the function reference
-    const handleSDRChange = useCallback((event) => {
+    const handleSDRChange = useCallback(async (event) => {
         // Check what was selected
         const selectedValue = typeof event === 'object' ? event.target.value : event;
+
+        const current = store.getState().waterfall;
+        const previous = Object.fromEntries(
+            SDR_SELECTION_FIELDS.map((field) => [field, current[field]])
+        );
+        let takeoverConfig = null;
+        if (selectedValue && selectedValue !== 'none') {
+            const inspection = await callSdrApi(socket, 'inspect-sdr', selectedValue);
+            if (!inspection?.success) {
+                toast.error(inspection?.error || 'Could not inspect SDR');
+                return;
+            }
+            if (inspection.data?.conflict) {
+                const choice = await requestTakeoverConfirmation(
+                    inspection.data.conflict, 'select this SDR'
+                );
+                if (choice === 'cancel') return;
+                if (choice === 'watch') {
+                    // Inspect first, apply its live scale, then subscribe to FFT.
+                    if (inspection.data.config) dispatch(updateSDRConfig({ ...inspection.data.config, force_live: true }));
+                    const watchResponse = await watchSdr(socket, dispatch, selectedValue);
+                    if (!watchResponse?.success) {
+                        dispatch(restoreSdrSelection(previous));
+                        toast.error(watchResponse?.error || 'Could not watch SDR');
+                    }
+                    return;
+                }
+                takeoverConfig = inspection.data.config;
+                if (takeoverConfig) dispatch(updateSDRConfig({ ...takeoverConfig, force_live: true }));
+            }
+        }
 
         dispatch(clearStartStreamValidationErrors());
         dispatch(setSelectedSDRId(selectedValue));
@@ -703,17 +769,23 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
             dispatch(setGain("none"));
 
         } else {
-            loadSDRParameters(selectedValue)
-                .then((response) => {
-                    applyLoadedSDRParameters(selectedValue, response);
-                })
-                .catch(error => {
-                    // Error occurred while getting SDR parameters
-                    dispatch(setErrorMessage(error));
-                    dispatch(setErrorDialogOpen(true));
-                });
+            try {
+                const response = await loadSDRParameters(selectedValue);
+                const configureResponse = await applyLoadedSDRParameters(selectedValue, response, takeoverConfig);
+                if (!configureResponse?.success && !configureResponse?.watched) {
+                    dispatch(restoreSdrSelection(previous));
+                    if (!configureResponse?.canceled) {
+                        toast.error(configureResponse?.error || 'Could not configure SDR');
+                    }
+                }
+            } catch (error) {
+                dispatch(restoreSdrSelection(previous));
+                dispatch(setErrorMessage(error));
+                dispatch(setErrorDialogOpen(true));
+            }
         }
-    }, [dispatch, loadSDRParameters, applyLoadedSDRParameters, getDefaultFFTOverlapPercentForSDR]);
+    }, [dispatch, store, socket, requestTakeoverConfirmation, loadSDRParameters,
+        applyLoadedSDRParameters, getDefaultFFTOverlapPercentForSDR]);
 
     const handleRefreshSDRParameters = useCallback(() => {
         if (!selectedSDRId || selectedSDRId === "none") {
@@ -851,14 +923,15 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
 
     const handleTransmitterChange = useCallback((event) => {
         // If a transmitter was selected, then set the SDR center frequency
-        dispatch(setSelectedTransmitterId(event.target.value));
+        const transmitterId = event.target.value;
 
         // Handle "none" selection - don't update frequency
-        if (event.target.value === "none") {
+        if (transmitterId === "none") {
+            dispatch(setSelectedTransmitterId(transmitterId));
             return;
         }
 
-        const selectedTransmitterMetadata = (runningTransmitters || []).find((t) => t.id === event.target.value);
+        const selectedTransmitterMetadata = (runningTransmitters || []).find((t) => t.id === transmitterId);
         if (!selectedTransmitterMetadata) {
             return;
         }
@@ -872,7 +945,9 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
         const newCenterFrequency = targetFrequency + offsetHz;
 
         dispatch(setCenterFrequency(newCenterFrequency));
-        sendSDRConfigToBackend({centerFrequency: newCenterFrequency});
+        sendSDRConfigToBackend({centerFrequency: newCenterFrequency}).then((response) => {
+            if (response?.success) dispatch(setSelectedTransmitterId(transmitterId));
+        });
     }, [dispatch, runningTransmitters, sampleRate, sendSDRConfigToBackend]);
 
     const handleOffsetModeChange = useCallback((event) => {
@@ -1347,11 +1422,42 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
         }
     };
 
-    const handleRecordingSelect = (recording) => {
+    const handleRecordingSelect = async (recording) => {
         // When a recording is selected, auto-select the sigmfplayback SDR
         const sigmfSdr = sdrs.find(sdr => sdr.type === 'sigmfplayback');
 
         if (sigmfSdr) {
+            const current = store.getState().waterfall;
+            const previous = Object.fromEntries(
+                SDR_SELECTION_FIELDS.map((field) => [field, current[field]])
+            );
+            // Playback cards bypass the SDR selector. Inspect before changing any
+            // local selection so Cancel also cancels this path in full.
+            const inspection = await callSdrApi(socket, 'inspect-sdr', sigmfSdr.id);
+            if (!inspection?.success) {
+                toast.error(inspection?.error || 'Could not inspect SDR');
+                return;
+            }
+            let forceTakeover = false;
+            if (inspection.data?.conflict) {
+                const choice = await requestTakeoverConfirmation(
+                    inspection.data.conflict, 'select this playback recording'
+                );
+                if (choice === 'cancel') return;
+                if (choice === 'watch') {
+                    if (inspection.data.config) {
+                        dispatch(updateSDRConfig({ ...inspection.data.config, force_live: true }));
+                    }
+                    const response = await watchSdr(socket, dispatch, sigmfSdr.id);
+                    if (!response?.success) {
+                        dispatch(restoreSdrSelection(previous));
+                        toast.error(response?.error || 'Could not watch SDR');
+                    }
+                    return;
+                }
+                forceTakeover = true;
+            }
+
             // Set the selected playback recording
             dispatch(setSelectedPlaybackRecording(recording));
 
@@ -1405,6 +1511,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                 offsetFrequency: selectedOffsetValue,
                 fftAveraging: fftAveraging,
                 recordingPath: recordingPath,
+                forceTakeover,
             };
 
             sendSDRConfigToBackend(SDRSettings).then((response) => {
@@ -1414,8 +1521,11 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                         socket,
                         selectedSDRId: sigmfSdr.id,
                     }));
-                } else if (!response?.canceled) {
-                    toast.error(`Failed to configure playback: ${response?.error || 'Unknown error'}`);
+                } else if (!response?.watched) {
+                    dispatch(restoreSdrSelection(previous));
+                    if (!response?.canceled) {
+                        toast.error(`Failed to configure playback: ${response?.error || 'Unknown error'}`);
+                    }
                 }
             });
         } else {
@@ -1526,6 +1636,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                         <Typography variant="subtitle2" sx={{fontWeight: 'bold'}}>
                             {t('title')}
                         </Typography>
+                        {watchingSdrId && <Chip size="small" label="Watching live SDR" color="info" sx={{ml: 1}} />}
                     </Box>
                     <IconButton
                         size="small"
@@ -1545,6 +1656,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     onAccordionChange={handleSdrAccordionChange}
                     gettingSDRParameters={gettingSDRParameters}
                     isStreaming={isStreaming}
+                    watchingSdrId={watchingSdrId}
                     sdrs={sdrs}
                     selectedSDRId={selectedSDRId}
                     onSDRChange={handleSDRChange}
@@ -1605,6 +1717,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     />
                 </DevRenderProfiler>
 
+                <Box sx={{pointerEvents: watchingSdrId ? 'none' : 'auto', opacity: watchingSdrId ? 0.6 : 1}}>
                 <DevRenderProfiler id="VfoAccordion">
                     <VfoAccordion
                     expanded={expandedPanels.includes('vfo')}
@@ -1621,6 +1734,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     onCenterFrequencyChange={handleVfoCenterFrequencyChange}
                     />
                 </DevRenderProfiler>
+                </Box>
 
                 <DevRenderProfiler id="FftAccordion">
                     <FftAccordion
@@ -1647,6 +1761,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     />
                 </DevRenderProfiler>
 
+                <Box sx={{pointerEvents: watchingSdrId ? 'none' : 'auto', opacity: watchingSdrId ? 0.6 : 1}}>
                 <DevRenderProfiler id="RecordingAccordion">
                     <RecordingAccordion
                     expanded={expandedPanels.includes('recording')}
@@ -1673,7 +1788,9 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     centerFrequency={centerFrequency}
                     />
                 </DevRenderProfiler>
+                </Box>
 
+                <Box sx={{pointerEvents: watchingSdrId ? 'none' : 'auto', opacity: watchingSdrId ? 0.6 : 1}}>
                 <DevRenderProfiler id="PlaybackAccordion">
                     <PlaybackAccordion
                     expanded={expandedPanels.includes('playback')}
@@ -1687,6 +1804,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     playbackRemainingSecondsRef={playbackRemainingSecondsRef}
                     />
                 </DevRenderProfiler>
+                </Box>
                 {takeoverDialog}
             </div>
         </>

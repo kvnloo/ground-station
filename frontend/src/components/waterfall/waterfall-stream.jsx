@@ -4,6 +4,8 @@ import { useSocket } from '../common/socket.jsx';
 import { useWaterfallEngine } from './waterfall-engine-provider.jsx';
 import {
     setIsStreaming,
+    setWatchingSdrId,
+    updateSDRConfig,
     setErrorMessage,
     setStartStreamingLoading,
     setFFTdataOverflow,
@@ -14,6 +16,7 @@ import {
 } from './waterfall-slice.jsx';
 import { toast } from '../../utils/toast-with-timestamp.jsx';
 import { useSdrTakeoverDialog } from './use-sdr-takeover-dialog.jsx';
+import { watchSdr, unwatchSdr } from './sdr-watch.js';
 
 const useWaterfallStream = ({
     workerRef,
@@ -43,6 +46,7 @@ const useWaterfallStream = ({
         selectedOffsetValue,
         fftAveraging,
         isStreaming,
+        watchingSdrId,
         gettingSDRParameters,
         autoDBRange,
         playbackRecordingPath,
@@ -94,6 +98,7 @@ const useWaterfallStream = ({
         const handleDisconnect = () => {
             cancelAnimations();
             dispatch(setIsStreaming(false));
+            dispatch(setWatchingSdrId(null));
         };
 
         socket.on('disconnect', handleDisconnect);
@@ -213,8 +218,21 @@ const useWaterfallStream = ({
             return { success: false, response: initialResponse, canceled: false };
         }
 
-        const confirmed = await requestTakeoverConfirmation(conflict, actionLabel);
-        if (!confirmed) {
+        const choice = await requestTakeoverConfirmation(conflict, actionLabel);
+        if (choice === 'watch') {
+            if (conflict.config) dispatch(updateSDRConfig({ ...conflict.config, force_live: true }));
+            const watchResponse = await watchSdr(socket, dispatch, conflict.sdr_id || selectedSDRId);
+            if (!watchResponse?.success) toast.error(watchResponse?.error || 'Could not watch SDR');
+            return {
+                success: false,
+                response: watchResponse,
+                canceled: true,
+                watched: Boolean(watchResponse?.success),
+                takeoverConfirmed: false,
+            };
+        }
+        if (choice !== 'takeover') {
+            if (conflict.config) dispatch(updateSDRConfig({ ...conflict.config, force_live: true }));
             return {
                 success: false,
                 response: initialResponse,
@@ -234,7 +252,7 @@ const useWaterfallStream = ({
             canceled: false,
             takeoverConfirmed: true,
         };
-    }, [emitApiCall, getSdrInUseConflict, requestTakeoverConfirmation]);
+    }, [emitApiCall, getSdrInUseConflict, requestTakeoverConfirmation, dispatch, socket, selectedSDRId]);
 
     const startStreaming = useCallback(async () => {
         if (!isStreaming) {
@@ -328,6 +346,15 @@ const useWaterfallStream = ({
 
     const stopStreaming = useCallback(async () => {
         if (isStreaming) {
+            if (watchingSdrId) {
+                const response = await unwatchSdr(socket, dispatch, watchingSdrId);
+                if (!response?.success) {
+                    toast.error(response?.error || 'Could not stop watching SDR');
+                } else {
+                    cancelAnimations();
+                }
+                return;
+            }
             // If recording is active, stop it first
             if (isRecording) {
                 try {
@@ -360,7 +387,13 @@ const useWaterfallStream = ({
             dispatch(setIsStreaming(false));
             cancelAnimations();
         }
-    }, [isStreaming, isRecording, socket, selectedSDRId, dispatch, cancelAnimations]);
+    }, [isStreaming, watchingSdrId, isRecording, socket, selectedSDRId, dispatch, cancelAnimations]);
+
+    const seekPlayback = useCallback((positionSeconds) => callWithTakeoverConfirmation(
+        'sdr.seek-playback',
+        { selectedSDRId: 'sigmf-playback', positionSeconds },
+        'seek playback'
+    ), [callWithTakeoverConfirmation]);
 
     const playButtonEnabledOrNot = useCallback(() => {
         const isStreamingActive = isStreaming;
@@ -371,7 +404,7 @@ const useWaterfallStream = ({
         return isStreamingActive || noSDRSelected || isLoadingParameters || missingPlaybackRecording;
     }, [isStreaming, selectedSDRId, gettingSDRParameters, playbackRecordingPath]);
 
-    return { startStreaming, stopStreaming, playButtonEnabledOrNot, takeoverDialog };
+    return { startStreaming, stopStreaming, seekPlayback, playButtonEnabledOrNot, takeoverDialog };
 };
 
 export default useWaterfallStream;

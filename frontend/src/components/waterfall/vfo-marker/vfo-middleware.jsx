@@ -188,6 +188,12 @@ const backendSyncMiddleware = (store) => (next) => (action) => {
         return result;
     }
 
+    // Watching receives FFT frames only. A streaming status transition must not
+    // initialize this browser's VFOs or attach consumers to an observation.
+    if (state.waterfall.watchingSdrId) {
+        return result;
+    }
+
     // Drag values are already rendered from a canvas-local ref. Merge the
     // transient update only for this backend call so Redux can stay untouched
     // until the drag ends.

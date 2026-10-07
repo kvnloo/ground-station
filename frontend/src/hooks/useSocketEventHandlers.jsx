@@ -53,6 +53,7 @@ import {
     setRecordingStartTime,
     updateSDRConfig,
     setIsStreaming,
+    setWatchingSdrId,
     setErrorMessage,
     setErrorDialogOpen,
     setStartStreamingLoading,
@@ -447,13 +448,17 @@ export const useSocketEventHandlers = (socket, enabled = true) => {
             store.dispatch(setErrorDialogOpen(true));
             store.dispatch(setStartStreamingLoading(false));
             // Stop streaming on error - waterfall component will handle animation cleanup
-            store.dispatch(setIsStreaming(false));
+            // A failed control request must not detach a passive FFT viewer.
+            if (!store.getState()?.waterfall?.watchingSdrId) {
+                store.dispatch(setIsStreaming(false));
+            }
         });
 
         // SDR configuration updates
         socket.on('sdr-config', (data) => {
             const currentSdrId = store.getState()?.waterfall?.selectedSDRId;
-            store.dispatch(updateSDRConfig({ ...data, sdr_id: currentSdrId }));
+            if (data?.sdr_id && data.sdr_id !== currentSdrId) return;
+            store.dispatch(updateSDRConfig({ ...data, sdr_id: data?.sdr_id || currentSdrId }));
         });
 
         // SDR streaming status
@@ -468,6 +473,7 @@ export const useSocketEventHandlers = (socket, enabled = true) => {
                 store.dispatch(setStartStreamingLoading(false));
             } else if (data['streaming'] === false) {
                 store.dispatch(setIsStreaming(false));
+                store.dispatch(setWatchingSdrId(null));
                 store.dispatch(setStartStreamingLoading(false));
             }
         });

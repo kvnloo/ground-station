@@ -489,6 +489,7 @@ class ProcessLifecycleManager:
                 "fft_window",
                 "fft_overlap_percent",
                 "fft_overlap_depth",
+                "fft_averaging",
                 "sample_rate",
                 "center_freq",
                 "gain",
@@ -510,33 +511,6 @@ class ProcessLifecycleManager:
             # Send configuration to the process
             process_info["config_queue"].put(config)
 
-            # Notify all other clients about the configuration change
-            other_clients = [c for c in process_info["clients"] if c != client_id]
-            if other_clients:
-                # Build the full config dict to send to clients
-                notification_config = {
-                    "center_freq": config.get("center_freq", sdr_config.get("center_freq")),
-                    "sample_rate": config.get("sample_rate", sdr_config.get("sample_rate")),
-                    "gain": config.get("gain", sdr_config.get("gain")),
-                    "fft_size": config.get("fft_size", sdr_config.get("fft_size")),
-                    "fft_window": config.get("fft_window", sdr_config.get("fft_window")),
-                    "fft_overlap_percent": config.get(
-                        "fft_overlap_percent", sdr_config.get("fft_overlap_percent", 0)
-                    ),
-                    "fft_overlap_depth": config.get(
-                        "fft_overlap_depth", sdr_config.get("fft_overlap_depth", 16)
-                    ),
-                    "bias_t": config.get("bias_t", sdr_config.get("bias_t", False)),
-                    "tuner_agc": config.get("tuner_agc", sdr_config.get("tuner_agc", False)),
-                    "rtl_agc": config.get("rtl_agc", sdr_config.get("rtl_agc", False)),
-                    "fft_averaging": sdr_config.get("fft_averaging", 1),
-                }
-                for other_client in other_clients:
-                    await self.sio.emit("sdr-config", notification_config, room=other_client)
-                self.logger.info(
-                    f"Notified {len(other_clients)} client(s) about SDR config change for {sdr_id}"
-                )
-
             try:
                 await self._wait_until_sdr_ready(sdr_id, process_info, ready_future)
             except Exception:
@@ -544,6 +518,13 @@ class ProcessLifecycleManager:
                 # healthy process if the requested reconfiguration was rejected.
                 await self.stop_sdr_process(sdr_id, client_id)
                 raise
+
+            # Publish the accepted worker config to controllers and passive
+            # watchers only after the new samples have proved it is usable.
+            process_info["config"] = {**process_info.get("config", {}), **config}
+            await self.sio.emit(
+                "sdr-config", {"sdr_id": sdr_id, **process_info["config"]}, room=sdr_id
+            )
 
             # Add this client to the room (skip for internal observation sessions)
             if not VFOManager.is_internal_session(client_id):
@@ -853,6 +834,16 @@ class ProcessLifecycleManager:
                 self.transcription_manager.stop_transcription(sdr_id, session_id)
 
         # Clean up
+        # Passive watchers do not keep the worker alive. Notify and detach them
+        # before a later session can reuse this SDR room.
+        if process_info.get("watchers"):
+            await self.sio.emit("sdr-status", {"streaming": False}, room=sdr_id)
+            for watcher_id in list(process_info["watchers"]):
+                try:
+                    await self.sio.leave_room(watcher_id, sdr_id)
+                except Exception:
+                    self.logger.debug("Watcher %s already left SDR room %s", watcher_id, sdr_id)
+            process_info["watchers"].clear()
         if sdr_id in self.processes:
             del self.processes[sdr_id]
 
@@ -967,6 +958,9 @@ class ProcessLifecycleManager:
 
         # Store the full effective config for future comparisons.
         process_info["config"] = effective_config
+        # All controllers and passive watchers must render the same live scale.
+        if self.sio is not None:
+            await self.sio.emit("sdr-config", {"sdr_id": sdr_id, **effective_config}, room=sdr_id)
 
         self.logger.info(f"Sent configuration update to SDR process for device {sdr_id}")
 

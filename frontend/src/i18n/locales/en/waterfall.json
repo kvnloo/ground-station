@@ -4,6 +4,7 @@
   "toolbar": {
     "start_streaming": "Start streaming",
     "stop_streaming": "Stop streaming",
+    "stop_watching": "Stop watching",
     "toggle_left_panel": "Toggle left side panel",
     "toggle_right_panel": "Toggle right side panel",
     "toggle_auto_db": "Toggle automatic dB range",

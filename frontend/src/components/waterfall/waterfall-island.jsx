@@ -190,6 +190,7 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
         errorMessage,
         errorDialogOpen,
         isStreaming,
+        watchingSdrId,
         isConnected,
         targetFPS,
         isPlaying,
@@ -234,6 +235,7 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
             errorMessage: state.waterfall.errorMessage,
             errorDialogOpen: state.waterfall.errorDialogOpen,
             isStreaming: state.waterfall.isStreaming,
+            watchingSdrId: state.waterfall.watchingSdrId,
             isConnected: state.waterfall.isConnected,
             targetFPS: state.waterfall.targetFPS,
             isPlaying: state.waterfall.isPlaying,
@@ -860,7 +862,7 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
         }
     }, [waterfallRendererMode, bandscopeRateLimitEnabled]);
 
-    const { startStreaming, stopStreaming, playButtonEnabledOrNot, takeoverDialog } = useWaterfallStream({
+    const { startStreaming, stopStreaming, seekPlayback, playButtonEnabledOrNot, takeoverDialog } = useWaterfallStream({
         workerRef,
         waterfallRendererMode,
         onDomTileFftData: handleDomTileFftData,
@@ -1132,26 +1134,17 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
 
         setPendingPlaybackSeekSeconds(clampedSeconds);
 
-        socket.emit(
-            "api.call",
-            {
-                cmd: "sdr.seek-playback",
-                data: {
-                    selectedSDRId: 'sigmf-playback',
-                    positionSeconds: clampedSeconds,
-                },
-            },
-            (response) => {
-                if (!response?.success) {
-                    setPendingPlaybackSeekSeconds(null);
-                    toast.error(
-                        response?.error || response?.message || 'Failed to seek playback'
-                    );
+        seekPlayback(clampedSeconds).then((result) => {
+            if (!result?.success) {
+                setPendingPlaybackSeekSeconds(null);
+                if (!result?.canceled) {
+                    toast.error(result?.response?.error || 'Failed to seek playback');
                 }
             }
-        );
+        });
     }, [
         isPlaybackStreaming,
+        seekPlayback,
         playbackHasDuration,
         playbackLiveElapsedSeconds,
         playbackTimeline.totalSeconds,
@@ -1185,6 +1178,7 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
                     startStreaming={startStreaming}
                     stopStreaming={stopStreaming}
                     isStreaming={isStreaming}
+                    watchingSdrId={watchingSdrId}
                     showLeftSideWaterFallAccessories={showLeftSideWaterFallAccessories}
                     toggleLeftSideWaterFallAccessories={toggleLeftSide}
                     showRightSideWaterFallAccessories={showRightSideWaterFallAccessories}
