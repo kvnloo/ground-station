@@ -13,7 +13,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { configureStore } from '@reduxjs/toolkit';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import '../../i18n/config.js';
 import { SatelliteInfoDialog } from './satellite-info-page.jsx';
 
@@ -28,6 +28,15 @@ vi.mock('../target/use-satellite-target-action.jsx', () => ({
         setAsTarget: testSetAsTarget,
         isCurrentlyTargeted: false,
         dialog: null,
+    }),
+}));
+vi.mock('../../hooks/liveorbit.js', () => ({
+    useSatelliteLiveOrbit: (satelliteData) => ({
+        available: Boolean((satelliteData?.tle1 && satelliteData?.tle2) || satelliteData?.orbit_payload),
+        source: satelliteData?.orbit_payload ? 'omm' : (satelliteData?.tle1 && satelliteData?.tle2 ? 'tle' : null),
+        position: satelliteData?.position || null,
+        generatedAt: '2026-01-02T00:00:00.000Z',
+        error: '',
     }),
 }));
 vi.mock('./satellite-map.jsx', () => ({ default: () => <div data-testid="satellite-map" /> }));
@@ -47,7 +56,12 @@ vi.mock('./transmitters-dialog.jsx', () => ({
 }));
 
 const renderDialog = (satelliteData, onUpdated = undefined, open = true, livePosition = null) => {
-    const store = configureStore({ reducer: { preferences: () => ({ preferences: [] }) } });
+    const store = configureStore({
+        reducer: {
+            preferences: () => ({ preferences: [] }),
+            targetSatTrack: () => ({ nextPassesHours: 24 }),
+        },
+    });
     render(
         <Provider store={store}>
             <MemoryRouter>
@@ -64,12 +78,17 @@ const renderDialog = (satelliteData, onUpdated = undefined, open = true, livePos
 };
 
 describe('SatelliteInfoDialog overview', () => {
+    beforeEach(() => {
+        testSocket.emit.mockReset();
+        testSetAsTarget.mockReset();
+    });
+
     it('mounts safely before a satellite is selected', () => {
         renderDialog(null, undefined, false);
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
 
-    it('shows the map and main details without transmitter or orbital elements sections', () => {
+    it('shows the tracking-style map beside mission details without expanded page sections', () => {
         renderDialog({
             norad_id: 12345,
             name: 'TestSat',
@@ -104,12 +123,17 @@ describe('SatelliteInfoDialog overview', () => {
         expect(screen.getByRole('dialog', { name: 'TestSat' })).toBeInTheDocument();
         expect(screen.getByText('Also known as Earlier name')).toBeInTheDocument();
         expect(screen.getByTestId('satellite-map')).toBeInTheDocument();
+        expect(screen.getByText('Coverage map')).toBeInTheDocument();
+        expect(screen.getByText('Mission and orbit')).toBeInTheDocument();
+        const mapColumn = screen.getByTestId('satellite-coverage-map-region').closest('.MuiGrid-root');
+        const missionColumn = screen.getByText('Mission and orbit').closest('.MuiGrid-root');
+        expect(mapColumn?.parentElement).toBe(missionColumn?.parentElement);
         expect(screen.queryByRole('heading', { name: 'Transmitters' })).not.toBeInTheDocument();
         expect(screen.queryByText('2 transmitters')).not.toBeInTheDocument();
         expect(screen.getByText('CompanionSat')).toBeInTheDocument();
         expect(screen.getByText('Central body')).toBeInTheDocument();
         expect(screen.getByText('Geostationary')).toBeInTheDocument();
-        expect(screen.queryByText('Frequency violator')).not.toBeInTheDocument();
+        expect(screen.getByText('Frequency violator')).toBeInTheDocument();
         expect(screen.queryByText('Image reference')).not.toBeInTheDocument();
         expect(screen.getByText('orbit-record-12345')).toBeInTheDocument();
         expect(screen.getByText('0.0000° N')).toBeInTheDocument();
@@ -129,7 +153,7 @@ describe('SatelliteInfoDialog overview', () => {
         expect(screen.getByRole('button', { name: 'Manage transmitters' })).toBeInTheDocument();
     });
 
-    it('explains why an OMM-only satellite has no map and still shows its orbit data', () => {
+    it('shows an OMM-backed map without the raw OMM data section', () => {
         renderDialog({
             norad_id: 123456,
             name: 'OMM Satellite',
@@ -138,11 +162,11 @@ describe('SatelliteInfoDialog overview', () => {
             transmitters: [],
         });
 
-        expect(screen.queryByTestId('satellite-map')).not.toBeInTheDocument();
-        expect(screen.getByText(/This OMM orbit has no TLE lines/)).toBeInTheDocument();
+        expect(screen.getByTestId('satellite-map')).toBeInTheDocument();
+        expect(screen.queryByText(/No usable Earth orbit/)).not.toBeInTheDocument();
         expect(screen.queryByText('0 transmitters')).not.toBeInTheDocument();
-        fireEvent.click(screen.getByRole('button', { name: 'OMM data' }));
-        expect(screen.getByText(/MEAN_MOTION/)).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'OMM data' })).not.toBeInTheDocument();
+        expect(screen.queryByText(/MEAN_MOTION/)).not.toBeInTheDocument();
     });
 
     it('uses live Earth View angles when they are available', () => {
@@ -159,6 +183,54 @@ describe('SatelliteInfoDialog overview', () => {
         expect(screen.queryByText('Below horizon')).not.toBeInTheDocument();
     });
 
+    it('loads future passes locally for the dialog satellite and can force a refresh', async () => {
+        testSocket.emit.mockImplementation((_event, request, callback) => {
+            if (request.cmd !== 'fetch-next-passes') return;
+            callback({
+                success: true,
+                data: [{
+                    id: 1,
+                    norad_id: 12345,
+                    event_start: '2026-10-08T10:00:00Z',
+                    event_end: '2026-10-08T10:10:00Z',
+                    peak_altitude: 42.5,
+                    start_azimuth: 125.2,
+                    end_azimuth: 278.8,
+                    distance_at_peak: 512.4,
+                    is_geostationary: false,
+                    is_geosynchronous: false,
+                }],
+            });
+        });
+
+        renderDialog({norad_id: 12345, name: 'TestSat', transmitters: []});
+
+        expect(await screen.findByRole('table', {name: 'Future satellite passes'})).toBeInTheDocument();
+        expect(screen.getByText('Future passes · next 24 hours')).toBeInTheDocument();
+        expect(screen.getByText('10:00')).toBeInTheDocument();
+        expect(screen.getByText('42.5°')).toBeInTheDocument();
+        expect(screen.getByText('125° → 279°')).toBeInTheDocument();
+        expect(screen.getByText('512 km')).toBeInTheDocument();
+        expect(testSocket.emit).toHaveBeenCalledWith('api.call', {
+            cmd: 'fetch-next-passes',
+            data: {
+                norad_id: 12345,
+                hours: 24,
+                force_recalculate: false,
+            },
+        }, expect.any(Function));
+
+        fireEvent.click(screen.getByRole('button', {name: 'Refresh passes'}));
+        await waitFor(() => expect(testSocket.emit).toHaveBeenCalledWith('api.call', {
+            cmd: 'fetch-next-passes',
+            data: {
+                norad_id: 12345,
+                hours: 24,
+                force_recalculate: true,
+            },
+        }, expect.any(Function)));
+    });
+
     it('opens each shared editor and refreshes the information after changes', async () => {
         const satellite = {
             norad_id: 12345,
@@ -166,6 +238,10 @@ describe('SatelliteInfoDialog overview', () => {
             transmitters: [{ downlink_low: 435000000 }],
         };
         testSocket.emit.mockImplementation((_event, request, callback) => {
+            if (request.cmd === 'fetch-next-passes') {
+                callback({success: true, data: []});
+                return;
+            }
             expect(request.cmd).toBe('get-satellite');
             callback({
                 success: true,
@@ -188,7 +264,7 @@ describe('SatelliteInfoDialog overview', () => {
         expect(screen.getByRole('dialog', { name: 'After edit', hidden: true })).toBeInTheDocument();
         expect(screen.getByRole('dialog', { name: 'Transmitter manager', hidden: true })).toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: 'Close transmitter manager', hidden: true }));
-        await waitFor(() => expect(testSocket.emit).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(testSocket.emit).toHaveBeenCalledTimes(3));
         expect(onUpdated).toHaveBeenCalledTimes(2);
         expect(screen.queryByRole('heading', { name: 'Transmitters' })).not.toBeInTheDocument();
     });

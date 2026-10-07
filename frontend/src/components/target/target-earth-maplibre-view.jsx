@@ -67,6 +67,7 @@ import {
     satellitePositionSelector,
 } from './state-selectors.jsx';
 import {pickTooltipDirection} from '../common/tooltip-orientation.js';
+import {fitMapLibreCoverage} from '../common/coveragefit.js';
 
 const storageMapZoomValueKey = 'target-map-zoom-level';
 const TARGET_SLOT_ID_PATTERN = /^target-(\d+)$/;
@@ -77,19 +78,6 @@ const MAPLIBRE_TOOLTIP_DIRECTIONS = Object.freeze(['bottom', 'right', 'left', 't
 const MAPLIBRE_TOOLTIP_DEFAULT_SIZE = Object.freeze({width: 180, height: 32});
 const MAPLIBRE_TOOLTIP_ANCHOR_DISTANCE = 15;
 const MAPLIBRE_TOOLTIP_EDGE_PADDING = 10;
-const MAPLIBRE_LOCK_ON_COVERAGE_PADDING = Object.freeze({
-    top: 40,
-    right: 40,
-    bottom: 72,
-    left: 40,
-});
-const MAPLIBRE_GLOBE_LOCK_ON_COVERAGE_PADDING = Object.freeze({
-    top: 48,
-    right: 48,
-    bottom: 88,
-    left: 48,
-});
-const MAPLIBRE_MAX_FIT_BOUNDS_LAT = 85.051129;
 const MAPLIBRE_GLOBE_TRACK_DURATION_MS = 280;
 // MapLibre anchor names describe the popup side attached to the point, so they are inverse
 // of Leaflet's tooltip direction names (which describe where the tooltip appears).
@@ -217,10 +205,6 @@ function normalizeCoveragePoint(point) {
     if (lat < -90 || lat > 90) return null;
 
     return [lat, lon];
-}
-
-function clampFitBoundsLatitude(latitude) {
-    return Math.max(-MAPLIBRE_MAX_FIT_BOUNDS_LAT, Math.min(MAPLIBRE_MAX_FIT_BOUNDS_LAT, latitude));
 }
 
 function buildGridGeoJSON(latInterval = 15, lngInterval = 15) {
@@ -552,29 +536,12 @@ const TargetEarthMapLibreView = ({projection = MAPLIBRE_PROJECTION_MERCATOR, eff
             ? satelliteCoverage.map(normalizeCoveragePoint).filter(Boolean)
             : [];
 
-        if (showSatelliteCoverage && coveragePoints.length > 1) {
-            // Keep fitBounds away from the mercator poles to avoid invalid camera math.
-            const fitBoundsPoints = coveragePoints
-                .map(([coverageLat, coverageLon]) => [Number(coverageLon), clampFitBoundsLatitude(Number(coverageLat))])
-                .filter(([coverageLon, coverageLat]) => Number.isFinite(coverageLon) && Number.isFinite(coverageLat));
-
-            if (fitBoundsPoints.length > 1) {
-                try {
-                    const bounds = fitBoundsPoints.reduce(
-                        (acc, point) => acc.extend(point),
-                        new maplibregl.LngLatBounds(fitBoundsPoints[0], fitBoundsPoints[0])
-                    );
-                    // Keep a visible margin around the footprint and bias it slightly upward.
-                    liveMap.fitBounds(bounds, {
-                        padding: isGlobeProjection ? MAPLIBRE_GLOBE_LOCK_ON_COVERAGE_PADDING : MAPLIBRE_LOCK_ON_COVERAGE_PADDING,
-                        animate: isGlobeProjection,
-                        duration: isGlobeProjection ? MAPLIBRE_GLOBE_TRACK_DURATION_MS : 0,
-                    });
-                    return;
-                } catch (error) {
-                    console.warn('Target map coverage fitBounds skipped due to invalid bounds:', error);
-                }
-            }
+        if (showSatelliteCoverage && coveragePoints.length > 1 && fitMapLibreCoverage({
+            map: liveMap,
+            coverage: coveragePoints,
+            globe: isGlobeProjection,
+        })) {
+            return;
         }
 
         if (isGlobeProjection) {

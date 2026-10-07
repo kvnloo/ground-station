@@ -31,7 +31,7 @@ import Button from "@mui/material/Button";
 import * as React from "react";
 import {useEffect, useState} from "react";
 import Grid from "@mui/material/Grid";
-import {useDispatch, useSelector} from "react-redux";
+import {shallowEqual, useDispatch, useSelector} from "react-redux";
 import {
     setClickedSatellite,
     fetchSatellite,
@@ -56,6 +56,8 @@ import { toast } from '../../utils/toast-with-timestamp.jsx';
 import { useTranslation } from 'react-i18next';
 import { formatAlternativeSatelliteNames } from '../common/satellite-names.js';
 import { formatDateTime } from '../../utils/date-time.js';
+import { useSatelliteLiveOrbit } from '../../hooks/liveorbit.js';
+import SatellitePasses from './satellite-passes.jsx';
 
 
 // Fix for default markers in react-leaflet
@@ -179,7 +181,8 @@ const SatelliteInfoContent = ({
     onEditSatellite = null,
     onManageTransmitters = null,
     showDeleteButton = true,
-    deleteButtonSlot = null
+    deleteButtonSlot = null,
+    liveUpdatesEnabled = true,
 }) => {
     const { t } = useTranslation('satellites');
     const dispatch = useDispatch();
@@ -195,6 +198,15 @@ const SatelliteInfoContent = ({
         const tzPref = state.preferences?.preferences?.find(p => p.name === 'timezone');
         return tzPref?.value || 'UTC';
     });
+    const observerLocation = useSelector((state) => ({
+        lat: state.location?.location?.lat,
+        lon: state.location?.location?.lon,
+        alt: state.location?.altitude ?? state.location?.location?.alt ?? 0,
+    }), shallowEqual);
+    const liveOrbit = useSatelliteLiveOrbit(satelliteData, {
+        enabled: liveUpdatesEnabled,
+        observer: observerLocation,
+    });
 
     useEffect(() => {
         setCurrentTransmitters(Array.isArray(satelliteData?.transmitters) ? satelliteData.transmitters : []);
@@ -202,9 +214,9 @@ const SatelliteInfoContent = ({
 
     const uplinkBands = getSatelliteBands(currentTransmitters, 'uplink_low', 'uplink_high');
     const downlinkBands = getSatelliteBands(currentTransmitters, 'downlink_low', 'downlink_high');
-    const hasTleMap = Boolean(satelliteData?.tle1 && satelliteData?.tle2);
+    const hasTleElements = Boolean(satelliteData?.tle1 && satelliteData?.tle2);
     const isOmmOrbit = String(satelliteData?.orbit_model_kind || satelliteData?.orbit_format || '').toLowerCase() === 'omm';
-    const orbitFormat = satelliteData?.orbit_model_kind || satelliteData?.orbit_format || (hasTleMap ? 'tle' : '');
+    const orbitFormat = satelliteData?.orbit_model_kind || satelliteData?.orbit_format || (hasTleElements ? 'tle' : '');
     const formatSatelliteDate = (value) => value ? formatDateTime(value, { timezone }) || '—' : '—';
     const rawOmmData = isOmmOrbit && satelliteData?.orbit_payload
         ? (typeof satelliteData.orbit_payload === 'string'
@@ -212,13 +224,19 @@ const SatelliteInfoContent = ({
             : JSON.stringify(satelliteData.orbit_payload, null, 2))
         : '';
     const tleLines = [satelliteData?.tle1, satelliteData?.tle2].filter(Boolean).join('\n');
-    // Earth View can update sky angles while the fetched ground position remains a snapshot.
-    const position = { ...(satelliteData?.position || {}), ...(livePosition || {}) };
+    // The shared propagator owns ground position and station-relative angles.
+    // Earth View may provide a newer observer angle sample, so apply it last.
+    const position = {
+        ...(satelliteData?.position || {}),
+        ...(liveOrbit.position || {}),
+        ...(livePosition || {}),
+    };
     const hasPosition = ['lat', 'lon', 'alt', 'vel', 'az', 'el'].some((key) => Number.isFinite(position[key]));
     const hasCatalogDetails = Boolean(
         satelliteData?.sat_id || satelliteData?.added || satelliteData?.updated
         || satelliteData?.associated_satellites || satelliteData?.website || satelliteData?.citation
         || satelliteData?.orbit_source_object_id
+        || typeof satelliteData?.is_frequency_violator === 'boolean'
     );
     const formatAngle = (value) => Number.isFinite(value) ? `${value.toFixed(1)}°` : null;
     const yesOrNo = (value) => t(`common:${value ? 'yes' : 'no'}`);
@@ -432,16 +450,39 @@ const SatelliteInfoContent = ({
             {!asDialog && <SatelliteIdentityHeader satelliteData={satelliteData} />}
 
             {asDialog && (
-                <Stack direction="row" gap={1} flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
-                    <Button variant="contained" color="primary" disabled={isCurrentlyTargeted} onClick={onSetAsTarget}>
+                <Stack
+                    direction={{ xs: 'column', sm: 'row' }}
+                    gap={1}
+                    flexWrap={{ sm: 'wrap' }}
+                    useFlexGap
+                    sx={{ mb: 2, alignItems: { xs: 'stretch', sm: 'center' } }}
+                >
+                    <Button
+                        variant="contained"
+                        color="primary"
+                        startIcon={<SatelliteAltIcon />}
+                        disabled={isCurrentlyTargeted}
+                        onClick={onSetAsTarget}
+                        sx={{ width: { xs: '100%', sm: 'auto' } }}
+                    >
                         {isCurrentlyTargeted
                             ? t('earthview:satellite_info.currently_targeted')
                             : t('earthview:satellite_info.set_as_target')}
                     </Button>
-                    <Button variant="outlined" startIcon={<EditIcon />} onClick={onEditSatellite}>
+                    <Button
+                        variant="outlined"
+                        startIcon={<EditIcon />}
+                        onClick={onEditSatellite}
+                        sx={{ width: { xs: '100%', sm: 'auto' } }}
+                    >
                         {t('edit_satellite')}
                     </Button>
-                    <Button variant="outlined" startIcon={<SettingsInputAntennaIcon />} onClick={onManageTransmitters}>
+                    <Button
+                        variant="outlined"
+                        startIcon={<SettingsInputAntennaIcon />}
+                        onClick={onManageTransmitters}
+                        sx={{ width: { xs: '100%', sm: 'auto' } }}
+                    >
                         {t('satellite_info.manage_transmitters')}
                     </Button>
                 </Stack>
@@ -459,18 +500,31 @@ const SatelliteInfoContent = ({
                             bgcolor: 'background.paper',
                         }}
                     >
-                        <Typography variant="subtitle1" sx={{ px: 2, py: 1.25, fontWeight: 600 }}>
+                        <Typography
+                            variant="subtitle1"
+                            sx={{
+                                px: 1,
+                                py: 0.5,
+                                display: 'flex',
+                                alignItems: 'center',
+                                boxSizing: 'border-box',
+                                fontWeight: 600,
+                            }}
+                        >
                             {t('satellite_info.coverage_map')}
                         </Typography>
-                        <Box sx={{ height: { xs: 290, sm: 340, md: 380 }, bgcolor: 'background.default' }}>
-                            {hasTleMap ? (
-                                <SatelliteMapContainer satelliteData={satelliteData} />
+                        <Box
+                            data-testid="satellite-coverage-map-region"
+                            sx={{ height: { xs: 290, sm: 340, md: 380 }, bgcolor: 'background.default' }}
+                        >
+                            {liveOrbit.available ? (
+                                <SatelliteMapContainer satelliteData={satelliteData} liveOrbit={liveOrbit} />
                             ) : (
                                 <Box sx={{ height: '100%', display: 'grid', placeItems: 'center', p: 3 }}>
                                     <Typography variant="body2" color="text.secondary" align="center">
-                                        {isOmmOrbit
-                                            ? t('satellite_info.map_omm_unavailable')
-                                            : t('satellite_info.map_unavailable')}
+                                        {t('satellite_info.map_orbit_unavailable', {
+                                            defaultValue: 'No usable Earth orbit is available for this satellite.',
+                                        })}
                                     </Typography>
                                 </Box>
                             )}
@@ -565,7 +619,9 @@ const SatelliteInfoContent = ({
                                 bgcolor: 'background.paper',
                             }}>
                                 <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
-                                    {t('satellite_info.position_snapshot')}
+                                    {liveOrbit.available
+                                        ? t('satellite_info.live_position', { defaultValue: 'Live position' })
+                                        : t('satellite_info.position_snapshot')}
                                 </Typography>
                                 <Box sx={{ display: 'grid', gap: 0.75 }}>
                                     {Number.isFinite(position.lat) && (
@@ -632,6 +688,11 @@ const SatelliteInfoContent = ({
                                             {satelliteData.orbit_source_object_id}
                                         </SatelliteInfoField>
                                     )}
+                                    {typeof satelliteData.is_frequency_violator === 'boolean' && (
+                                        <SatelliteInfoField inline label={t('satellite_database.is_frequency_violator')}>
+                                            {yesOrNo(satelliteData.is_frequency_violator)}
+                                        </SatelliteInfoField>
+                                    )}
                                     {satelliteData.added && (
                                         <SatelliteInfoField inline label={t('satellite_info.added_to_catalog')}>
                                             {formatSatelliteDate(satelliteData.added)}
@@ -666,6 +727,13 @@ const SatelliteInfoContent = ({
                         </Grid>
                     )}
                 </Grid>
+            )}
+
+            {asDialog && (
+                <SatellitePasses
+                    noradId={satelliteData.norad_id}
+                    enabled={liveUpdatesEnabled}
+                />
             )}
 
             {!asDialog && tleLines && (
@@ -726,7 +794,7 @@ const SatelliteInfoContent = ({
                 </Box>
             )}
 
-            {rawOmmData && (
+            {!asDialog && rawOmmData && (
                 <Accordion
                     disableGutters
                     elevation={0}
@@ -998,6 +1066,7 @@ export const SatelliteInfoDialog = ({ open, onClose, satelliteData, livePosition
                         onEditSatellite={() => setActiveEditor('satellite')}
                         onManageTransmitters={() => setActiveEditor('transmitters')}
                         showDeleteButton={false}
+                        liveUpdatesEnabled={open}
                     />
                 </DialogContent>
             </Dialog>
