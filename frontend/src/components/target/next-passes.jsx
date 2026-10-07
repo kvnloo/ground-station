@@ -1321,6 +1321,7 @@ const NextPassesIsland = React.memo(function NextPassesIsland() {
             <CelestialPasses
                 passes={nonSatellitePasses}
                 tracks={nonSatelliteTracks}
+                monitoredRows={monitoredRows}
                 loading={Boolean(targetScene?.loading)}
                 gridEditable={gridEditable}
                 onRefresh={handleRefreshPasses}
