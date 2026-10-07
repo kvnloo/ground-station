@@ -95,6 +95,7 @@
     "moment": "2.31.0",
     "postcss": "8.5.23",
     "socket.io-parser": "4.2.7",
+    "source-map-js": "1.2.2",
     "undici": "7.29.1",
     "ws": "^8.20.1",
     "yaml": "^2.8.3"
