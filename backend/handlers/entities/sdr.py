@@ -129,6 +129,12 @@ def _list_other_sdr_clients(sdr_id: str, client_id: str) -> List[str]:
     return sorted(str(sid) for sid in clients if str(sid) != normalized_client_id)
 
 
+def _is_joiner(sdr_id: str, client_id: str) -> bool:
+    """JOIN grants an IQ subscription, not permission to change SDR settings."""
+    process_info = process_manager.processes.get(sdr_id, {})
+    return client_id in process_info.get("joiners", set())
+
+
 def _build_sdr_in_use_conflict(
     sdr_id: str,
     other_clients: List[str],
@@ -153,7 +159,7 @@ def _build_sdr_in_use_conflict(
 
     default_message = (
         f"SDR '{sdr_id}' is currently in use by {len(other_clients)} other session(s). "
-        "Choose Watch to view its live waterfall, or Take Over to change it."
+        "Choose Join to use its live stream, or Take Over to change its settings."
     )
     return {
         "error_code": SDR_IN_USE_CONFLICT_CODE,
@@ -169,9 +175,13 @@ def _build_sdr_in_use_conflict(
 
 
 def _running_sdr_info(sdr_id: str) -> Optional[Dict[str, Any]]:
-    """Return a live process only; stale process entries must not invite watchers."""
+    """Return a live process only; stale process entries must not invite joiners."""
     process_info = process_manager.processes.get(sdr_id)
-    if process_info and process_manager.is_sdr_process_running(sdr_id):
+    if (
+        process_info
+        and not process_info.get("stopping")
+        and process_manager.is_sdr_process_running(sdr_id)
+    ):
         return cast(Dict[str, Any], process_info)
     return None
 
@@ -226,32 +236,51 @@ async def sdr_command_routing(
                 ),
             }
 
-        elif cmd == "watch-sdr":
+        elif cmd in ("join-sdr", "watch-sdr"):
             target_sdr_id = str(data.get("selectedSDRId") or "")
             process_info = _running_sdr_info(target_sdr_id)
             if not process_info:
                 reply["error"] = "SDR is no longer streaming"
-            elif client_id in process_info.get("clients", set()):
-                # A controller already owns a worker session. Treating it as a
-                # watcher would make Unwatch remove its active FFT room.
-                reply["error"] = "Stop your SDR stream before watching it"
+            elif client_id in process_info.get("clients", set()) and not _is_joiner(
+                target_sdr_id, client_id
+            ):
+                # A controller must leave through its normal stream lifecycle.
+                reply["error"] = "Stop your SDR stream before joining it"
             else:
                 live_config = _live_sdr_config(target_sdr_id, process_info)
                 if "center_freq" not in live_config or "sample_rate" not in live_config:
                     reply["error"] = "Live SDR settings are unavailable"
                     return reply
-                # Watching only joins the FFT room. It never enters process clients,
-                # creates a session config, or writes to the worker's config queue.
+                # JOIN subscribes to this worker without sending configuration.
+                # Its clients membership keeps the worker alive as a peer.
                 await sio.enter_room(client_id, target_sdr_id)
-                if process_manager.processes.get(
-                    target_sdr_id
-                ) is not process_info or not process_manager.is_sdr_process_running(target_sdr_id):
+                if (
+                    process_manager.processes.get(target_sdr_id) is not process_info
+                    or process_info.get("stopping")
+                    or not process_manager.is_sdr_process_running(target_sdr_id)
+                ):
                     await sio.leave_room(client_id, target_sdr_id)
-                    reply["error"] = "SDR stopped before watching began"
+                    reply["error"] = "SDR stopped before joining began"
+                    return reply
+                # Bind this socket to the live IQ source for its own VFOs.
+                for other_sdr_id, other_info in list(process_manager.processes.items()):
+                    if other_sdr_id != target_sdr_id and client_id in other_info.get(
+                        "joiners", set()
+                    ):
+                        await process_manager.stop_sdr_join(other_sdr_id, client_id, sio=sio)
+                if (
+                    process_manager.processes.get(target_sdr_id) is not process_info
+                    or process_info.get("stopping")
+                    or not process_manager.is_sdr_process_running(target_sdr_id)
+                ):
+                    await sio.leave_room(client_id, target_sdr_id)
+                    reply["error"] = "SDR stopped before joining began"
                     return reply
                 # A reconfiguration may have completed while the room was joined.
                 live_config = _live_sdr_config(target_sdr_id, process_info)
-                process_info.setdefault("watchers", set()).add(client_id)
+                process_info.setdefault("joiners", set()).add(client_id)
+                process_info["clients"].add(client_id)
+                session_tracker.register_session_streaming(client_id, target_sdr_id)
                 reply["success"] = True
                 reply["data"] = {
                     "config": live_config,
@@ -263,14 +292,11 @@ async def sdr_command_routing(
                     ),
                 }
 
-        elif cmd == "unwatch-sdr":
+        elif cmd in ("leave-sdr", "unwatch-sdr"):
             target_sdr_id = str(data.get("selectedSDRId") or "")
-            process_info = process_manager.processes.get(target_sdr_id)
-            if not process_info or client_id not in process_info.get("watchers", set()):
-                reply["error"] = "No active watch for this SDR"
+            if not await process_manager.stop_sdr_join(target_sdr_id, client_id, sio=sio):
+                reply["error"] = "No active join for this SDR"
             else:
-                process_info["watchers"].discard(client_id)
-                await sio.leave_room(client_id, target_sdr_id)
                 reply["success"] = True
 
         elif cmd == "configure-sdr":
@@ -441,11 +467,16 @@ async def sdr_command_routing(
                 # A configure request carries the whole browser draft and always writes
                 # to the shared worker. Require consent for every such request.
                 other_clients = _list_other_sdr_clients(str(sdr_id), client_id)
-                if other_clients and not force_takeover:
+                if (other_clients or _is_joiner(str(sdr_id), client_id)) and not force_takeover:
                     conflict = _build_sdr_in_use_conflict(
                         str(sdr_id),
                         other_clients,
                         operation="configure-sdr",
+                        message=(
+                            "You joined this SDR. Choose Take Over to change its settings."
+                            if not other_clients
+                            else None
+                        ),
                     )
                     logger.warning(
                         "Blocked SDR configure update for session %s on SDR %s "
@@ -521,11 +552,16 @@ async def sdr_command_routing(
                 # Starting a stream on an already active SDR can impact existing sessions.
                 # Require explicit force flag when other sessions are already attached.
                 other_clients = _list_other_sdr_clients(str(sdr_id), client_id)
-                if other_clients and not force_takeover:
+                if (other_clients or _is_joiner(str(sdr_id), client_id)) and not force_takeover:
                     conflict = _build_sdr_in_use_conflict(
                         str(sdr_id),
                         other_clients,
                         operation="start-streaming",
+                        message=(
+                            "You joined this SDR. Choose Take Over to change its settings."
+                            if not other_clients
+                            else None
+                        ),
                     )
                     logger.warning(
                         "Blocked SDR start-streaming for session %s on SDR %s because %d "
@@ -557,6 +593,11 @@ async def sdr_command_routing(
                     conflict_error.sdr_id,
                     conflict_error.other_clients,
                     operation="start-streaming",
+                    message=(
+                        "You joined this SDR. Choose Take Over to change its settings."
+                        if not conflict_error.other_clients
+                        else None
+                    ),
                 )
                 reply["error"] = str(conflict["message"])
                 reply["error_code"] = SDR_IN_USE_CONFLICT_CODE
@@ -630,9 +671,16 @@ async def sdr_command_routing(
                 force_takeover = _coerce_bool(
                     data.get("forceTakeover", False), False, "forceTakeover", logger
                 )
-                if other_clients and not force_takeover:
+                if (other_clients or _is_joiner(str(sdr_id), client_id)) and not force_takeover:
                     conflict = _build_sdr_in_use_conflict(
-                        str(sdr_id), other_clients, operation="seek-playback"
+                        str(sdr_id),
+                        other_clients,
+                        operation="seek-playback",
+                        message=(
+                            "You joined this SDR. Choose Take Over to change playback position."
+                            if not other_clients
+                            else None
+                        ),
                     )
                     reply["error"] = str(conflict["message"])
                     reply["error_code"] = SDR_IN_USE_CONFLICT_CODE
@@ -1152,6 +1200,9 @@ def register_handlers(registry):
     commands = (
         "configure-sdr",
         "inspect-sdr",
+        "join-sdr",
+        "leave-sdr",
+        # Keep the old commands for clients already connected during rollout.
         "watch-sdr",
         "unwatch-sdr",
         "start-streaming",

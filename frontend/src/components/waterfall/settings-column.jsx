@@ -108,7 +108,7 @@ import { useTranslation } from 'react-i18next';
 import { selectRunningRigTransmitterOptions } from "../target/transmitter-selectors.js";
 import { fetchPlaybackRecordings } from "../filebrowser/filebrowser-slice.jsx";
 import { useSdrTakeoverDialog } from './use-sdr-takeover-dialog.jsx';
-import { callSdrApi, liveConfigToUpdates, watchSdr } from './sdr-watch.js';
+import { callSdrApi, liveConfigToUpdates, joinSdr } from './sdr-join.js';
 import { DevRenderProfiler } from './render-profiler.jsx';
 
 const PLAYBACK_DEFAULT_FFT_OVERLAP_PERCENT = 50;
@@ -148,7 +148,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
         selectedOffsetValue,
         errorMessage,
         isStreaming,
-        watchingSdrId,
+        joinedSdrId,
         targetFPS,
         settingsDialogOpen,
         autoDBRange,
@@ -202,7 +202,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
             selectedOffsetValue: state.waterfall.selectedOffsetValue,
             errorMessage: state.waterfall.errorMessage,
             isStreaming: state.waterfall.isStreaming,
-            watchingSdrId: state.waterfall.watchingSdrId,
+            joinedSdrId: state.waterfall.joinedSdrId,
             targetFPS: state.waterfall.targetFPS,
             settingsDialogOpen: state.waterfall.settingsDialogOpen,
             autoDBRange: state.waterfall.autoDBRange,
@@ -495,16 +495,16 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
         }
 
         const choice = await requestTakeoverConfirmation(conflict, actionLabel);
-        if (choice === 'watch') {
+        if (choice === 'join') {
             // Apply the authoritative worker settings before joining its FFT room.
             if (conflict.config) dispatch(updateSDRConfig({ ...conflict.config, force_live: true }));
-            const watchResponse = await watchSdr(socket, dispatch, conflict.sdr_id || payload.selectedSDRId);
-            if (!watchResponse?.success) toast.error(watchResponse?.error || 'Could not watch SDR');
+            const joinResponse = await joinSdr(socket, dispatch, conflict.sdr_id || payload.selectedSDRId);
+            if (!joinResponse?.success) toast.error(joinResponse?.error || 'Could not join SDR');
             return {
-                ...(watchResponse || {}),
+                ...(joinResponse || {}),
                 success: false,
                 canceled: true,
-                watched: Boolean(watchResponse?.success),
+                joined: Boolean(joinResponse?.success),
                 takeoverConfirmed: false,
             };
         }
@@ -730,13 +730,13 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     inspection.data.conflict, 'select this SDR'
                 );
                 if (choice === 'cancel') return;
-                if (choice === 'watch') {
+                if (choice === 'join') {
                     // Inspect first, apply its live scale, then subscribe to FFT.
                     if (inspection.data.config) dispatch(updateSDRConfig({ ...inspection.data.config, force_live: true }));
-                    const watchResponse = await watchSdr(socket, dispatch, selectedValue);
-                    if (!watchResponse?.success) {
+                    const joinResponse = await joinSdr(socket, dispatch, selectedValue);
+                    if (!joinResponse?.success) {
                         dispatch(restoreSdrSelection(previous));
-                        toast.error(watchResponse?.error || 'Could not watch SDR');
+                        toast.error(joinResponse?.error || 'Could not join SDR');
                     }
                     return;
                 }
@@ -761,7 +761,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
             try {
                 const response = await loadSDRParameters(selectedValue);
                 const configureResponse = await applyLoadedSDRParameters(selectedValue, response, takeoverConfig);
-                if (!configureResponse?.success && !configureResponse?.watched) {
+                if (!configureResponse?.success && !configureResponse?.joined) {
                     dispatch(restoreSdrSelection(previous));
                     if (!configureResponse?.canceled) {
                         toast.error(configureResponse?.error || 'Could not configure SDR');
@@ -1319,8 +1319,10 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
     }, [dispatch]);
 
     const handleVfoCenterFrequencyChange = useCallback((newFreq) => {
-        dispatch(setCenterFrequency(newFreq));
-        sendSDRConfigToBackend({centerFrequency: newFreq});
+        return sendSDRConfigToBackend({centerFrequency: newFreq}).then((response) => {
+            if (response?.success) dispatch(setCenterFrequency(newFreq));
+            return response;
+        });
     }, [dispatch, sendSDRConfigToBackend]);
 
     // Sync VFO tab selection when a VFO is selected on the canvas
@@ -1433,14 +1435,14 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     inspection.data.conflict, 'select this playback recording'
                 );
                 if (choice === 'cancel') return;
-                if (choice === 'watch') {
+                if (choice === 'join') {
                     if (inspection.data.config) {
                         dispatch(updateSDRConfig({ ...inspection.data.config, force_live: true }));
                     }
-                    const response = await watchSdr(socket, dispatch, sigmfSdr.id);
+                    const response = await joinSdr(socket, dispatch, sigmfSdr.id);
                     if (!response?.success) {
                         dispatch(restoreSdrSelection(previous));
-                        toast.error(response?.error || 'Could not watch SDR');
+                        toast.error(response?.error || 'Could not join SDR');
                     }
                     return;
                 }
@@ -1510,7 +1512,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                         socket,
                         selectedSDRId: sigmfSdr.id,
                     }));
-                } else if (!response?.watched) {
+                } else if (!response?.joined) {
                     dispatch(restoreSdrSelection(previous));
                     if (!response?.canceled) {
                         toast.error(`Failed to configure playback: ${response?.error || 'Unknown error'}`);
@@ -1625,7 +1627,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                         <Typography variant="subtitle2" sx={{fontWeight: 'bold'}}>
                             {t('title')}
                         </Typography>
-                        {watchingSdrId && <Chip size="small" label="Watching live SDR" color="info" sx={{ml: 1}} />}
+                        {joinedSdrId && <Chip size="small" label="Joined live SDR" color="info" sx={{ml: 1}} />}
                     </Box>
                     <IconButton
                         size="small"
@@ -1645,7 +1647,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     onAccordionChange={handleSdrAccordionChange}
                     gettingSDRParameters={gettingSDRParameters}
                     isStreaming={isStreaming}
-                    watchingSdrId={watchingSdrId}
+                    joinedSdrId={joinedSdrId}
                     sdrs={sdrs}
                     selectedSDRId={selectedSDRId}
                     onSDRChange={handleSDRChange}
@@ -1706,7 +1708,6 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     />
                 </DevRenderProfiler>
 
-                <Box sx={{pointerEvents: watchingSdrId ? 'none' : 'auto', opacity: watchingSdrId ? 0.6 : 1}}>
                 <DevRenderProfiler id="VfoAccordion">
                     <VfoAccordion
                     expanded={expandedPanels.includes('vfo')}
@@ -1723,7 +1724,6 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     onCenterFrequencyChange={handleVfoCenterFrequencyChange}
                     />
                 </DevRenderProfiler>
-                </Box>
 
                 <DevRenderProfiler id="FftAccordion">
                     <FftAccordion
@@ -1750,7 +1750,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                     />
                 </DevRenderProfiler>
 
-                <Box sx={{pointerEvents: watchingSdrId ? 'none' : 'auto', opacity: watchingSdrId ? 0.6 : 1}}>
+                <Box sx={{pointerEvents: joinedSdrId ? 'none' : 'auto', opacity: joinedSdrId ? 0.6 : 1}}>
                 <DevRenderProfiler id="RecordingAccordion">
                     <RecordingAccordion
                     expanded={expandedPanels.includes('recording')}
@@ -1779,7 +1779,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                 </DevRenderProfiler>
                 </Box>
 
-                <Box sx={{pointerEvents: watchingSdrId ? 'none' : 'auto', opacity: watchingSdrId ? 0.6 : 1}}>
+                <Box sx={{pointerEvents: joinedSdrId ? 'none' : 'auto', opacity: joinedSdrId ? 0.6 : 1}}>
                 <DevRenderProfiler id="PlaybackAccordion">
                     <PlaybackAccordion
                     expanded={expandedPanels.includes('playback')}

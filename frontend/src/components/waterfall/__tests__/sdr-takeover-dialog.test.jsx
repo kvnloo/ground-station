@@ -18,7 +18,7 @@ function DialogHarness({ onChoice }) {
 describe('SDR access dialog', () => {
     it.each([
         ['Cancel', 'cancel'],
-        ['Watch', 'watch'],
+        ['Join', 'join'],
         ['Take Over', 'takeover'],
     ])('returns %s without conflating access choices', async (label, expected) => {
         const onChoice = vi.fn();

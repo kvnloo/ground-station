@@ -2,8 +2,8 @@ import {
     applySDRConfigParameters,
     setIsStreaming,
     setSelectedPlaybackRecording,
-    selectSdrForWatch,
-    setWatchingSdrId,
+    selectSdrForJoin,
+    setJoinedSdrId,
     updateSDRConfig,
 } from './waterfall-slice.jsx';
 
@@ -45,11 +45,11 @@ export const liveConfigToUpdates = (config) => {
     return updates;
 };
 
-export const watchSdr = async (socket, dispatch, selectedSDRId) => {
-    const response = await callSdrApi(socket, 'watch-sdr', selectedSDRId);
+export const joinSdr = async (socket, dispatch, selectedSDRId) => {
+    const response = await callSdrApi(socket, 'join-sdr', selectedSDRId);
     if (response?.success) {
         const config = response.data?.config;
-        dispatch(selectSdrForWatch(selectedSDRId));
+        dispatch(selectSdrForJoin(selectedSDRId));
         if (response.data?.parameters) {
             // Capability choices come from the pre-stream probe; the worker's
             // current config below remains authoritative for selected values.
@@ -60,16 +60,16 @@ export const watchSdr = async (socket, dispatch, selectedSDRId) => {
         }
         if (selectedSDRId === 'sigmf-playback') dispatch(setSelectedPlaybackRecording(null));
         if (config) dispatch(updateSDRConfig({ ...config, force_live: true }));
-        dispatch(setWatchingSdrId(selectedSDRId));
+        dispatch(setJoinedSdrId(selectedSDRId));
         dispatch(setIsStreaming(true));
     }
     return response;
 };
 
-export const unwatchSdr = async (socket, dispatch, selectedSDRId) => {
-    const response = await callSdrApi(socket, 'unwatch-sdr', selectedSDRId);
+export const leaveSdr = async (socket, dispatch, selectedSDRId) => {
+    const response = await callSdrApi(socket, 'leave-sdr', selectedSDRId);
     if (response?.success) {
-        dispatch(setWatchingSdrId(null));
+        dispatch(setJoinedSdrId(null));
         dispatch(setIsStreaming(false));
     }
     return response;

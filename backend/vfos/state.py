@@ -64,6 +64,10 @@ class VFOManager:
         """Returns a list of all session IDs currently in the VFOManager."""
         return list(self._session_vfo_states.keys())
 
+    def clear_session_vfos(self, session_id: str) -> None:
+        """Discard a departed joiner's VFO state without affecting other sessions."""
+        self._session_vfo_states.pop(session_id, None)
+
     def get_vfo_state(self, session_id: str, vfo_id: int) -> Optional[VFOState]:
         self._ensure_session_vfos(session_id)
         return self._session_vfo_states[session_id].get(vfo_id)

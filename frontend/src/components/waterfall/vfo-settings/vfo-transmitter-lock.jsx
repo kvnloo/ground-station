@@ -99,7 +99,7 @@ export const TransmitterLockSelect = ({
         }
     };
 
-    const handleRetuneConfirm = () => {
+    const handleRetuneConfirm = async () => {
         if (pendingTransmitter) {
             const { transmitter, transmitterId } = pendingTransmitter;
             const txFrequency = transmitter.downlink_observed_freq;
@@ -110,15 +110,17 @@ export const TransmitterLockSelect = ({
             // Offset by 25% of sample rate to move target signal away from center
             const offsetHz = safeSampleRate * 0.25;
             const newCenterFrequency = txFrequency + offsetHz;
-            onCenterFrequencyChange(newCenterFrequency);
+            const response = await onCenterFrequencyChange(newCenterFrequency);
 
-            // Lock VFO to transmitter
-            onVFOPropertyChange(vfoIndex, {
-                lockedTransmitterId: transmitterId,
-                lockedTransmitterTrackerId: transmitter.trackerId || null,
-                frequency: txFrequency,
-                frequencyOffset: 0
-            });
+            // If takeover was canceled, keep the VFO within the live IQ band.
+            if (response?.success !== false) {
+                onVFOPropertyChange(vfoIndex, {
+                    lockedTransmitterId: transmitterId,
+                    lockedTransmitterTrackerId: transmitter.trackerId || null,
+                    frequency: txFrequency,
+                    frequencyOffset: 0
+                });
+            }
         }
         setRetuneDialogOpen(false);
         setPendingTransmitter(null);

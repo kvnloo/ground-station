@@ -107,7 +107,7 @@ export const useSdrTakeoverDialog = ({ defaultSdrId } = {}) => {
                     {message}
                 </Typography>
                 <Typography variant="body2" sx={{ mb: 2 }}>
-                    You are about to {pendingActionLabel || 'continue'} on this SDR. Watching uses its current settings; taking over may disrupt active sessions.
+                    You are about to {pendingActionLabel || 'continue'} on this SDR. Joining lets you use its current stream and your own VFOs. The stream stays live while any participant remains. Taking over may disrupt active sessions.
                 </Typography>
                 {pendingConflict?.includes_internal_observation && (
                     <Alert severity="warning" sx={{ mb: 2 }}>
@@ -153,8 +153,8 @@ export const useSdrTakeoverDialog = ({ defaultSdrId } = {}) => {
                 <Button onClick={() => closeWithResult('cancel')}>
                     Cancel
                 </Button>
-                <Button onClick={() => closeWithResult('watch')} variant="outlined">
-                    Watch
+                <Button onClick={() => closeWithResult('join')} variant="outlined">
+                    Join
                 </Button>
                 <Button onClick={() => closeWithResult('takeover')} color="warning" variant="contained">
                     Take Over

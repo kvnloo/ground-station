@@ -167,7 +167,7 @@ const initialState = {
     errorMessage: null,
     errorDialogOpen: false,
     isStreaming: false,
-    watchingSdrId: null,
+    joinedSdrId: null,
     isPlaying: false,
     targetFPS: 10,
     settingsDialogOpen: false,
@@ -293,8 +293,8 @@ export const waterfallSlice = createSlice({
         setIsStreaming: (state, action) => {
             state.isStreaming = action.payload;
         },
-        setWatchingSdrId: (state, action) => {
-            state.watchingSdrId = action.payload;
+        setJoinedSdrId: (state, action) => {
+            state.joinedSdrId = action.payload;
         },
         setTargetFPS: (state, action) => {
             state.targetFPS = action.payload;
@@ -442,10 +442,10 @@ export const waterfallSlice = createSlice({
         setSelectedSDRId(state, action) {
             state.selectedSDRId = action.payload;
         },
-        selectSdrForWatch(state, action) {
+        selectSdrForJoin(state, action) {
             if (state.selectedSDRId !== action.payload) {
                 // Capability choices from a previously selected device must not
-                // appear as available controls for a passively watched SDR.
+                // appear as available controls for a joined SDR.
                 state.gainValues = [];
                 state.sampleRateValues = [];
                 state.fftSizeValues = [];
@@ -588,7 +588,7 @@ export const waterfallSlice = createSlice({
                 if (!state.sdrSettingsById[config.sdr_id]) {
                     state.sdrSettingsById[config.sdr_id] = { draft: {}, applied: {} };
                 }
-                if (state.watchingSdrId === config.sdr_id || config.force_live) {
+                if (state.joinedSdrId === config.sdr_id || config.force_live) {
                     state.sdrSettingsById[config.sdr_id].draft = { ...config.sdr_settings };
                 }
                 state.sdrSettingsById[config.sdr_id].applied = { ...config.sdr_settings };
@@ -598,7 +598,7 @@ export const waterfallSlice = createSlice({
                     state.sdrSettingsById[config.sdr_id] = { draft: {}, applied: {} };
                 }
                 state.sdrSettingsById[config.sdr_id].applied.biasT = config.bias_t;
-                if (state.watchingSdrId === config.sdr_id || config.force_live
+                if (state.joinedSdrId === config.sdr_id || config.force_live
                     || state.sdrSettingsById[config.sdr_id].draft.biasT === undefined) {
                     state.sdrSettingsById[config.sdr_id].draft.biasT = config.bias_t;
                 }
@@ -608,7 +608,7 @@ export const waterfallSlice = createSlice({
                     state.sdrSettingsById[config.sdr_id] = { draft: {}, applied: {} };
                 }
                 state.sdrSettingsById[config.sdr_id].applied.tunerAgc = config.tuner_agc;
-                if (state.watchingSdrId === config.sdr_id || config.force_live
+                if (state.joinedSdrId === config.sdr_id || config.force_live
                     || state.sdrSettingsById[config.sdr_id].draft.tunerAgc === undefined) {
                     state.sdrSettingsById[config.sdr_id].draft.tunerAgc = config.tuner_agc;
                 }
@@ -618,7 +618,7 @@ export const waterfallSlice = createSlice({
                     state.sdrSettingsById[config.sdr_id] = { draft: {}, applied: {} };
                 }
                 state.sdrSettingsById[config.sdr_id].applied.rtlAgc = config.rtl_agc;
-                if (state.watchingSdrId === config.sdr_id || config.force_live
+                if (state.joinedSdrId === config.sdr_id || config.force_live
                     || state.sdrSettingsById[config.sdr_id].draft.rtlAgc === undefined) {
                     state.sdrSettingsById[config.sdr_id].draft.rtlAgc = config.rtl_agc;
                 }
@@ -628,7 +628,7 @@ export const waterfallSlice = createSlice({
                     state.sdrSettingsById[config.sdr_id] = { draft: {}, applied: {} };
                 }
                 state.sdrSettingsById[config.sdr_id].applied.soapyAgc = config.soapy_agc;
-                if (state.watchingSdrId === config.sdr_id || config.force_live
+                if (state.joinedSdrId === config.sdr_id || config.force_live
                     || state.sdrSettingsById[config.sdr_id].draft.soapyAgc === undefined) {
                     state.sdrSettingsById[config.sdr_id].draft.soapyAgc = config.soapy_agc;
                 }
@@ -791,7 +791,7 @@ export const {
     setCenterFrequency,
     setErrorMessage,
     setIsStreaming,
-    setWatchingSdrId,
+    setJoinedSdrId,
     setTargetFPS,
     setIsPlaying,
     setSettingsDialogOpen,
@@ -814,7 +814,7 @@ export const {
     setWaterFallPositionX,
     setExpandedPanels,
     setSelectedSDRId,
-    selectSdrForWatch,
+    selectSdrForJoin,
     restoreSdrSelection,
     setStartStreamingLoading,
     setErrorDialogOpen,

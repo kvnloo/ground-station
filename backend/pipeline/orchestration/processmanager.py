@@ -216,6 +216,10 @@ class ProcessManager:
         """
         await self.lifecycle_manager.stop_sdr_process(sdr_id, client_id)
 
+    async def stop_sdr_join(self, sdr_id, client_id, sio=None):
+        """Release a joiner, stopping the worker only when no clients remain."""
+        return await self.lifecycle_manager.stop_sdr_join(sdr_id, client_id, sio=sio)
+
     async def update_configuration(self, sdr_id, config):
         """
         Update the configuration of an SDR worker process

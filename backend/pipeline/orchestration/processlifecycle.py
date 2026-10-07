@@ -32,6 +32,7 @@ from monitoring.timing import TimestampedQueue, get_enabled_event
 from pipeline.orchestration.gnssfix import derive_gnss_fix_status_from_output, gnss_fix_stream_key
 from pipeline.orchestration.gnsssatelliteresolver import GnssSatelliteResolver
 from pipeline.streaming.iqbroadcaster import IQBroadcaster
+from session.tracker import session_tracker
 from vfos.state import VFOManager
 from workers.airspyhfworker import airspyhf_worker_process
 from workers.airspyworker import airspy_worker_process
@@ -376,12 +377,17 @@ class ProcessLifecycleManager:
         async with sdr_parameter_lock(sdr_id):
             capabilities = None
             process_info = self.processes.get(sdr_id)
+            if process_info and process_info.get("stopping"):
+                # A new caller must not attach to a worker being torn down.
+                while self.processes.get(sdr_id) is process_info:
+                    await asyncio.sleep(0.05)
+                process_info = self.processes.get(sdr_id)
             if process_info and process_info["process"].is_alive():
                 other_clients = sorted(
                     str(sid) for sid in process_info["clients"] if str(sid) != str(client_id)
                 )
                 if (
-                    other_clients
+                    (other_clients or client_id in process_info.get("joiners", set()))
                     and not force_takeover
                     and not VFOManager.is_internal_session(client_id)
                 ):
@@ -522,6 +528,7 @@ class ProcessLifecycleManager:
             )
 
             # Add the client to the existing process
+            was_joiner = client_id in process_info.get("joiners", set())
             process_info["clients"].add(client_id)
 
             self.logger.info(f"Active clients for SDR {sdr_id}: {process_info['clients']}")
@@ -566,11 +573,16 @@ class ProcessLifecycleManager:
             except Exception:
                 # Detach only this caller. Existing clients may continue using a
                 # healthy process if the requested reconfiguration was rejected.
-                await self.stop_sdr_process(sdr_id, client_id)
+                # A joiner retains its original membership after a failed takeover.
+                if not was_joiner:
+                    await self.stop_sdr_process(sdr_id, client_id)
                 raise
 
-            # Publish the accepted worker config to controllers and passive
-            # watchers only after the new samples have proved it is usable.
+            # Promote only after the worker accepts the new configuration.
+            process_info.get("joiners", set()).discard(client_id)
+
+            # Publish the accepted worker config to controllers and joiners
+            # only after the new samples have proved it is usable.
             process_info["config"] = {**process_info.get("config", {}), **config}
             await self.sio.emit(
                 "sdr-config", {"sdr_id": sdr_id, **process_info["config"]}, room=sdr_id
@@ -740,6 +752,49 @@ class ProcessLifecycleManager:
 
             return sdr_id
 
+    async def _detach_sdr_client(self, sdr_id, process_info, client_id, sio=None):
+        """Remove one participant and its per-session consumers."""
+        if client_id not in process_info["clients"]:
+            return False
+
+        was_joiner = client_id in process_info.get("joiners", set())
+        process_info["clients"].discard(client_id)
+        process_info.get("joiners", set()).discard(client_id)
+
+        if not VFOManager.is_internal_session(client_id):
+            await (sio or self.sio).leave_room(client_id, sdr_id)
+
+        self.demodulator_manager.stop_demodulator(sdr_id, client_id)
+        self.recorder_manager.stop_recorder(sdr_id, client_id)
+        if self.audio_recorder_manager:
+            for vfo_number in list(process_info.get("audio_recorders", {}).get(client_id, {})):
+                self.audio_recorder_manager.stop_audio_recorder(sdr_id, client_id, vfo_number)
+        self.decoder_manager.stop_decoder(sdr_id, client_id)
+        if self.transcription_manager:
+            self.transcription_manager.stop_transcription(sdr_id, client_id)
+
+        if was_joiner:
+            # JOIN has no configuration-store entry, so leaving must clear its
+            # tracker and VFO state here rather than through stop_streaming().
+            if session_tracker.get_session_sdr(client_id) == sdr_id:
+                session_tracker.unregister_session_streaming(client_id)
+                session_tracker.set_session_vfo_int(client_id, None)
+            VFOManager().clear_session_vfos(client_id)
+
+        self.logger.info("Removed client %s from SDR process %s", client_id, sdr_id)
+        return True
+
+    async def stop_sdr_join(self, sdr_id, client_id, sio=None):
+        """Leave a joined SDR; the last participant also stops its worker."""
+        process_info = self.processes.get(sdr_id)
+        if not process_info or client_id not in process_info.get("joiners", set()):
+            return False
+
+        await self._detach_sdr_client(sdr_id, process_info, client_id, sio=sio)
+        if not process_info["clients"] and not process_info.get("stopping"):
+            await self.stop_sdr_process(sdr_id)
+        return True
+
     async def stop_sdr_process(self, sdr_id, client_id=None):
         """
         Stop an SDR worker process
@@ -756,40 +811,7 @@ class ProcessLifecycleManager:
 
         # If client_id is provided, only remove that client
         if client_id:
-            if client_id in process_info["clients"]:
-                # Remove client from Socket.IO room
-                process_info["clients"].remove(client_id)
-
-                # Make a client leave a specific room (skip for internal observation sessions)
-                if not VFOManager.is_internal_session(client_id):
-                    await self.sio.leave_room(client_id, sdr_id)
-
-                # Stop any active demodulator for this client
-                self.demodulator_manager.stop_demodulator(sdr_id, client_id)
-
-                # Stop any active recorder for this client
-                self.recorder_manager.stop_recorder(sdr_id, client_id)
-
-                # Stop any active audio recorders for this client
-                if self.audio_recorder_manager:
-                    # Stop all VFO audio recorders for this session
-                    audio_recorders = process_info.get("audio_recorders", {}).get(client_id, {})
-                    for vfo_number in list(audio_recorders.keys()):
-                        self.logger.info(
-                            f"Stopping audio recorder for VFO {vfo_number}, session {client_id}"
-                        )
-                        self.audio_recorder_manager.stop_audio_recorder(
-                            sdr_id, client_id, vfo_number
-                        )
-
-                # Stop any active decoder for this client
-                self.decoder_manager.stop_decoder(sdr_id, client_id)
-
-                # Stop any active transcription consumers for this client
-                if self.transcription_manager:
-                    self.transcription_manager.stop_transcription(sdr_id, client_id)
-
-                self.logger.info(f"Removed client {client_id} from SDR process {sdr_id}")
+            await self._detach_sdr_client(sdr_id, process_info, client_id)
 
             # If there are still other clients, don't stop the process
             if process_info["clients"]:
@@ -887,16 +909,17 @@ class ProcessLifecycleManager:
                 self.transcription_manager.stop_transcription(sdr_id, session_id)
 
         # Clean up
-        # Passive watchers do not keep the worker alive. Notify and detach them
-        # before a later session can reuse this SDR room.
-        if process_info.get("watchers"):
+        # On worker failure or forced teardown, notify and detach any joiners.
+        # Normal departure never reaches here while another client remains.
+        if process_info.get("joiners"):
             await self.sio.emit("sdr-status", {"streaming": False}, room=sdr_id)
-            for watcher_id in list(process_info["watchers"]):
+            for joiner_id in list(process_info["joiners"]):
                 try:
-                    await self.sio.leave_room(watcher_id, sdr_id)
+                    await self._detach_sdr_client(sdr_id, process_info, joiner_id)
                 except Exception:
-                    self.logger.debug("Watcher %s already left SDR room %s", watcher_id, sdr_id)
-            process_info["watchers"].clear()
+                    self.logger.exception(
+                        "Failed to detach joiner %s from SDR %s", joiner_id, sdr_id
+                    )
         if sdr_id in self.processes:
             del self.processes[sdr_id]
 
@@ -1011,7 +1034,7 @@ class ProcessLifecycleManager:
 
         # Store the full effective config for future comparisons.
         process_info["config"] = effective_config
-        # All controllers and passive watchers must render the same live scale.
+        # All controllers and joiners must render the same live scale.
         if self.sio is not None:
             await self.sio.emit("sdr-config", {"sdr_id": sdr_id, **effective_config}, room=sdr_id)
 

@@ -4,7 +4,7 @@ import { useSocket } from '../common/socket.jsx';
 import { useWaterfallEngine } from './waterfall-engine-provider.jsx';
 import {
     setIsStreaming,
-    setWatchingSdrId,
+    setJoinedSdrId,
     updateSDRConfig,
     setErrorMessage,
     setStartStreamingLoading,
@@ -16,7 +16,7 @@ import {
 } from './waterfall-slice.jsx';
 import { toast } from '../../utils/toast-with-timestamp.jsx';
 import { useSdrTakeoverDialog } from './use-sdr-takeover-dialog.jsx';
-import { watchSdr, unwatchSdr } from './sdr-watch.js';
+import { joinSdr, leaveSdr } from './sdr-join.js';
 
 const useWaterfallStream = ({
     workerRef,
@@ -46,7 +46,7 @@ const useWaterfallStream = ({
         selectedOffsetValue,
         fftAveraging,
         isStreaming,
-        watchingSdrId,
+        joinedSdrId,
         gettingSDRParameters,
         autoDBRange,
         playbackRecordingPath,
@@ -98,7 +98,7 @@ const useWaterfallStream = ({
         const handleDisconnect = () => {
             cancelAnimations();
             dispatch(setIsStreaming(false));
-            dispatch(setWatchingSdrId(null));
+            dispatch(setJoinedSdrId(null));
         };
 
         socket.on('disconnect', handleDisconnect);
@@ -219,15 +219,15 @@ const useWaterfallStream = ({
         }
 
         const choice = await requestTakeoverConfirmation(conflict, actionLabel);
-        if (choice === 'watch') {
+        if (choice === 'join') {
             if (conflict.config) dispatch(updateSDRConfig({ ...conflict.config, force_live: true }));
-            const watchResponse = await watchSdr(socket, dispatch, conflict.sdr_id || selectedSDRId);
-            if (!watchResponse?.success) toast.error(watchResponse?.error || 'Could not watch SDR');
+            const joinResponse = await joinSdr(socket, dispatch, conflict.sdr_id || selectedSDRId);
+            if (!joinResponse?.success) toast.error(joinResponse?.error || 'Could not join SDR');
             return {
                 success: false,
-                response: watchResponse,
+                response: joinResponse,
                 canceled: true,
-                watched: Boolean(watchResponse?.success),
+                joined: Boolean(joinResponse?.success),
                 takeoverConfirmed: false,
             };
         }
@@ -346,10 +346,10 @@ const useWaterfallStream = ({
 
     const stopStreaming = useCallback(async () => {
         if (isStreaming) {
-            if (watchingSdrId) {
-                const response = await unwatchSdr(socket, dispatch, watchingSdrId);
+            if (joinedSdrId) {
+                const response = await leaveSdr(socket, dispatch, joinedSdrId);
                 if (!response?.success) {
-                    toast.error(response?.error || 'Could not stop watching SDR');
+                    toast.error(response?.error || 'Could not leave SDR');
                 } else {
                     cancelAnimations();
                 }
@@ -387,7 +387,7 @@ const useWaterfallStream = ({
             dispatch(setIsStreaming(false));
             cancelAnimations();
         }
-    }, [isStreaming, watchingSdrId, isRecording, socket, selectedSDRId, dispatch, cancelAnimations]);
+    }, [isStreaming, joinedSdrId, isRecording, socket, selectedSDRId, dispatch, cancelAnimations]);
 
     const seekPlayback = useCallback((positionSeconds) => callWithTakeoverConfirmation(
         'sdr.seek-playback',

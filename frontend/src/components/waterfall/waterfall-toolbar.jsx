@@ -42,7 +42,7 @@ const WaterfallToolbar = ({
                               startStreaming,
                               stopStreaming,
                               isStreaming,
-                              watchingSdrId,
+                              joinedSdrId,
                               showLeftSideWaterFallAccessories,
                               toggleLeftSideWaterFallAccessories,
                               showRightSideWaterFallAccessories,
@@ -185,7 +185,7 @@ const WaterfallToolbar = ({
                 <IconButton
                     disabled={!isStreaming}
                     onClick={stopStreaming}
-                    title={watchingSdrId ? t('toolbar.stop_watching') : t('toolbar.stop_streaming')}
+                    title={joinedSdrId ? t('toolbar.leave_stream') : t('toolbar.stop_streaming')}
                     sx={{
                         borderRadius: 0,
                         color: 'action.stop',
@@ -379,7 +379,6 @@ const WaterfallToolbar = ({
                             },
                         }}
                         onClick={() => toggleVfo(1)}
-                        disabled={Boolean(watchingSdrId)}
                         color={vfoActive[1] ? 'warning' : 'primary'}
                         title={t('toolbar.toggle_vfo', { number: 1 })}
                     >
@@ -414,7 +413,6 @@ const WaterfallToolbar = ({
                             },
                         }}
                         onClick={() => toggleVfo(2)}
-                        disabled={Boolean(watchingSdrId)}
                         color={vfoActive[2] ? 'warning' : 'primary'}
                         title={t('toolbar.toggle_vfo', { number: 2 })}
                     >
@@ -449,7 +447,6 @@ const WaterfallToolbar = ({
                             },
                         }}
                         onClick={() => toggleVfo(3)}
-                        disabled={Boolean(watchingSdrId)}
                         color={vfoActive[3] ? 'warning' : 'primary'}
                         title={t('toolbar.toggle_vfo', { number: 3 })}
                     >
@@ -484,7 +481,6 @@ const WaterfallToolbar = ({
                             },
                         }}
                         onClick={() => toggleVfo(4)}
-                        disabled={Boolean(watchingSdrId)}
                         color={vfoActive[4] ? 'warning' : 'primary'}
                         title={t('toolbar.toggle_vfo', { number: 4 })}
                     >

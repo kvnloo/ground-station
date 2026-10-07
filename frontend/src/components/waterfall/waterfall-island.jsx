@@ -190,7 +190,7 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
         errorMessage,
         errorDialogOpen,
         isStreaming,
-        watchingSdrId,
+        joinedSdrId,
         isConnected,
         targetFPS,
         isPlaying,
@@ -235,7 +235,7 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
             errorMessage: state.waterfall.errorMessage,
             errorDialogOpen: state.waterfall.errorDialogOpen,
             isStreaming: state.waterfall.isStreaming,
-            watchingSdrId: state.waterfall.watchingSdrId,
+            joinedSdrId: state.waterfall.joinedSdrId,
             isConnected: state.waterfall.isConnected,
             targetFPS: state.waterfall.targetFPS,
             isPlaying: state.waterfall.isPlaying,
@@ -1178,7 +1178,7 @@ const MainWaterfallDisplay = React.memo(function MainWaterfallDisplay({
                     startStreaming={startStreaming}
                     stopStreaming={stopStreaming}
                     isStreaming={isStreaming}
-                    watchingSdrId={watchingSdrId}
+                    joinedSdrId={joinedSdrId}
                     showLeftSideWaterFallAccessories={showLeftSideWaterFallAccessories}
                     toggleLeftSideWaterFallAccessories={toggleLeftSide}
                     showRightSideWaterFallAccessories={showRightSideWaterFallAccessories}

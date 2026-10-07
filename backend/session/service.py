@@ -26,12 +26,19 @@ def _get_process_manager():
 
 async def cleanup_sdr_session(sid: str) -> None:
     """Clean up and release resources associated with an SDR client session."""
+    process_manager = _get_process_manager()
+    if process_manager:
+        # JOIN sessions have their own VFO consumers and count toward worker
+        # lifetime, but do not have a controller configuration-store entry.
+        for sdr_id, process_info in list(getattr(process_manager, "processes", {}).items()):
+            if sid in process_info.get("joiners", set()):
+                await process_manager.stop_sdr_join(sdr_id, sid)
+
     if sid in active_sdr_clients:
         client = get_sdr_session(sid)
         sdr_id = client.get("sdr_id") if client else None
 
         if sdr_id:
-            process_manager = _get_process_manager()
             if not process_manager:
                 logger.warning("ProcessManager not initialized while cleaning session %s", sid)
             else:
@@ -50,7 +57,6 @@ async def cleanup_sdr_session(sid: str) -> None:
             sid,
         )
 
-        process_manager = _get_process_manager()
         if process_manager and process_manager.transcription_manager:
             process_manager.transcription_manager.stop_all_for_session(sid)
 

@@ -1,15 +1,17 @@
+import { configureStore } from '@reduxjs/toolkit';
 import { describe, expect, it, vi } from 'vitest';
 import reducer, { updateSDRConfig, setSelectedSDRId } from '../waterfall-slice.jsx';
-import { unwatchSdr, watchSdr } from '../sdr-watch.js';
+import { leaveSdr, joinSdr } from '../sdr-join.js';
 import backendSyncMiddleware, { setSocketForMiddleware } from '../vfo-marker/vfo-middleware.jsx';
+import vfoReducer, { setVFOProperty, setVfoActive } from '../vfo-marker/vfo-slice.jsx';
 
-describe('passive SDR watching', () => {
-    it('uses only the watch subscription and applies the worker settings', async () => {
+describe('SDR joining', () => {
+    it('uses only the join subscription and applies the worker settings', async () => {
         const commands = [];
         const socket = {
             emit: (_event, request, callback) => {
                 commands.push(request.cmd);
-                callback(request.cmd === 'sdr.watch-sdr'
+                callback(request.cmd === 'sdr.join-sdr'
                     ? { success: true, data: { config: {
                         sdr_id: 'sdr-a', center_freq: 145_800_000,
                         sample_rate: 2_048_000, gain: 20, antenna: 'RX', bias_t: true,
@@ -30,11 +32,11 @@ describe('passive SDR watching', () => {
         dispatch(setSelectedSDRId('previous-sdr'));
         dispatch(updateSDRConfig({ sdr_id: 'previous-sdr', gain: 49.6, sample_rate: 1_024_000 }));
 
-        await watchSdr(socket, dispatch, 'sdr-a');
+        await joinSdr(socket, dispatch, 'sdr-a');
 
-        expect(commands).toEqual(['sdr.watch-sdr']);
+        expect(commands).toEqual(['sdr.join-sdr']);
         expect(state.selectedSDRId).toBe('sdr-a');
-        expect(state.watchingSdrId).toBe('sdr-a');
+        expect(state.joinedSdrId).toBe('sdr-a');
         expect(state.isStreaming).toBe(true);
         expect(state.centerFrequency).toBe(145_800_000);
         expect(state.sampleRate).toBe(2_048_000);
@@ -48,30 +50,39 @@ describe('passive SDR watching', () => {
         expect(state.sdrSettingsById['sdr-a'].draft.biasT).toBe(false);
         expect(state.centerFrequency).toBe(145_810_000);
 
-        await unwatchSdr(socket, dispatch, 'sdr-a');
-        expect(commands).toEqual(['sdr.watch-sdr', 'sdr.unwatch-sdr']);
-        expect(state.watchingSdrId).toBe(null);
+        await leaveSdr(socket, dispatch, 'sdr-a');
+        expect(commands).toEqual(['sdr.join-sdr', 'sdr.leave-sdr']);
+        expect(state.joinedSdrId).toBe(null);
         expect(state.isStreaming).toBe(false);
     });
 
-    it('does not initialize VFO consumers when watching starts', () => {
-        const socket = { emit: vi.fn() };
+    it('starts the viewer’s own VFO without configuring the shared SDR', async () => {
+        const requests = [];
+        const socket = { emit: vi.fn((_event, request, callback) => {
+            requests.push(request);
+            if (request.cmd === 'sdr.join-sdr') {
+                callback({ success: true, data: { config: {
+                    sdr_id: 'sdr-a', center_freq: 145_800_000, sample_rate: 2_048_000,
+                } } });
+            } else {
+                callback({ success: true, data: {} });
+            }
+        }) };
         setSocketForMiddleware(socket);
-        const store = {
-            getState: () => ({
-                waterfall: { isStreaming: true, watchingSdrId: 'sdr-a' },
-                vfo: { vfoMarkers: { 1: { frequency: 145_800_000 } },
-                    vfoActive: { 1: true }, selectedVFO: 1 },
-            }),
-            dispatch: vi.fn(),
-        };
-        const next = vi.fn();
-
-        backendSyncMiddleware(store)(next)({
-            type: 'waterfallState/setIsStreaming', payload: true,
+        const store = configureStore({
+            reducer: { waterfall: reducer, vfo: vfoReducer },
+            middleware: (getDefaultMiddleware) => getDefaultMiddleware().concat(backendSyncMiddleware),
         });
+        store.dispatch(updateSDRConfig({ sdr_id: 'sdr-a', center_freq: 145_800_000, sample_rate: 2_048_000 }));
+        store.dispatch(setVFOProperty({ vfoNumber: 1, updates: { frequency: 145_810_000 } }));
+        store.dispatch(setVfoActive(1));
 
-        expect(store.dispatch).not.toHaveBeenCalled();
+        await joinSdr(socket, store.dispatch, 'sdr-a');
+
+        expect(requests.map((request) => request.cmd)).toEqual([
+            'sdr.join-sdr', 'update-vfo-parameters',
+        ]);
+        expect(requests[1].data).toMatchObject({ vfoNumber: 1, frequency: 145_810_000, active: true });
         setSocketForMiddleware(null);
     });
 });

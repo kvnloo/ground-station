@@ -16,6 +16,7 @@
 """VFO (Virtual Frequency Oscillator) handlers."""
 
 import asyncio
+import math
 from typing import Any, Dict, Optional, Union
 
 from sqlalchemy import select
@@ -62,6 +63,33 @@ async def update_vfo_parameters(
 
     vfomanager = VFOManager()
     vfo_id = data.get("vfoNumber", 0)
+
+    # JOIN can use session-local VFO consumers, but its frequency must stay
+    # within the IQ bandwidth supplied by the controlling SDR session.
+    joined_sdr_id = session_tracker.get_session_sdr(sid)
+    joined_process = process_manager.processes.get(joined_sdr_id) if joined_sdr_id else None
+    if joined_process and sid in joined_process.get("joiners", set()):
+        if not process_manager.is_sdr_process_running(joined_sdr_id):
+            return {"success": False, "error": "The joined SDR is no longer streaming"}
+        if ("frequency" in data and data.get("active") is not False) or data.get("active") is True:
+            old_state = vfomanager.get_vfo_state(sid, vfo_id) if vfo_id > 0 else None
+            frequency = data.get("frequency", old_state.center_freq if old_state else None)
+            live_config = joined_process.get("config") or {}
+            try:
+                frequency = float(frequency)
+                center = float(live_config["center_freq"])
+                sample_rate = float(live_config["sample_rate"])
+            except (KeyError, TypeError, ValueError):
+                return {"success": False, "error": "Live SDR bandwidth is unavailable"}
+            if (
+                not all(math.isfinite(value) for value in (frequency, center, sample_rate))
+                or sample_rate <= 0
+                or abs(frequency - center) > sample_rate / 2
+            ):
+                return {
+                    "success": False,
+                    "error": "JOIN VFO frequency must stay within the live SDR bandwidth",
+                }
 
     # Get old VFO state BEFORE update to detect changes
     old_vfo_state = vfomanager.get_vfo_state(sid, vfo_id) if vfo_id > 0 else None
@@ -334,7 +362,7 @@ async def toggle_transcription(
 
     # Get SDR ID from session config (not from VFO state which may not have it)
     sdr_session = get_sdr_session(sid)
-    sdr_id = sdr_session.get("sdr_id") if sdr_session else None
+    sdr_id = sdr_session.get("sdr_id") if sdr_session else session_tracker.get_session_sdr(sid)
 
     # If enabling transcription and SDR is streaming, try to start the worker
     if enabled and sdr_id:

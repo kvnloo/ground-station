@@ -1,10 +1,13 @@
 import logging
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from handlers.entities import sdr as sdrhandlers
+from handlers.entities import vfo as vfohandlers
 from hardware import parameters as sdrparameters
+from session.tracker import session_tracker
+from vfos.state import VFOManager
 
 
 class _DbSession:
@@ -26,6 +29,9 @@ class _SocketServer:
     async def leave_room(self, session_id, room):
         self.left.append((session_id, room))
 
+    async def emit(self, *_args, **_kwargs):
+        pass
+
 
 def _set_active_sdr(monkeypatch):
     process_info = {
@@ -33,7 +39,9 @@ def _set_active_sdr(monkeypatch):
         "config": {"center_freq": 145_800_000, "sample_rate": 2_048_000, "gain": 20},
     }
     monkeypatch.setattr(sdrhandlers, "AsyncSessionLocal", _DbSession)
-    monkeypatch.setattr(sdrhandlers.process_manager, "processes", {"sdr-a": process_info})
+    processes = {"sdr-a": process_info}
+    monkeypatch.setattr(sdrhandlers.process_manager, "processes", processes)
+    monkeypatch.setattr(sdrhandlers.process_manager.lifecycle_manager, "processes", processes)
     monkeypatch.setattr(
         sdrhandlers.process_manager, "is_sdr_process_running", lambda sdr_id: sdr_id == "sdr-a"
     )
@@ -79,8 +87,9 @@ def test_builds_conflict_payload_with_internal_flag(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_watch_joins_fft_room_without_configuring_or_claiming_worker(monkeypatch):
+async def test_join_claims_worker_lifetime_without_configuring_it(monkeypatch):
     process_info = _set_active_sdr(monkeypatch)
+    process_info["config_queue"] = Mock()
     monkeypatch.setitem(
         sdrparameters.sdr_parameters_cache,
         ("sdr-a", ""),
@@ -93,59 +102,264 @@ async def test_watch_joins_fft_room_without_configuring_or_claiming_worker(monke
     inspection = await sdrhandlers.sdr_command_routing(
         sio, "inspect-sdr", {"selectedSDRId": "sdr-a"}, logging.getLogger(__name__), "viewer"
     )
-    watched = await sdrhandlers.sdr_command_routing(
-        sio, "watch-sdr", {"selectedSDRId": "sdr-a"}, logging.getLogger(__name__), "viewer"
+    joined = await sdrhandlers.sdr_command_routing(
+        sio, "join-sdr", {"selectedSDRId": "sdr-a"}, logging.getLogger(__name__), "viewer"
     )
 
     assert inspection["data"]["conflict"]["includes_internal_observation"] is True
-    assert watched["success"] is True
-    assert watched["data"]["config"]["center_freq"] == 145_800_000
-    assert watched["data"]["parameters"]["gain_values"] == [0, 10, 20]
+    assert joined["success"] is True
+    assert joined["data"]["config"]["center_freq"] == 145_800_000
+    assert joined["data"]["parameters"]["gain_values"] == [0, 10, 20]
     assert sio.entered == [("viewer", "sdr-a")]
-    assert process_info["clients"] == {"internal:obs-123"}
-    assert process_info["watchers"] == {"viewer"}
+    assert process_info["clients"] == {"internal:obs-123", "viewer"}
+    assert process_info["joiners"] == {"viewer"}
+    assert session_tracker.get_session_sdr("viewer") == "sdr-a"
     configure.assert_not_awaited()
+    process_info["config_queue"].put.assert_not_called()
 
     await sdrhandlers.sdr_command_routing(
-        sio, "unwatch-sdr", {"selectedSDRId": "sdr-a"}, logging.getLogger(__name__), "viewer"
+        sio, "leave-sdr", {"selectedSDRId": "sdr-a"}, logging.getLogger(__name__), "viewer"
     )
     assert sio.left == [("viewer", "sdr-a")]
-    assert process_info["watchers"] == set()
+    assert process_info["joiners"] == set()
+    assert process_info["clients"] == {"internal:obs-123"}
+    assert session_tracker.get_session_sdr("viewer") is None
 
 
 @pytest.mark.asyncio
-async def test_watch_keeps_worker_capabilities_after_saved_sdr_is_edited(monkeypatch):
+async def test_join_keeps_worker_capabilities_after_saved_sdr_is_edited(monkeypatch):
     process_info = _set_active_sdr(monkeypatch)
     process_info["parameters"] = {"gain_values": [0, 10, 20]}
     monkeypatch.setattr(sdrparameters, "sdr_parameters_cache", {})
 
-    watched = await sdrhandlers.sdr_command_routing(
-        _SocketServer(),
-        "watch-sdr",
+    sio = _SocketServer()
+    joined = await sdrhandlers.sdr_command_routing(
+        sio,
+        "join-sdr",
         {"selectedSDRId": "sdr-a"},
         logging.getLogger(__name__),
         "viewer",
     )
 
-    assert watched["success"] is True
-    assert watched["data"]["parameters"] == process_info["parameters"]
+    assert joined["success"] is True
+    assert joined["data"]["parameters"] == process_info["parameters"]
+    await sdrhandlers.sdr_command_routing(
+        sio, "leave-sdr", {"selectedSDRId": "sdr-a"}, logging.getLogger(__name__), "viewer"
+    )
 
 
 @pytest.mark.asyncio
-async def test_controller_cannot_watch_or_unwatch_its_active_room(monkeypatch):
+async def test_joiner_vfo_uses_own_consumer_and_cannot_tune_outside_live_band(monkeypatch):
+    process_info = _set_active_sdr(monkeypatch)
+    sio = _SocketServer()
+    starts = []
+    monkeypatch.setattr(
+        sdrhandlers,
+        "start_demodulator_for_mode",
+        lambda mode, sdr_id, session_id, _logger, vfo_number=None: starts.append(
+            (mode, sdr_id, session_id, vfo_number)
+        )
+        or True,
+    )
+    monkeypatch.setattr(vfohandlers, "handle_vfo_decoder_state", AsyncMock())
+
+    await sdrhandlers.sdr_command_routing(
+        sio, "join-sdr", {"selectedSDRId": "sdr-a"}, logging.getLogger(__name__), "viewer"
+    )
+    accepted = await vfohandlers.update_vfo_parameters(
+        sio,
+        {"vfoNumber": 1, "frequency": 145_810_000, "mode": "FM", "active": True},
+        logging.getLogger(__name__),
+        "viewer",
+    )
+    rejected = await vfohandlers.update_vfo_parameters(
+        sio,
+        {"vfoNumber": 1, "frequency": 150_000_000, "mode": "FM", "active": True},
+        logging.getLogger(__name__),
+        "viewer",
+    )
+
+    assert accepted["success"] is True
+    assert rejected["success"] is False
+    assert "live SDR bandwidth" in rejected["error"]
+    assert starts == [("FM", "sdr-a", "viewer", 1)]
+    assert process_info["clients"] == {"internal:obs-123", "viewer"}
+    assert process_info["config"]["center_freq"] == 145_800_000
+    assert VFOManager().get_vfo_state("viewer", 1).center_freq == 145_810_000
+
+    await sdrhandlers.sdr_command_routing(
+        sio, "leave-sdr", {"selectedSDRId": "sdr-a"}, logging.getLogger(__name__), "viewer"
+    )
+    assert "viewer" not in VFOManager().get_all_session_ids()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_detaches_joiner_without_stopping_observation(monkeypatch):
+    from session import service as service_module
+
+    process_info = _set_active_sdr(monkeypatch)
+    sio = _SocketServer()
+    monkeypatch.setattr(service_module.runtimestate, "process_manager", sdrhandlers.process_manager)
+    monkeypatch.setattr(sdrhandlers.process_manager.lifecycle_manager, "sio", sio)
+    stop_process = AsyncMock()
+    monkeypatch.setattr(sdrhandlers.process_manager, "stop_sdr_process", stop_process)
+
+    await sdrhandlers.sdr_command_routing(
+        sio, "join-sdr", {"selectedSDRId": "sdr-a"}, logging.getLogger(__name__), "viewer"
+    )
+    await service_module.cleanup_sdr_session("viewer")
+
+    assert process_info["clients"] == {"internal:obs-123"}
+    assert process_info["joiners"] == set()
+    assert session_tracker.get_session_sdr("viewer") is None
+    assert sio.left == [("viewer", "sdr-a")]
+    stop_process.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_joiner_keeps_worker_alive_after_owner_leaves_and_stops_it_last(monkeypatch):
+    process_info = _set_active_sdr(monkeypatch)
+    process_info["clients"] = {"owner"}
+    process_info["process"] = Mock(is_alive=Mock(return_value=False))
+    process_info["stop_event"] = Mock()
+    sio = _SocketServer()
+    lifecycle = sdrhandlers.process_manager.lifecycle_manager
+    monkeypatch.setattr(lifecycle, "sio", sio)
+    for manager, method in (
+        (lifecycle.demodulator_manager, "stop_demodulator"),
+        (lifecycle.recorder_manager, "stop_recorder"),
+        (lifecycle.decoder_manager, "stop_decoder"),
+        (lifecycle.audio_recorder_manager, "stop_audio_recorder"),
+    ):
+        monkeypatch.setattr(manager, method, Mock())
+    if lifecycle.transcription_manager:
+        monkeypatch.setattr(lifecycle.transcription_manager, "stop_transcription", Mock())
+
+    joined = await sdrhandlers.sdr_command_routing(
+        sio, "join-sdr", {"selectedSDRId": "sdr-a"}, logging.getLogger(__name__), "joiner"
+    )
+    assert joined["success"] is True
+    VFOManager().update_vfo_state("joiner", 1, center_freq=145_810_000, active=True)
+
+    await lifecycle.stop_sdr_process("sdr-a", "owner")
+
+    assert sdrhandlers.process_manager.processes["sdr-a"] is process_info
+    assert process_info["clients"] == {"joiner"}
+    assert process_info["joiners"] == {"joiner"}
+    assert not process_info["stop_event"].set.called
+    assert session_tracker.get_session_sdr("joiner") == "sdr-a"
+    assert VFOManager().get_vfo_state("joiner", 1).active is True
+    starts = []
+    monkeypatch.setattr(
+        sdrhandlers,
+        "start_demodulator_for_mode",
+        lambda mode, sdr_id, session_id, _logger, vfo_number=None: starts.append(
+            (mode, sdr_id, session_id, vfo_number)
+        )
+        or True,
+    )
+    monkeypatch.setattr(vfohandlers, "handle_vfo_decoder_state", AsyncMock())
+    vfo_reply = await vfohandlers.update_vfo_parameters(
+        sio,
+        {"vfoNumber": 1, "frequency": 145_820_000, "mode": "FM", "active": True},
+        logging.getLogger(__name__),
+        "joiner",
+    )
+    assert vfo_reply["success"] is True
+    assert starts == [("FM", "sdr-a", "joiner", 1)]
+
+    left = await sdrhandlers.sdr_command_routing(
+        sio, "leave-sdr", {"selectedSDRId": "sdr-a"}, logging.getLogger(__name__), "joiner"
+    )
+
+    assert left["success"] is True
+    assert "sdr-a" not in sdrhandlers.process_manager.processes
+    process_info["stop_event"].set.assert_called_once()
+    assert session_tracker.get_session_sdr("joiner") is None
+    assert "joiner" not in VFOManager().get_all_session_ids()
+    assert sio.left == [("owner", "sdr-a"), ("joiner", "sdr-a")]
+
+
+@pytest.mark.asyncio
+async def test_worker_failure_detaches_joiner_without_recursive_teardown(monkeypatch):
+    process_info = _set_active_sdr(monkeypatch)
+    process_info["clients"] = {"owner", "joiner"}
+    process_info["joiners"] = {"joiner"}
+    process_info["process"] = Mock(is_alive=Mock(return_value=False))
+    process_info["stop_event"] = Mock()
+    sio = _SocketServer()
+    lifecycle = sdrhandlers.process_manager.lifecycle_manager
+    monkeypatch.setattr(lifecycle, "sio", sio)
+    for manager, method in (
+        (lifecycle.demodulator_manager, "stop_demodulator"),
+        (lifecycle.recorder_manager, "stop_recorder"),
+        (lifecycle.decoder_manager, "stop_decoder"),
+    ):
+        monkeypatch.setattr(manager, method, Mock())
+    if lifecycle.transcription_manager:
+        monkeypatch.setattr(lifecycle.transcription_manager, "stop_transcription", Mock())
+    session_tracker.register_session_streaming("joiner", "sdr-a")
+
+    await lifecycle.stop_sdr_process("sdr-a")
+
+    assert "sdr-a" not in sdrhandlers.process_manager.processes
+    assert session_tracker.get_session_sdr("joiner") is None
+    assert sio.left == [("joiner", "sdr-a")]
+
+
+@pytest.mark.asyncio
+async def test_joiner_cannot_reconfigure_when_it_is_only_remaining_client(monkeypatch):
+    process_info = _set_active_sdr(monkeypatch)
+    process_info["clients"] = {"viewer"}
+    process_info["joiners"] = {"viewer"}
+    monkeypatch.setattr(
+        sdrhandlers.crud.hardware,
+        "fetch_sdr",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "data": {
+                    "id": "sdr-a",
+                    "type": "rtlsdrusbv3",
+                    "serial": "123",
+                    "frequency_min": 24,
+                    "frequency_max": 1766,
+                },
+            }
+        ),
+    )
+    configure = AsyncMock()
+    monkeypatch.setattr(sdrhandlers.session_service, "configure_sdr", configure)
+
+    response = await sdrhandlers.sdr_command_routing(
+        _SocketServer(),
+        "configure-sdr",
+        {"selectedSDRId": "sdr-a", "centerFrequency": 145_800_000},
+        logging.getLogger(__name__),
+        "viewer",
+    )
+
+    assert response["error_code"] == "sdr_in_use_conflict"
+    assert "Take Over" in response["error"]
+    assert response["data"]["other_session_count"] == 0
+    configure.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_controller_cannot_join_or_leave_its_active_room(monkeypatch):
     process_info = _set_active_sdr(monkeypatch)
     process_info["clients"].add("controller")
     sio = _SocketServer()
 
-    watched = await sdrhandlers.sdr_command_routing(
-        sio, "watch-sdr", {"selectedSDRId": "sdr-a"}, logging.getLogger(__name__), "controller"
+    joined = await sdrhandlers.sdr_command_routing(
+        sio, "join-sdr", {"selectedSDRId": "sdr-a"}, logging.getLogger(__name__), "controller"
     )
-    unwatched = await sdrhandlers.sdr_command_routing(
-        sio, "unwatch-sdr", {"selectedSDRId": "sdr-a"}, logging.getLogger(__name__), "controller"
+    left = await sdrhandlers.sdr_command_routing(
+        sio, "leave-sdr", {"selectedSDRId": "sdr-a"}, logging.getLogger(__name__), "controller"
     )
 
-    assert watched["success"] is False
-    assert unwatched["success"] is False
+    assert joined["success"] is False
+    assert left["success"] is False
     assert process_info["clients"] == {"internal:obs-123", "controller"}
     assert sio.entered == []
     assert sio.left == []

@@ -158,7 +158,7 @@ const backendSyncMiddleware = (store) => (next) => (action) => {
             // VFO is outside bandwidth or uninitialized - reset to visible center and unlock
             // Use the visible center frequency if zoom/pan is active
             let targetFrequency = centerFrequency;
-            if (typeof window !== 'undefined' && window.getWaterfallTransform) {
+            if (!stateBefore.waterfall.joinedSdrId && typeof window !== 'undefined' && window.getWaterfallTransform) {
                 const transform = window.getWaterfallTransform();
                 targetFrequency = (transform.startFreq + transform.endFreq) / 2;
             }
@@ -185,12 +185,6 @@ const backendSyncMiddleware = (store) => (next) => (action) => {
     // Don't sync to backend if not streaming (except when starting streaming)
     const isStreaming = state.waterfall.isStreaming;
     if (!isStreaming && action.type !== 'waterfallState/setIsStreaming') {
-        return result;
-    }
-
-    // Watching receives FFT frames only. A streaming status transition must not
-    // initialize this browser's VFOs or attach consumers to an observation.
-    if (state.waterfall.watchingSdrId) {
         return result;
     }
 
@@ -387,6 +381,26 @@ const backendSyncMiddleware = (store) => (next) => (action) => {
             // Only send VFO data if the VFO has been initialized (frequency is not null)
             // and the VFO is active
             if (vfoState.frequency !== null && isActive) {
+                if (state.waterfall.joinedSdrId) {
+                    const center = Number(state.waterfall.centerFrequency);
+                    const sampleRate = Number(state.waterfall.sampleRate);
+                    const frequency = Number(vfoState.frequency);
+                    if (Number.isFinite(center) && Number.isFinite(sampleRate)
+                        && (!Number.isFinite(frequency) || Math.abs(frequency - center) > sampleRate / 2)) {
+                        // A previous session's VFO may be outside this live SDR.
+                        // Recenter it locally before creating a passive consumer.
+                        store.dispatch(setVFOProperty({
+                            vfoNumber: vfoNum,
+                            updates: {
+                                frequency: center,
+                                lockedTransmitterId: 'none',
+                                lockedTransmitterTrackerId: null,
+                                frequencyOffset: 0,
+                            },
+                        }));
+                        return;
+                    }
+                }
                 // Filter out UI-only fields before sending to backend
                 const backendVfoState = filterUIOnlyFields(vfoState);
 

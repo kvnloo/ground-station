@@ -69,7 +69,7 @@ const SdrAccordion = ({
                           onAccordionChange,
                           gettingSDRParameters,
                           isStreaming,
-                          watchingSdrId,
+                          joinedSdrId,
                           sdrs,
                           selectedSDRId,
                           onSDRChange,
@@ -417,7 +417,7 @@ const SdrAccordion = ({
                                     event.stopPropagation();
                                     onRefreshParameters?.();
                                 }}
-                                disabled={gettingSDRParameters || selectedSDRId === 'none' || Boolean(watchingSdrId)}
+                                disabled={gettingSDRParameters || selectedSDRId === 'none' || Boolean(joinedSdrId)}
                                 sx={{ opacity: 0.7, p: 0.5, mr: 0.5 }}
                             >
                                 <RefreshIcon sx={{ fontSize: '1rem' }} />
