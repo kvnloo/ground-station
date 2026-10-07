@@ -22,6 +22,7 @@ const mapMocks = vi.hoisted(() => ({
     getZoom: vi.fn(() => 2),
     isStyleLoaded: vi.fn(() => true),
     getProjection: vi.fn(() => ({type: 'mercator'})),
+    getContainer: vi.fn(() => ({clientWidth: 700, clientHeight: 352})),
     on: vi.fn(),
     off: vi.fn(),
     resize: vi.fn(),
@@ -123,7 +124,7 @@ describe('satellite information map', () => {
         expect(mapMocks.mapProps.mapStyle.sources.basemap.tiles[0]).toContain('openstreetmap.org');
         await waitFor(() => expect(mapMocks.fitBounds).toHaveBeenCalled());
         expect(mapMocks.fitBounds.mock.calls.at(-1)[1]).toEqual({
-            padding: {top: 40, right: 40, bottom: 72, left: 40},
+            padding: {top: 11, right: 11, bottom: 11, left: 11},
             animate: false,
             duration: 0,
         });

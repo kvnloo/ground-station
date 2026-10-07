@@ -489,7 +489,7 @@ const SatelliteInfoContent = ({
             )}
 
             <Grid container spacing={2} sx={{ mb: 2 }}>
-                <Grid size={{ xs: 12, md: asDialog ? 7 : 8 }}>
+                <Grid size={{ xs: 12, md: asDialog ? 6 : 8 }}>
                     <Box
                         sx={{
                             height: '100%',
@@ -531,7 +531,7 @@ const SatelliteInfoContent = ({
                         </Box>
                     </Box>
                 </Grid>
-                <Grid size={{ xs: 12, md: asDialog ? 5 : 4 }}>
+                <Grid size={{ xs: 12, md: asDialog ? 6 : 4 }}>
                     <Box
                         sx={{
                             height: '100%',

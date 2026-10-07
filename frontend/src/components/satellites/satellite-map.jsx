@@ -52,10 +52,14 @@ import createTerminatorLine from '../common/terminator-line.jsx';
 import {getSunMoonCoords} from '../common/sunmoon.jsx';
 import {getSatelliteCoverageCircle} from '../common/tracking-logic.jsx';
 import {resolveDynamicOrbitPathSegments} from '../common/orbit-path-dynamic-split.js';
-import {fitMapLibreCoverage} from '../common/coveragefit.js';
 import {createSatelliteRecord, propagateSatelliteRecord} from '../../hooks/liveorbit.js';
+import {
+    fitDialogMapLibreCoverage,
+    getDialogLeafletCoveragePadding,
+} from './dialogcoveragefit.js';
 
-const MAPLIBRE_MIN_ZOOM = -6;
+const MAPLIBRE_MIN_ZOOM = -2;
+const LEAFLET_MIN_ZOOM = -4;
 const MAP_MAX_ZOOM = 10;
 
 const DEFAULT_MAP_SETTINGS = Object.freeze({
@@ -247,8 +251,10 @@ const SatelliteLeafletMap = ({satelliteData, data, settings, location}) => {
         if (settings.showSatelliteCoverage && coveragePoints.length > 1) {
             const coverageBounds = L.latLngBounds(coveragePoints);
             if (coverageBounds.isValid()) {
-                // This is the same coverage-first fit used by the tracking map.
-                map.fitBounds(coverageBounds, {padding: [1, 1], animate: false});
+                map.fitBounds(coverageBounds, {
+                    padding: getDialogLeafletCoveragePadding(map),
+                    animate: false,
+                });
                 return;
             }
         }
@@ -262,7 +268,7 @@ const SatelliteLeafletMap = ({satelliteData, data, settings, location}) => {
             key={`${selectedTileLayer.id}:${selectedTileLayer.projection || 'EPSG3857'}`}
             center={positionLatLon?.every(Number.isFinite) ? positionLatLon : [0, 0]}
             zoom={settings.showSatelliteCoverage ? 0 : settings.mapZoomLevel}
-            minZoom={0}
+            minZoom={LEAFLET_MIN_ZOOM}
             maxZoom={MAP_MAX_ZOOM}
             zoomSnap={0.25}
             zoomDelta={0.25}
@@ -357,7 +363,7 @@ const SatelliteMapLibreMap = ({satelliteData, data, settings, location}) => {
     useLayoutEffect(() => {
         if (!map || !hasPosition || !map.isStyleLoaded?.()) return;
         if (map.getProjection?.()?.type !== 'mercator') return;
-        if (coverageCoordinates.length > 1 && settings.showSatelliteCoverage && fitMapLibreCoverage({
+        if (coverageCoordinates.length > 1 && settings.showSatelliteCoverage && fitDialogMapLibreCoverage({
             map,
             coverage: data.coverage,
         })) {
