@@ -50,7 +50,7 @@ from server.scheduler import (
 from server.sessionsnapshot import start_session_runtime_emitter
 from server.spapaths import is_static_asset_request, resolve_static_asset_path
 from server.systeminfo import start_system_info_emitter
-from server.version import get_full_version_info, get_update_check
+from server.version import UpdateCheckError, get_full_version_info, get_update_check
 from tasks.manager import BackgroundTaskManager
 from tasks.registry import get_task
 from tlesync.persist import load_orbital_sync_state
@@ -813,10 +813,12 @@ async def get_version():
 
 
 @app.get("/api/update-check")
-async def update_check():
+async def update_check(refresh: bool = False):
     """Return update availability based on GitHub releases."""
     try:
-        return get_update_check()
+        return await get_update_check(force_refresh=refresh)
+    except UpdateCheckError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Error retrieving update information: {str(e)}")
         raise HTTPException(

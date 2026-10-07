@@ -31,3 +31,4 @@ export { default as SystemInfoCard } from './system-info-card.jsx';
 export { default as SessionSnapshotCard } from './session-snapshot-card.jsx';
 export { default as EventLogConsoleCard } from './event-log-console-card.jsx';
 export { default as TimeDriftCard } from './time-drift-card.jsx';
+export { default as UpdateCard } from './update-card.jsx';

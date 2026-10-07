@@ -2,15 +2,23 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 
 export const fetchUpdateCheck = createAsyncThunk(
     'updateCheck/fetchUpdateCheck',
-    async (_, { rejectWithValue }) => {
+    async ({ force = false } = {}, { rejectWithValue }) => {
         try {
-            const response = await fetch('/api/update-check');
-            if (!response.ok) {
-                throw new Error('Failed to fetch update info');
+            const response = await fetch(force ? '/api/update-check?refresh=true' : '/api/update-check', {
+                cache: 'no-store',
+            });
+            let payload = null;
+            try {
+                payload = await response.json();
+            } catch {
+                // Preserve the HTTP status below when the response has no JSON body.
             }
-            return await response.json();
+            if (!response.ok) {
+                throw new Error(payload?.detail || `Update check failed (HTTP ${response.status})`);
+            }
+            return payload;
         } catch (error) {
-            return rejectWithValue(error.message);
+            return rejectWithValue(error instanceof Error ? error.message : 'Update check failed');
         }
     }
 );
@@ -24,11 +32,13 @@ const updateSlice = createSlice({
             latestTag: null,
             latestUrl: null,
             publishedAt: null,
+            checkedAt: null,
             isUpdateAvailable: false,
         },
         loading: false,
         error: null,
         lastChecked: null,
+        lastAttempted: null,
     },
     reducers: {},
     extraReducers: (builder) => {
@@ -36,6 +46,7 @@ const updateSlice = createSlice({
             .addCase(fetchUpdateCheck.pending, (state) => {
                 state.loading = true;
                 state.error = null;
+                state.lastAttempted = Date.now();
             })
             .addCase(fetchUpdateCheck.fulfilled, (state, action) => {
                 state.loading = false;
@@ -44,7 +55,7 @@ const updateSlice = createSlice({
             })
             .addCase(fetchUpdateCheck.rejected, (state, action) => {
                 state.loading = false;
-                state.error = action.payload;
+                state.error = action.payload || action.error?.message || 'Update check failed';
             });
     },
 });

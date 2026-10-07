@@ -7,8 +7,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Optional, TypedDict, cast
 
+import httpx
 import psutil
-import requests
 
 from common.logger import logger
 
@@ -26,19 +26,25 @@ class UpdateCheckData(TypedDict):
     latestTag: Optional[str]
     latestUrl: Optional[str]
     publishedAt: Optional[str]
+    checkedAt: str
     isUpdateAvailable: bool
 
 
 class UpdateCheckCache(TypedDict):
     timestamp: float
     data: Optional[UpdateCheckData]
+    error: Optional[str]
 
 
 _version_info = None
-_update_check_cache: UpdateCheckCache = {"timestamp": 0.0, "data": None}
+_update_check_cache: UpdateCheckCache = {"timestamp": 0.0, "data": None, "error": None}
 
 # GitHub releases endpoint (public)
 GITHUB_RELEASES_URL = "https://api.github.com/repos/sgoudelis/ground-station/releases/latest"
+
+
+class UpdateCheckError(RuntimeError):
+    """Raised when GitHub release information cannot be retrieved or validated."""
 
 
 def _normalize_version(raw: str) -> str:
@@ -83,7 +89,7 @@ def _compare_versions(a: str, b: str) -> int:
     return 0
 
 
-def _fetch_latest_release() -> dict[str, Any]:
+async def _fetch_latest_release() -> dict[str, Any]:
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "ground-station",
@@ -92,17 +98,32 @@ def _fetch_latest_release() -> dict[str, Any]:
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    response = requests.get(GITHUB_RELEASES_URL, headers=headers, timeout=5)
-    response.raise_for_status()
-    return cast(dict[str, Any], response.json())
+    # Keep external I/O off FastAPI's event loop so a slow GitHub response does
+    # not pause unrelated HTTP and Socket.IO traffic.
+    async with httpx.AsyncClient(headers=headers, timeout=5.0) as client:
+        response = await client.get(GITHUB_RELEASES_URL)
+        response.raise_for_status()
+        payload = response.json()
+
+    if not isinstance(payload, dict):
+        raise ValueError("GitHub returned an unexpected release response")
+    return cast(dict[str, Any], payload)
 
 
-def get_update_check(cache_ttl_seconds: int = 21600) -> UpdateCheckData:
+async def get_update_check(
+    cache_ttl_seconds: int = 21600,
+    failure_cache_ttl_seconds: int = 300,
+    force_refresh: bool = False,
+) -> UpdateCheckData:
     """Return update availability based on GitHub releases with in-memory caching."""
     now = time.time()
     cached = _update_check_cache.get("data")
-    if cached and now - _update_check_cache["timestamp"] < cache_ttl_seconds:
+    cached_error = _update_check_cache.get("error")
+    cache_age = now - _update_check_cache["timestamp"]
+    if not force_refresh and cached and cache_age < cache_ttl_seconds:
         return cached
+    if not force_refresh and cached_error and cache_age < failure_cache_ttl_seconds:
+        raise UpdateCheckError(cached_error)
 
     current_base = _normalize_version(get_version_base())
     data: UpdateCheckData = {
@@ -111,12 +132,15 @@ def get_update_check(cache_ttl_seconds: int = 21600) -> UpdateCheckData:
         "latestTag": None,
         "latestUrl": None,
         "publishedAt": None,
+        "checkedAt": datetime.now(timezone.utc).isoformat(),
         "isUpdateAvailable": False,
     }
 
     try:
-        release = _fetch_latest_release()
+        release = await _fetch_latest_release()
         tag = release.get("tag_name") or release.get("name") or ""
+        if not isinstance(tag, str) or not tag.strip():
+            raise ValueError("GitHub release did not include a version tag")
         latest_version = _normalize_version(tag)
         data.update(
             {
@@ -128,10 +152,18 @@ def get_update_check(cache_ttl_seconds: int = 21600) -> UpdateCheckData:
             }
         )
     except Exception as exc:
-        logger.warning(f"Update check failed: {exc}")
+        message = f"Unable to check GitHub Releases: {exc}"
+        logger.warning(message)
+        # Cache the failure briefly to avoid repeatedly contacting GitHub during
+        # an outage while still returning an explicit error to every client.
+        _update_check_cache["timestamp"] = now
+        _update_check_cache["data"] = None
+        _update_check_cache["error"] = message
+        raise UpdateCheckError(message) from exc
 
     _update_check_cache["timestamp"] = now
     _update_check_cache["data"] = data
+    _update_check_cache["error"] = None
     return data
 
 

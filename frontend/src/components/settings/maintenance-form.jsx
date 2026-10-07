@@ -39,6 +39,7 @@ import MemoryIcon from '@mui/icons-material/Memory';
 import DnsIcon from '@mui/icons-material/Dns';
 import HistoryIcon from '@mui/icons-material/History';
 import ArticleIcon from '@mui/icons-material/Article';
+import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
 import { useTranslation } from 'react-i18next';
 import { AntTab, AntTabs } from '../common/common.jsx';
 import {
@@ -56,6 +57,7 @@ import {
     SystemInfoCard,
     TimeDriftCard,
     TransmitterImportCard,
+    UpdateCard,
 } from './maintenance/index.jsx';
 
 const TAB_QUERY_PARAM = 'mtab';
@@ -110,6 +112,13 @@ const MaintenanceForm = () => {
     const panelRef = useRef(null);
 
     const tabMeta = useMemo(() => ([
+        {
+            key: 'updates',
+            group: 'operations',
+            label: t('maintenance.tabs.updates', { defaultValue: 'Updates' }),
+            subtitle: t('maintenance.tabs.updates_subtitle', { defaultValue: 'GitHub release status and Docker update instructions' }),
+            icon: <SystemUpdateAltIcon fontSize="small" />,
+        },
         {
             key: 'frontend-state',
             group: 'state',
@@ -183,7 +192,7 @@ const MaintenanceForm = () => {
     const getInitialTabKey = () => {
         const params = new URLSearchParams(location.search);
         const queryTab = params.get(TAB_QUERY_PARAM);
-        return queryTab && tabByKey[queryTab] ? queryTab : 'frontend-state';
+        return queryTab && tabByKey[queryTab] ? queryTab : 'updates';
     };
 
     const [activeTabKey, setActiveTabKey] = useState(getInitialTabKey);
@@ -280,6 +289,19 @@ const MaintenanceForm = () => {
                         />
                     ))}
                 </AntTabs>
+
+                <TabPanel tabKey="updates">
+                    <Grid container spacing={2}>
+                        <Grid size={{ xs: 12 }}>
+                            <Paper
+                                variant="outlined"
+                                sx={maintenanceSectionCardSx}
+                            >
+                                <UpdateCard />
+                            </Paper>
+                        </Grid>
+                    </Grid>
+                </TabPanel>
 
                 <TabPanel tabKey="frontend-state">
                     <Stack spacing={2}>
