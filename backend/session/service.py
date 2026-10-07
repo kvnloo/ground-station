@@ -91,7 +91,9 @@ class SessionService:
         if sdr_id:
             session_tracker.register_session_streaming(session_id, sdr_id)
 
-    async def start_streaming(self, session_id: str, sdr_device: Dict[str, Any]) -> str:
+    async def start_streaming(
+        self, session_id: str, sdr_device: Dict[str, Any], force_takeover: bool = False
+    ) -> str:
         """Start or join the SDR worker process for the configured session."""
         cfg = self.get_session_config(session_id)
         if not cfg:
@@ -103,8 +105,12 @@ class SessionService:
 
         # ProcessManager API may be untyped; cast result to Optional[str]
         try:
+            takeover_kwargs = {"force_takeover": True} if force_takeover else {}
             started_id = cast(
-                Optional[str], await process_manager.start_sdr_process(sdr_device, cfg, session_id)
+                Optional[str],
+                await process_manager.start_sdr_process(
+                    sdr_device, cfg, session_id, **takeover_kwargs
+                ),
             )
         except Exception:
             # Configuration may remain for a connected UI session, but a failed

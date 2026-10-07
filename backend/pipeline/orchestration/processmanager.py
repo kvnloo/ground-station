@@ -190,7 +190,7 @@ class ProcessManager:
         """
         return await self.lifecycle_manager.get_center_frequency(sdr_id)
 
-    async def start_sdr_process(self, sdr_device, sdr_config, client_id):
+    async def start_sdr_process(self, sdr_device, sdr_config, client_id, force_takeover=False):
         """
         Start an SDR worker process
 
@@ -202,7 +202,9 @@ class ProcessManager:
         Returns:
             The device ID for the started process
         """
-        return await self.lifecycle_manager.start_sdr_process(sdr_device, sdr_config, client_id)
+        return await self.lifecycle_manager.start_sdr_process(
+            sdr_device, sdr_config, client_id, force_takeover=force_takeover
+        )
 
     async def stop_sdr_process(self, sdr_id, client_id=None):
         """

@@ -24,8 +24,10 @@ import numpy as np
 
 from common.constants import DictKeys, QueueMessageTypes, SocketEvents
 from common.sdrconfig import SDRConfig
+from db import AsyncSessionLocal
 from fft.processor import fft_processor_process
 from handlers.entities.filebrowser import emit_file_browser_state
+from hardware.parameters import probe_sdr_parameters, sdr_parameter_lock
 from monitoring.timing import TimestampedQueue, get_enabled_event
 from pipeline.orchestration.gnssfix import derive_gnss_fix_status_from_output, gnss_fix_stream_key
 from pipeline.orchestration.gnsssatelliteresolver import GnssSatelliteResolver
@@ -79,6 +81,15 @@ def _create_named_worker_process(worker_func, process_name, *args):
         worker_func(*args)
 
     return named_worker
+
+
+class SdrStartConflict(Exception):
+    """Another client claimed the SDR while this caller waited to start."""
+
+    def __init__(self, sdr_id: str, other_clients: list[str]):
+        self.sdr_id = sdr_id
+        self.other_clients = other_clients
+        super().__init__(f"SDR {sdr_id} is already in use")
 
 
 class ProcessLifecycleManager:
@@ -359,7 +370,46 @@ class ProcessLifecycleManager:
             )
             return None
 
-    async def start_sdr_process(self, sdr_device, sdr_config, client_id):
+    async def start_sdr_process(self, sdr_device, sdr_config, client_id, force_takeover=False):
+        """Warm capabilities before the first worker opens this SDR."""
+        sdr_id = str(sdr_device["id"])
+        async with sdr_parameter_lock(sdr_id):
+            capabilities = None
+            process_info = self.processes.get(sdr_id)
+            if process_info and process_info["process"].is_alive():
+                other_clients = sorted(
+                    str(sid) for sid in process_info["clients"] if str(sid) != str(client_id)
+                )
+                if (
+                    other_clients
+                    and not force_takeover
+                    and not VFOManager.is_internal_session(client_id)
+                ):
+                    raise SdrStartConflict(sdr_id, other_clients)
+            else:
+                # Probe failure must not make an automated observation miss its
+                # pass. The worker still gets its normal chance to start.
+                async with AsyncSessionLocal() as dbsession:
+                    parameters = await probe_sdr_parameters(
+                        dbsession,
+                        sdr_id,
+                        recording_path=sdr_config.get("recording_path"),
+                    )
+                if not parameters.get("success"):
+                    self.logger.warning(
+                        "Could not cache capabilities for SDR %s before streaming: %s",
+                        sdr_id,
+                        parameters.get("error"),
+                    )
+                else:
+                    capabilities = parameters.get("data")
+            # Hold the gate until the worker has opened the device. A concurrent
+            # UI request can only read the cache once the stream is active.
+            return await self._start_sdr_process(
+                sdr_device, sdr_config, client_id, capabilities=capabilities
+            )
+
+    async def _start_sdr_process(self, sdr_device, sdr_config, client_id, capabilities=None):
         """
         Start an SDR worker process
 
@@ -652,6 +702,9 @@ class ProcessLifecycleManager:
                 "decoders": {},  # Will store decoder threads per session (SSTV, AFSK, Morse, etc.)
                 "fft_stats": {},  # Latest stats from FFT processor
                 "device": sdr_device,  # Store device info for runtime snapshots
+                # Keep the capabilities of this running worker if its saved SDR
+                # definition is edited and the shared cache must be invalidated.
+                "parameters": capabilities,
                 # Keep full applied SDR config for change detection in update_configuration().
                 "config": dict(config),
                 # Startup succeeds only after STREAMING_START and a worker stats

@@ -13,6 +13,14 @@ describe('passive SDR watching', () => {
                     ? { success: true, data: { config: {
                         sdr_id: 'sdr-a', center_freq: 145_800_000,
                         sample_rate: 2_048_000, gain: 20, antenna: 'RX', bias_t: true,
+                    }, parameters: {
+                        gain_values: [0, 10, 20, 30],
+                        sample_rate_values: [1_024_000, 2_048_000, 2_400_000],
+                        fft_size_values: [1024, 2048],
+                        fft_window_values: ['hanning', 'blackman'],
+                        antennas: { tx: [], rx: ['RX', 'AUX'] },
+                        capabilities: { clock_sources: ['internal', 'external'] },
+                        has_bias_t: true,
                     } } }
                     : { success: true });
             },
@@ -30,8 +38,10 @@ describe('passive SDR watching', () => {
         expect(state.isStreaming).toBe(true);
         expect(state.centerFrequency).toBe(145_800_000);
         expect(state.sampleRate).toBe(2_048_000);
-        expect(state.gainValues).toEqual([20]);
-        expect(state.sampleRateValues).toEqual([2_048_000]);
+        expect(state.gainValues).toEqual([0, 10, 20, 30]);
+        expect(state.sampleRateValues).toEqual([1_024_000, 2_048_000, 2_400_000]);
+        expect(state.antennasList.rx).toEqual(['RX', 'AUX']);
+        expect(state.sdrCapabilities['sdr-a'].clock_sources).toEqual(['internal', 'external']);
         expect(state.sdrSettingsById['sdr-a'].draft.biasT).toBe(true);
 
         dispatch(updateSDRConfig({ sdr_id: 'sdr-a', bias_t: false, center_freq: 145_810_000 }));

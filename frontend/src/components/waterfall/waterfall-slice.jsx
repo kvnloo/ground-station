@@ -32,77 +32,16 @@ const getDefaultWaterfallRendererMode = () => {
     return 'worker';
 };
 
-const SDR_PARAMS_CACHE_KEY = 'ground-station.waterfall.sdr-params.v1';
-const SDR_PARAMS_CACHE_VERSION = 1;
-
-function canCacheSDRParams(selectedSDRId) {
-    return Boolean(selectedSDRId) && selectedSDRId !== 'none' && selectedSDRId !== 'sigmf-playback';
-}
-
-function readSDRParamsCacheMap() {
-    try {
-        const raw = localStorage.getItem(SDR_PARAMS_CACHE_KEY);
-        if (!raw) {
-            return {};
-        }
-        const parsed = JSON.parse(raw);
-        if (parsed?.version !== SDR_PARAMS_CACHE_VERSION || typeof parsed?.items !== 'object' || parsed.items === null) {
-            return {};
-        }
-        return parsed.items;
-    } catch (error) {
-        console.warn('Failed to read SDR params cache from localStorage:', error);
-        return {};
-    }
-}
-
-function writeSDRParamsCacheMap(items) {
-    try {
-        localStorage.setItem(
-            SDR_PARAMS_CACHE_KEY,
-            JSON.stringify({
-                version: SDR_PARAMS_CACHE_VERSION,
-                items,
-            })
-        );
-    } catch (error) {
-        console.warn('Failed to write SDR params cache to localStorage:', error);
-    }
-}
-
-export function getCachedSDRConfigParameters(selectedSDRId) {
-    if (!canCacheSDRParams(selectedSDRId)) {
-        return null;
-    }
-    const items = readSDRParamsCacheMap();
-    return items?.[selectedSDRId] ?? null;
-}
-
-function setCachedSDRConfigParameters(selectedSDRId, data) {
-    if (!canCacheSDRParams(selectedSDRId) || !data) {
-        return;
-    }
-    const items = readSDRParamsCacheMap();
-    items[selectedSDRId] = data;
-    writeSDRParamsCacheMap(items);
-}
-
 export const getSDRConfigParameters = createAsyncThunk(
     'waterfall/getSDRConfigParameters',
-    async ({socket, selectedSDRId, forceRefresh = false}, {rejectWithValue}) => {
-        if (!forceRefresh) {
-            const cached = getCachedSDRConfigParameters(selectedSDRId);
-            if (cached) {
-                return cached;
-            }
-        }
+    async ({socket, selectedSDRId}, {rejectWithValue}) => {
+        // The backend cache owns freshness and serializes probes with worker startup.
         return new Promise((resolve, reject) => {
             socket.emit("api.call", {
   cmd: 'get-sdr-parameters',
   data: selectedSDRId
 }, response => {
   if (response.success) {
-    setCachedSDRConfigParameters(selectedSDRId, response.data);
     resolve(response.data);
   } else {
     reject(rejectWithValue(response.error));

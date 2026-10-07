@@ -28,8 +28,6 @@ import {
 import { shallowEqual, useSelector, useDispatch, useStore } from 'react-redux';
 
 import {
-    applySDRConfigParameters,
-    getCachedSDRConfigParameters,
     getSDRConfigParameters,
     setErrorDialogOpen,
     setGridEditable,
@@ -704,19 +702,10 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
         });
     }, [dispatch, sdrSettingsById, sendSDRConfigToBackend]);
 
-    const loadSDRParameters = useCallback((selectedValue, { forceRefresh = false } = {}) => {
-        if (!forceRefresh) {
-            const cached = getCachedSDRConfigParameters(selectedValue);
-            if (cached) {
-                dispatch(applySDRConfigParameters({ selectedSDRId: selectedValue, data: cached }));
-                return Promise.resolve(cached);
-            }
-        }
-
+    const loadSDRParameters = useCallback((selectedValue) => {
         return dispatch(getSDRConfigParameters({
             socket,
             selectedSDRId: selectedValue,
-            forceRefresh,
         })).unwrap();
     }, [dispatch, socket]);
 
@@ -792,7 +781,7 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
             return;
         }
 
-        loadSDRParameters(selectedSDRId, { forceRefresh: true })
+        loadSDRParameters(selectedSDRId)
             .then((response) => {
                 applyLoadedSDRParameters(selectedSDRId, response);
             })

@@ -20,14 +20,21 @@ import json
 import logging
 import math
 import sys
-from bisect import bisect_left
+from contextlib import AsyncExitStack
 from typing import Any, Dict, Optional, Union
 
 import crud
 from common.constants import TrackerCommands
 from db import AsyncSessionLocal
+from hardware.parameters import (
+    get_cached_sdr_parameters,
+    invalidate_sdr_parameters,
+    probe_sdr_parameters,
+    sdr_parameter_lock,
+)
 from hardware.soapysdrbrowser import discovered_servers
-from session.service import active_sdr_clients
+from server import runtimestate
+from session.store import active_sdr_clients
 from tracker.contracts import InvalidTrackerIdError, get_tracking_state_name, require_tracker_id
 from tracker.operations import operations
 from tracker.runner import (
@@ -36,12 +43,8 @@ from tracker.runner import (
     get_tracker_instances_payload,
     get_tracker_manager,
 )
-from workers.common import window_functions
 
 logger = logging.getLogger("hardware-handler")
-
-# Create a cache dictionary to store SDR parameters by SDR ID
-sdr_parameters_cache: Dict[str, Dict] = {}
 
 
 def _decode_subprocess_output(raw: Optional[bytes]) -> str:
@@ -137,62 +140,6 @@ def _compact_soapy_device_rows(sdrs: Any, max_items: int = 12) -> str:
         extra = len(rows) - max_items
         rows = rows[:max_items] + [f"...(+{extra})"]
     return ", ".join(rows) if rows else "-"
-
-
-def _nearest_rate(sorted_rates: list[float], target: float) -> float:
-    if not sorted_rates:
-        return target
-    idx = bisect_left(sorted_rates, target)
-    if idx <= 0:
-        return sorted_rates[0]
-    if idx >= len(sorted_rates):
-        return sorted_rates[-1]
-    before = sorted_rates[idx - 1]
-    after = sorted_rates[idx]
-    return after if abs(after - target) < abs(target - before) else before
-
-
-def _select_neat_sample_rates(rates: list[float]) -> list[float]:
-    clean_rates = sorted({float(r) for r in rates if r and r > 0})
-    if len(clean_rates) <= 50:
-        return clean_rates
-
-    min_rate = clean_rates[0]
-    max_rate = clean_rates[-1]
-    log_min = math.log10(min_rate)
-    log_max = math.log10(max_rate)
-
-    selected: set[float] = set()
-    targets: list[float] = []
-    for exp in range(int(math.floor(log_min)), int(math.ceil(log_max)) + 1):
-        for base in (1.0, 2.0, 2.5, 5.0):
-            target = base * (10**exp)
-            if min_rate <= target <= max_rate:
-                targets.append(target)
-
-    for target in targets:
-        nearest = _nearest_rate(clean_rates, target)
-        tolerance = max(target * 0.01, 1.0)
-        if abs(nearest - target) <= tolerance:
-            selected.add(nearest)
-
-    selected.add(min_rate)
-    selected.add(max_rate)
-
-    if len(selected) < 20:
-        for i in range(20):
-            target = 10 ** (log_min + (log_max - log_min) * (i / 19))
-            selected.add(_nearest_rate(clean_rates, target))
-
-    return sorted(selected)
-
-
-def _strip_sample_rate_ranges(capabilities: Dict[str, Any]) -> Dict[str, Any]:
-    if not isinstance(capabilities, dict):
-        return capabilities
-    sanitized = dict(capabilities)
-    sanitized.pop("sample_rate_ranges", None)
-    return sanitized
 
 
 async def get_local_soapy_sdr_devices():
@@ -484,429 +431,6 @@ async def get_local_airspy_sdr_devices():
         reply["error"] = str(e)
 
     logger.info("Done probing local Airspy devices")
-    return reply
-
-
-async def _fetch_sdr_parameters(dbsession, sdr_id, timeout=30.0):
-    """Retrieve SDR parameters from the SDR process manager with caching"""
-
-    reply: Dict[str, Union[bool, None, dict, list, str]] = {
-        "success": None,
-        "data": None,
-        "error": None,
-    }
-    sdr = {}
-    sdr_params = {}
-
-    # Check if parameters for this SDR are already cached
-    # For sigmfplayback, don't use cache since recording_path may have changed
-    if sdr_id in sdr_parameters_cache and sdr_id != "sigmf-playback":
-        logger.info("Using cached parameters for SDR with id %s", sdr_id)
-        return {"success": True, "data": sdr_parameters_cache[sdr_id]}
-    elif sdr_id == "sigmf-playback" and sdr_id in sdr_parameters_cache:
-        logger.info("Skipping cache for sigmfplayback SDR, will re-probe")
-
-    try:
-        # Handle hardcoded SigMF playback SDR
-        if sdr_id == "sigmf-playback":
-            sdr = {
-                "id": "sigmf-playback",
-                "name": "SigMF Playback",
-                "type": "sigmfplayback",
-                "driver": "sigmfplayback",
-                "recording_path": "",  # Will be set when recording is selected
-            }
-        else:
-            # Fetch SDR device details from database
-            sdr_device_reply = await crud.hardware.fetch_sdr(dbsession, sdr_id)
-
-            if not sdr_device_reply["data"]:
-                raise Exception(f"SDR device with id {sdr_id} not found in database")
-
-            sdr = sdr_device_reply["data"]
-
-        if sdr.get("type") in ["rtlsdrtcpv3", "rtlsdrusbv3", "rtlsdrtcpv4", "rtlsdrusbv4"]:
-
-            # Common RTL-SDR gain values in dB
-            gain_values = [
-                0.0,
-                0.9,
-                1.4,
-                2.7,
-                3.7,
-                7.7,
-                8.7,
-                12.5,
-                14.4,
-                15.7,
-                16.6,
-                19.7,
-                20.7,
-                22.9,
-                25.4,
-                28.0,
-                29.7,
-                32.8,
-                33.8,
-                36.4,
-                37.2,
-                38.6,
-                40.2,
-                42.1,
-                43.4,
-                43.9,
-                44.5,
-                48.0,
-            ]
-
-            # Common RTL-SDR sample rates in Hz
-            sample_rate_values = [
-                240000,
-                300000,
-                960000,
-                1024000,
-                1536000,
-                1792000,
-                1920000,
-                2048000,
-                2304000,
-                2400000,
-                2560000,
-                2880000,
-                3200000,
-            ]
-
-            # Common window functions
-            window_function_names = list(window_functions.keys())
-
-            # Common FFT sizes
-            fft_size_values = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
-
-            params = {
-                "gain_values": gain_values,
-                "sample_rate_values": sample_rate_values,
-                "fft_size_values": fft_size_values,
-                "fft_window_values": window_function_names,
-                "has_bias_t": True,
-                "has_tuner_agc": True,
-                "has_rtl_agc": True,
-                "antennas": {"tx": [], "rx": ["RX"]},
-            }
-
-            sdr_parameters_cache[sdr_id] = params
-            reply = {"success": True, "data": params}
-
-        elif sdr.get("type") in ["airspy", "airspyhf"]:
-            logger.info("Getting SDR parameters from native Airspy backend for SDR: %s", sdr)
-            probe_process = await asyncio.create_subprocess_exec(
-                sys.executable,
-                "-c",
-                "from hardware.airspyprobe import probe_native_airspy; "
-                "import json; "
-                f"print(json.dumps(probe_native_airspy({sdr})))",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    probe_process.communicate(), timeout=timeout
-                )
-                if probe_process.returncode != 0:
-                    error_output = _decode_subprocess_output(stderr)
-                    raise Exception(f"Native Airspy probe process failed: {error_output}")
-            except asyncio.TimeoutError:
-                probe_process.kill()
-                raise TimeoutError("Timed out while getting SDR parameters from native Airspy")
-
-            sdr_params_reply = json.loads(_decode_subprocess_output(stdout))
-            if sdr_params_reply.get("success") is False:
-                logger.error(sdr_params_reply)
-                raise Exception(sdr_params_reply.get("error") or "Native Airspy probe failed")
-
-            sdr_params = sdr_params_reply.get("data", {})
-            for log_line in sdr_params_reply.get("log", []):
-                logger.debug(log_line)
-
-            window_function_names = list(window_functions.keys())
-            fft_size_values = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
-
-            params = {
-                "gain_values": sdr_params.get("gains", []),
-                "sample_rate_values": _select_neat_sample_rates(sdr_params.get("rates", [])),
-                "sample_rate_values_full": sdr_params.get("rates", []),
-                "fft_size_values": fft_size_values,
-                "fft_window_values": window_function_names,
-                "has_bias_t": sdr_params.get("has_bias_t", False),
-                "has_tuner_agc": sdr_params.get("has_tuner_agc", False),
-                "has_rtl_agc": False,
-                "has_soapy_agc": False,
-                "antennas": sdr_params.get("antennas", {"tx": [], "rx": ["RX"]}),
-                "frequency_ranges": sdr_params.get("frequency_ranges", {}),
-                "clock_info": sdr_params.get("clock_info", {}),
-                "temperature": sdr_params.get("temperature", {}),
-                "capabilities": sdr_params.get("capabilities", {}),
-            }
-
-            sdr_parameters_cache[sdr_id] = params
-            reply = {"success": True, "data": params}
-
-        elif sdr.get("type") in ["soapysdrremote", "soapysdrlocal"]:
-            if sdr.get("type") == "soapysdrremote":
-                logger.info("Getting SDR parameters from SoapySDR server for SDR: %s", sdr)
-                probe_process = await asyncio.create_subprocess_exec(
-                    "python3",
-                    "-c",
-                    "from hardware.soapysdrremoteprobe import probe_remote_soapy_sdr; "
-                    f"print(probe_remote_soapy_sdr({sdr}))",
-                    stdout=asyncio.subprocess.PIPE,
-                )
-
-                try:
-                    stdout, _ = await asyncio.wait_for(probe_process.communicate(), timeout=timeout)
-
-                except asyncio.TimeoutError:
-                    probe_process.kill()
-                    raise TimeoutError(
-                        "Timed out while getting SDR parameters from SoapySDR server"
-                    )
-            else:
-                logger.info("Getting SDR parameters from local SoapySDR for SDR: %s", sdr)
-                probe_process = await asyncio.create_subprocess_exec(
-                    "python3",
-                    "-c",
-                    "from hardware.soapysdrlocalprobe import probe_local_soapy_sdr; "
-                    f"print(probe_local_soapy_sdr({sdr}))",
-                    stdout=asyncio.subprocess.PIPE,
-                )
-
-                try:
-                    stdout, _ = await asyncio.wait_for(probe_process.communicate(), timeout=timeout)
-
-                except asyncio.TimeoutError:
-                    probe_process.kill()
-                    raise TimeoutError(
-                        "Timed out while getting SDR parameters from SoapySDR server"
-                    )
-
-            sdr_params_reply = eval(stdout.decode().strip())
-
-            if sdr_params_reply["success"] is False:
-                logger.error(sdr_params_reply)
-                raise Exception(sdr_params_reply["error"])
-
-            sdr_params = sdr_params_reply["data"]
-
-            logger.debug("Got SDR parameters from SoapySDR server: %s", sdr_params)
-            for log_line in sdr_params_reply["log"]:
-                logger.debug(log_line)
-
-            window_function_names = list(window_functions.keys())
-            fft_size_values = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
-
-            params = {
-                "gain_values": sdr_params["gains"],
-                "sample_rate_values": _select_neat_sample_rates(sdr_params["rates"]),
-                "sample_rate_values_full": sdr_params["rates"],
-                "fft_size_values": fft_size_values,
-                "fft_window_values": window_function_names,
-                "has_soapy_agc": sdr_params["has_soapy_agc"],
-                "antennas": sdr_params["antennas"],
-                "frequency_ranges": sdr_params.get("frequency_ranges", {}),
-                "clock_info": sdr_params.get("clock_info", {}),
-                "temperature": sdr_params.get("temperature", {}),
-                "capabilities": _strip_sample_rate_ranges(sdr_params.get("capabilities", {})),
-            }
-
-            # try:
-            #     pretty_params = json.dumps(params, indent=2, sort_keys=True)
-            #     print(
-            #         f"[DEBUG] SoapySDR parameters for {sdr.get('name', sdr_id)}:\\n{pretty_params}"
-            #     )
-            # except Exception as e:
-            #     print(
-            #         f"[DEBUG] SoapySDR parameters (non-JSON) for {sdr.get('name', sdr_id)}: {params}"
-            #     )
-            #     print(f"[DEBUG] Pretty print failed: {e}")
-
-            sdr_parameters_cache[sdr_id] = params
-            reply = {"success": True, "data": params}
-
-        elif sdr.get("type") in ["uhd"]:
-            logger.info("Getting SDR parameters from UHD/USRP for SDR: %s", sdr)
-
-            probe_process = await asyncio.create_subprocess_exec(
-                "python3",
-                "-c",
-                "from hardware.uhdprobe import probe_uhd_usrp; " f"print(probe_uhd_usrp({sdr}))",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    probe_process.communicate(), timeout=timeout
-                )
-
-                if probe_process.returncode != 0:
-                    error_output = stderr.decode().strip()
-                    raise Exception(f"UHD probe process failed: {error_output}")
-
-            except asyncio.TimeoutError:
-                probe_process.kill()
-                raise TimeoutError("Timed out while getting SDR parameters from UHD/USRP")
-
-            sdr_params_reply = eval(stdout.decode().strip())
-
-            if sdr_params_reply["success"] is False:
-                logger.error(sdr_params_reply)
-                raise Exception(sdr_params_reply["error"])
-
-            sdr_params = sdr_params_reply["data"]
-
-            logger.debug("Got SDR parameters from UHD/USRP: %s", sdr_params)
-
-            window_function_names = list(window_functions.keys())
-            fft_size_values = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
-
-            params = {
-                "gain_values": sdr_params["gains"],
-                "sample_rate_values": [rate for rate in sdr_params["rates"] if rate >= 100000],
-                "fft_size_values": fft_size_values,
-                "fft_window_values": window_function_names,
-                "has_uhd_agc": sdr_params.get("has_uhd_agc", False),
-                "antennas": sdr_params["antennas"],
-                "frequency_ranges": sdr_params.get("frequency_ranges", {}),
-                "clock_info": sdr_params.get("clock_info", {}),
-                "temperature": sdr_params.get("temperature", {}),
-                "capabilities": _strip_sample_rate_ranges(sdr_params.get("capabilities", {})),
-            }
-
-            sdr_parameters_cache[sdr_id] = params
-            reply = {"success": True, "data": params}
-
-        elif sdr.get("type") in ["sigmfplayback"]:
-            logger.info("Getting parameters from SigMF recording for SDR: %s", sdr)
-
-            recording_path = sdr.get("recording_path", "")
-
-            if not recording_path:
-                for client_id, session in active_sdr_clients.items():
-                    if session.get("sdr_id") == sdr_id:
-                        recording_path = session.get("recording_path", "")
-                        break
-
-            if not recording_path:
-                logger.warning("No recording_path available yet for sigmfplayback SDR")
-                window_function_names = list(window_functions.keys())
-                fft_size_values = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
-
-                params = {
-                    "gain_values": [0.0],
-                    "sample_rate_values": [2048000],  # Default
-                    "fft_size_values": fft_size_values,
-                    "fft_window_values": window_function_names,
-                    "has_agc": False,
-                    "has_bias_t": False,
-                    "has_tuner_agc": False,
-                    "has_rtl_agc": False,
-                    "has_soapy_agc": False,
-                    "antennas": {"tx": [], "rx": ["RX"]},
-                    "frequency_ranges": {"rx": {"min": 0, "max": 6000, "step": 0.1}},
-                }
-
-                reply = {"success": True, "data": params}
-                return reply
-
-            sdr["recording_path"] = recording_path
-
-            probe_process = await asyncio.create_subprocess_exec(
-                "python3",
-                "-c",
-                "from hardware.sigmfprobe import probe_sigmf_recording; "
-                f"print(probe_sigmf_recording({sdr}))",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    probe_process.communicate(), timeout=timeout
-                )
-
-                if probe_process.returncode != 0:
-                    error_output = stderr.decode().strip()
-                    raise Exception(f"SigMF probe process failed: {error_output}")
-
-            except asyncio.TimeoutError:
-                probe_process.kill()
-                raise TimeoutError("Timed out while getting parameters from SigMF recording")
-
-            sdr_params_reply = eval(stdout.decode().strip())
-
-            if sdr_params_reply["success"] is False:
-                logger.error(sdr_params_reply)
-                raise Exception(sdr_params_reply["error"])
-
-            sdr_params = sdr_params_reply["data"]
-
-            logger.debug("Got parameters from SigMF recording: %s", sdr_params)
-
-            window_function_names = list(window_functions.keys())
-            fft_size_values = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
-
-            params = {
-                "gain_values": sdr_params["gains"],
-                "sample_rate_values": sdr_params["rates"],
-                "fft_size_values": fft_size_values,
-                "fft_window_values": window_function_names,
-                "has_agc": sdr_params.get("has_agc", False),
-                "has_bias_t": False,
-                "has_tuner_agc": False,
-                "has_rtl_agc": False,
-                "has_soapy_agc": False,
-                "antennas": {"tx": [], "rx": ["RX"]},
-                "frequency_ranges": sdr_params.get("frequency_ranges", {}),
-                "metadata": sdr_params.get("metadata", {}),
-                "total_samples": sdr_params.get("total_samples", 0),
-                "duration": sdr_params.get("duration", 0),
-            }
-
-            sdr_parameters_cache[sdr_id] = params
-            reply = {"success": True, "data": params}
-
-    except TimeoutError:
-        error_msg = (
-            f"Timeout occurred while getting parameters from SDR with id {sdr_id} "
-            f"within {timeout} seconds timeout"
-        )
-        logger.error(error_msg)
-        if sdr_id in sdr_parameters_cache and sdr_id != "sigmf-playback":
-            logger.warning(
-                "Returning cached SDR parameters for %s after timeout: %s", sdr_id, error_msg
-            )
-            reply["success"] = True
-            reply["data"] = sdr_parameters_cache[sdr_id]
-            reply["error"] = error_msg
-            return reply
-        reply["success"] = False
-        reply["error"] = error_msg
-
-    except Exception as e:
-        error_msg = str(e)
-        logger.error("Error occurred while getting parameters from SDR with id %s", sdr_id)
-        logger.error(error_msg)
-        if sdr_id in sdr_parameters_cache and sdr_id != "sigmf-playback":
-            logger.warning(
-                "Returning cached SDR parameters for %s after error: %s", sdr_id, error_msg
-            )
-            reply["success"] = True
-            reply["data"] = sdr_parameters_cache[sdr_id]
-            reply["error"] = error_msg
-            return reply
-        reply["success"] = False
-        reply["error"] = error_msg
-
     return reply
 
 
@@ -1444,7 +968,12 @@ async def edit_sdr(
     """Edit an existing SDR."""
     async with AsyncSessionLocal() as dbsession:
         logger.debug(f"Editing SDR, data: {data}")
-        edit_reply = await crud.hardware.edit_sdr(dbsession, data)
+        # Serialize the database change and invalidation with a pending probe.
+        # Otherwise that probe could repopulate capabilities for the old device.
+        async with sdr_parameter_lock(str((data or {}).get("id"))):
+            edit_reply = await crud.hardware.edit_sdr(dbsession, data)
+            if edit_reply.get("success") and data:
+                invalidate_sdr_parameters(str(data.get("id")))
         logger.debug(f"Edit SDR reply: {edit_reply}")
 
         sdrs = await crud.hardware.fetch_sdrs(dbsession)
@@ -1467,11 +996,20 @@ async def delete_sdr(
         if not data:
             return {"success": False, "data": [], "error": "No data provided"}
 
-        delete_reply = await crud.hardware.delete_sdrs(dbsession, list(data))
+        sdr_ids = list(data)
+        # Acquire multiple gates in a stable order so a concurrent delete cannot
+        # deadlock or leave a completed probe's stale result in the cache.
+        async with AsyncExitStack() as locks:
+            for sdr_id in sorted({str(sdr_id) for sdr_id in sdr_ids}):
+                await locks.enter_async_context(sdr_parameter_lock(sdr_id))
+            delete_reply = await crud.hardware.delete_sdrs(dbsession, sdr_ids)
+            if delete_reply.get("success"):
+                for sdr_id in sdr_ids:
+                    invalidate_sdr_parameters(str(sdr_id))
 
         sdrs = await crud.hardware.fetch_sdrs(dbsession)
-        if delete_reply.get("success") and data:
-            for sdr_id in list(data):
+        if delete_reply.get("success"):
+            for sdr_id in sdr_ids:
                 for manager in get_all_tracker_managers().values():
                     await manager.notify_hardware_changed(rig_id=sdr_id)
         return {
@@ -1522,16 +1060,44 @@ async def get_soapy_servers(
 
 async def get_sdr_parameters(
     sio: Any, data: Optional[Dict], logger: Any, sid: str
-) -> Dict[str, Union[bool, list, str]]:
+) -> Dict[str, Union[bool, None, dict, list, str]]:
     """Get SDR parameters."""
-    async with AsyncSessionLocal() as dbsession:
-        logger.debug("Getting SDR parameters")
-        parameters = await _fetch_sdr_parameters(dbsession, data)
-        return {
-            "success": parameters["success"],
-            "data": parameters.get("data", []),
-            "error": parameters.get("error", None),
-        }
+    sdr_id = str(data or "")
+    recording_path = (
+        (active_sdr_clients.get(sid) or {}).get("recording_path")
+        if sdr_id == "sigmf-playback"
+        else None
+    )
+    # The same lock covers the first worker start. A browser probe waits for a
+    # pending startup probe and cannot open a second device after streaming starts.
+    async with sdr_parameter_lock(sdr_id):
+        cached = get_cached_sdr_parameters(sdr_id, recording_path)
+        if cached is not None:
+            return {"success": True, "data": cached, "error": None}
+        manager = runtimestate.process_manager
+        if sdr_id != "sigmf-playback" and manager and manager.is_sdr_process_running(sdr_id):
+            # The saved SDR may have changed while its old worker remains active.
+            # Its capability snapshot still describes what viewers are watching.
+            active_parameters = (
+                (getattr(manager, "processes", {}) or {}).get(sdr_id, {}).get("parameters")
+            )
+            if active_parameters is not None:
+                return {"success": True, "data": active_parameters, "error": None}
+            return {
+                "success": False,
+                "data": None,
+                "error": "SDR is streaming and no cached capabilities are available",
+            }
+        async with AsyncSessionLocal() as dbsession:
+            logger.debug("Getting SDR parameters")
+            parameters = await probe_sdr_parameters(
+                dbsession, sdr_id, recording_path=recording_path
+            )
+            return {
+                "success": parameters["success"],
+                "data": parameters.get("data", []),
+                "error": parameters.get("error", None),
+            }
 
 
 async def get_local_soapy_sdr_devices_handler(

@@ -1,4 +1,5 @@
 import {
+    applySDRConfigParameters,
     setIsStreaming,
     setSelectedPlaybackRecording,
     selectSdrForWatch,
@@ -49,6 +50,14 @@ export const watchSdr = async (socket, dispatch, selectedSDRId) => {
     if (response?.success) {
         const config = response.data?.config;
         dispatch(selectSdrForWatch(selectedSDRId));
+        if (response.data?.parameters) {
+            // Capability choices come from the pre-stream probe; the worker's
+            // current config below remains authoritative for selected values.
+            dispatch(applySDRConfigParameters({
+                selectedSDRId,
+                data: response.data.parameters,
+            }));
+        }
         if (selectedSDRId === 'sigmf-playback') dispatch(setSelectedPlaybackRecording(null));
         if (config) dispatch(updateSDRConfig({ ...config, force_live: true }));
         dispatch(setWatchingSdrId(selectedSDRId));

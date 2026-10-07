@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from handlers.entities import sdr as sdrhandlers
+from hardware import parameters as sdrparameters
 
 
 class _DbSession:
@@ -80,6 +81,11 @@ def test_builds_conflict_payload_with_internal_flag(monkeypatch):
 @pytest.mark.asyncio
 async def test_watch_joins_fft_room_without_configuring_or_claiming_worker(monkeypatch):
     process_info = _set_active_sdr(monkeypatch)
+    monkeypatch.setitem(
+        sdrparameters.sdr_parameters_cache,
+        ("sdr-a", ""),
+        {"gain_values": [0, 10, 20], "antennas": {"rx": ["RX", "AUX"], "tx": []}},
+    )
     sio = _SocketServer()
     configure = AsyncMock()
     monkeypatch.setattr(sdrhandlers.session_service, "configure_sdr", configure)
@@ -94,6 +100,7 @@ async def test_watch_joins_fft_room_without_configuring_or_claiming_worker(monke
     assert inspection["data"]["conflict"]["includes_internal_observation"] is True
     assert watched["success"] is True
     assert watched["data"]["config"]["center_freq"] == 145_800_000
+    assert watched["data"]["parameters"]["gain_values"] == [0, 10, 20]
     assert sio.entered == [("viewer", "sdr-a")]
     assert process_info["clients"] == {"internal:obs-123"}
     assert process_info["watchers"] == {"viewer"}
@@ -104,6 +111,24 @@ async def test_watch_joins_fft_room_without_configuring_or_claiming_worker(monke
     )
     assert sio.left == [("viewer", "sdr-a")]
     assert process_info["watchers"] == set()
+
+
+@pytest.mark.asyncio
+async def test_watch_keeps_worker_capabilities_after_saved_sdr_is_edited(monkeypatch):
+    process_info = _set_active_sdr(monkeypatch)
+    process_info["parameters"] = {"gain_values": [0, 10, 20]}
+    monkeypatch.setattr(sdrparameters, "sdr_parameters_cache", {})
+
+    watched = await sdrhandlers.sdr_command_routing(
+        _SocketServer(),
+        "watch-sdr",
+        {"selectedSDRId": "sdr-a"},
+        logging.getLogger(__name__),
+        "viewer",
+    )
+
+    assert watched["success"] is True
+    assert watched["data"]["parameters"] == process_info["parameters"]
 
 
 @pytest.mark.asyncio

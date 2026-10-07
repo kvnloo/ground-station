@@ -28,6 +28,8 @@ from demodulators.ssbdemodulator import SSBDemodulator
 from handlers.entities.filebrowser import emit_file_browser_state
 from handlers.entities.transcriptionhelpers import fetch_transmitter_and_satellite
 from handlers.routing import get_auth_context
+from hardware.parameters import get_cached_sdr_parameters
+from pipeline.orchestration.processlifecycle import SdrStartConflict
 from pipeline.orchestration.processmanager import process_manager
 from server.audiorecorder import start_audio_recording, stop_audio_recording
 from server.recorder import start_recording, stop_recording
@@ -251,7 +253,15 @@ async def sdr_command_routing(
                 live_config = _live_sdr_config(target_sdr_id, process_info)
                 process_info.setdefault("watchers", set()).add(client_id)
                 reply["success"] = True
-                reply["data"] = {"config": live_config}
+                reply["data"] = {
+                    "config": live_config,
+                    "parameters": (
+                        get_cached_sdr_parameters(target_sdr_id, live_config.get("recording_path"))
+                        if target_sdr_id == "sigmf-playback"
+                        else process_info.get("parameters")
+                        or get_cached_sdr_parameters(target_sdr_id)
+                    ),
+                }
 
         elif cmd == "unwatch-sdr":
             target_sdr_id = str(data.get("selectedSDRId") or "")
@@ -531,13 +541,27 @@ async def sdr_command_routing(
                     return reply
 
                 # Start or join the SDR process
-                process_sdr_id = await session_service.start_streaming(client_id, sdr_device)
+                process_sdr_id = await session_service.start_streaming(
+                    client_id, sdr_device, force_takeover=force_takeover
+                )
                 logger.info(
                     f"SDR process started for client {client_id} with process id: {process_sdr_id}"
                 )
                 reply["success"] = True
                 reply["data"] = {"sdr_id": process_sdr_id}
 
+            except SdrStartConflict as conflict_error:
+                # The worker may have started while this caller waited for the
+                # capability probe gate. Return the normal takeover dialog.
+                conflict = _build_sdr_in_use_conflict(
+                    conflict_error.sdr_id,
+                    conflict_error.other_clients,
+                    operation="start-streaming",
+                )
+                reply["error"] = str(conflict["message"])
+                reply["error_code"] = SDR_IN_USE_CONFLICT_CODE
+                reply["data"] = conflict
+                return reply
             except Exception as e:
                 logger.error(f"Error starting SDR stream: {str(e)}")
                 logger.exception(e)
