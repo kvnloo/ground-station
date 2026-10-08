@@ -19,7 +19,7 @@
 
 
 import React, {useImperativeHandle, forwardRef, useCallback, useEffect, useState, useRef, useMemo} from 'react';
-import {Box, Typography, IconButton, Chip} from '@mui/material';
+import {Box, Typography, IconButton} from '@mui/material';
 import {UnfoldMore, UnfoldLess} from '@mui/icons-material';
 import {
     getClassNamesBasedOnGridEditing,
@@ -1627,7 +1627,6 @@ const WaterfallSettings = forwardRef(function WaterfallSettings({ playbackRemain
                         <Typography variant="subtitle2" sx={{fontWeight: 'bold'}}>
                             {t('title')}
                         </Typography>
-                        {joinedSdrId && <Chip size="small" label="Joined live SDR" color="info" sx={{ml: 1}} />}
                     </Box>
                     <IconButton
                         size="small"
