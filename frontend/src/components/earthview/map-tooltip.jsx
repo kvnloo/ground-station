@@ -7,7 +7,6 @@ import { styled } from '@mui/material/styles';
 import { Tooltip as LeafletTooltip } from 'react-leaflet';
 import TrackChangesIcon from '@mui/icons-material/TrackChanges';
 import InfoIcon from '@mui/icons-material/Info';
-import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import TargetNumberIcon from '../common/target-number-icon.jsx';
 import { useTooltipOrientation } from '../common/tooltip-orientation.js';
@@ -49,8 +48,8 @@ const SatelliteMarker = ({
                              satelliteIcon,
                              opacity = 1,
                              handleSetTrackingOnBackend,
+                             onOpenSatelliteInfo,
                          }) => {
-    const navigate = useNavigate();
     const { t } = useTranslation('earthview');
 
     const normalizedTrackingIds = Array.isArray(trackingSatelliteIds)
@@ -87,9 +86,9 @@ const SatelliteMarker = ({
         }
     };
 
-    const handleNavigateToSatellite = (e) => {
+    const handleOpenSatelliteInfo = (e) => {
         e.stopPropagation();
-        navigate(`/satellites/${satellite.norad_id}`);
+        onOpenSatelliteInfo?.(satellite);
     };
 
     return (
@@ -157,7 +156,7 @@ const SatelliteMarker = ({
                                 {t('map_target.set_target')}
                             </Button>
                             <IconButton
-                                onClick={handleNavigateToSatellite}
+                                onClick={handleOpenSatelliteInfo}
                                 sx={{
                                     backgroundColor: 'action.hover',
                                     '&:hover': {

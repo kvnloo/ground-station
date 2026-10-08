@@ -31,7 +31,6 @@ import InfoIcon from '@mui/icons-material/Info';
 import SettingsIcon from '@mui/icons-material/Settings';
 import {useDispatch, useSelector} from 'react-redux';
 import {useTranslation} from 'react-i18next';
-import {useNavigate} from 'react-router-dom';
 import {
     setOpenMapSettingsDialog,
     setMapZoomLevel,
@@ -332,13 +331,13 @@ const MapLibreSatellitePopup = React.memo(function MapLibreSatellitePopup({
 
 const MapLibreEarthViewMapRenderer = ({
     handleSetTrackingOnBackend,
+    onOpenSatelliteInfo,
     onMapError,
     onMapLoaded,
     onSatelliteMarkerContextMenu,
 }) => {
     const {socket} = useSocket();
     const dispatch = useDispatch();
-    const navigate = useNavigate();
     const {t} = useTranslation('earthview');
     const theme = useTheme();
     const {
@@ -1261,7 +1260,10 @@ const MapLibreEarthViewMapRenderer = ({
                                                     <IconButton
                                                         onClick={(event) => {
                                                             event.stopPropagation();
-                                                            navigate(`/satellites/${marker.noradId}`);
+                                                            onOpenSatelliteInfo?.(marker.satellite || {
+                                                                norad_id: marker.noradId,
+                                                                name: marker.name,
+                                                            });
                                                         }}
                                                         sx={{
                                                             backgroundColor: 'action.hover',

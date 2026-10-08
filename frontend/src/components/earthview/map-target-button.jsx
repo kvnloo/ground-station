@@ -2,7 +2,6 @@
 import React from 'react';
 import { Box, Button, Typography, Paper, IconButton } from '@mui/material';
 import { alpha } from '@mui/material/styles';
-import { useNavigate } from 'react-router-dom';
 import TrackChangesIcon from '@mui/icons-material/TrackChanges';
 import InfoIcon from '@mui/icons-material/Info';
 import { useTranslation } from 'react-i18next';
@@ -11,17 +10,17 @@ const SatelliteTrackSuggestion = ({
                                       selectedSatelliteId,
                                       trackingSatelliteId,
                                       selectedSatellite,
-                                      handleSetTrackingOnBackend
+                                      handleSetTrackingOnBackend,
+                                      onOpenSatelliteInfo,
                                   }) => {
-    const navigate = useNavigate();
     const { t } = useTranslation('earthview');
 
     if (!selectedSatellite) {
         return null;
     }
 
-    const handleNavigateToSatellite = () => {
-        navigate(`/satellites/${selectedSatelliteId}`);
+    const handleOpenSatelliteInfo = () => {
+        onOpenSatelliteInfo?.(selectedSatellite);
     };
 
     return (
@@ -72,7 +71,7 @@ const SatelliteTrackSuggestion = ({
                     </Button>
 
                     <IconButton
-                        onClick={handleNavigateToSatellite}
+                        onClick={handleOpenSatelliteInfo}
                         sx={{
                             backgroundColor: 'action.hover',
                             color: 'text.primary',

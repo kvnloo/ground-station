@@ -209,6 +209,7 @@ function areSatellitesEquivalent(prev = [], next = []) {
 
 const LeafletEarthViewMapRenderer = ({
     handleSetTrackingOnBackend,
+    onOpenSatelliteInfo,
     onMapError,
     onMapLoaded,
     onSatelliteMarkerContextMenu,
@@ -738,6 +739,7 @@ const LeafletEarthViewMapRenderer = ({
                             satelliteIcon={isVisible ? earthViewVisibleSatelliteIcon : satelliteIconDimCircle}
                             opacity={1}
                             handleSetTrackingOnBackend={handleSetTrackingOnBackend}
+                            onOpenSatelliteInfo={onOpenSatelliteInfo}
                         />
                     );
                 } else if (isVisible) {
@@ -867,6 +869,7 @@ const LeafletEarthViewMapRenderer = ({
         trackingSatelliteId,
         trackedSatelliteIds,
         trackedSatelliteIdsList,
+        onOpenSatelliteInfo,
     ]);
 
     // On component mount, keep map size in sync with layout changes.
@@ -1082,6 +1085,7 @@ const LeafletEarthViewMapRenderer = ({
                 {/*    trackingSatelliteId={trackingSatelliteId}*/}
                 {/*    selectedSatellite={selectedSatellites.find((sat) => sat.norad_id === selectedSatelliteId)}*/}
                 {/*    handleSetTrackingOnBackend={handleSetTrackingOnBackend}*/}
+                {/*    onOpenSatelliteInfo={onOpenSatelliteInfo}*/}
                 {/*/>*/}
                 </MapContainer>
                 <EarthViewAttributionBar htmlString={attributionHtml}/>

@@ -17,7 +17,7 @@
  *
  */
 
-import React, {useCallback, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 import {useTranslation} from 'react-i18next';
 import {normalizeMapEngine} from '../common/tile-layers.jsx';
@@ -33,11 +33,13 @@ import {toast} from '../../utils/toast-with-timestamp.jsx';
 import RowContextMenu from './rowcontextmenu.jsx';
 import SatelliteEditDialog from '../satellites/satellite-edit-dialog.jsx';
 import TransmittersDialog from '../satellites/transmitters-dialog.jsx';
+import {SatelliteInfoDialog} from '../satellites/satellite-info-page.jsx';
 import {fetchSatellite} from '../satellites/satellite-slice.jsx';
 import {
     fetchSatellitesByGroupId,
     setEarthViewMapSetting,
     setMapEngine,
+    setSatelliteData,
     setSelectedSatelliteId,
 } from './earthview-slice.jsx';
 import {
@@ -52,9 +54,12 @@ const EarthViewMapContainer = ({handleSetTrackingOnBackend}) => {
     const {socket} = useSocket();
     const {t} = useTranslation('earthview');
     const {t: commonT} = useTranslation('common');
+    const {t: satellitesT} = useTranslation('satellites');
     const mapEngine = useSelector((state) => state.earthViewTrack?.mapEngine);
     const tileLayerID = useSelector((state) => state.earthViewTrack?.tileLayerID);
     const selectedSatGroupId = useSelector((state) => state.earthViewTrack?.selectedSatGroupId);
+    const selectedSatelliteId = useSelector((state) => state.earthViewTrack?.selectedSatelliteId);
+    const selectedSatellitePositions = useSelector((state) => state.earthViewTrack?.selectedSatellitePositions);
     const normalizedMapEngine = normalizeMapEngine(mapEngine);
     const Renderer = normalizedMapEngine === 'maplibre'
         ? MapLibreEarthViewMapRenderer
@@ -70,6 +75,43 @@ const EarthViewMapContainer = ({handleSetTrackingOnBackend}) => {
     const [transmittersDialogOpen, setTransmittersDialogOpen] = useState(false);
     const [contextSatelliteForDialogs, setContextSatelliteForDialogs] = useState(null);
     const latestDialogSatelliteRequestRef = useRef(0);
+    const [infoSatellite, setInfoSatellite] = useState(null);
+    const latestInfoRequestRef = useRef(0);
+
+    useEffect(() => () => {
+        // A pending request must not reopen the dialog after the map unmounts.
+        latestInfoRequestRef.current += 1;
+    }, []);
+
+    const handleOpenSatelliteInfo = useCallback(async (satellite) => {
+        const noradId = Number(satellite?.norad_id ?? satellite?.noradId);
+        if (!socket || !Number.isInteger(noradId) || noradId <= 0) return;
+
+        // Only the latest clicked satellite may open the dialog.
+        const requestId = ++latestInfoRequestRef.current;
+        setInfoSatellite(null);
+        try {
+            const response = await dispatch(fetchSatellite({socket, noradId})).unwrap();
+            if (latestInfoRequestRef.current !== requestId) return;
+            if (Number(response?.details?.norad_id) !== noradId) {
+                throw new Error('Satellite details unavailable');
+            }
+            setInfoSatellite({
+                ...response.details,
+                position: response.position || null,
+                transmitters: response.transmitters || [],
+            });
+        } catch (error) {
+            if (latestInfoRequestRef.current === requestId) {
+                toast.error(satellitesT('satellite_database.failed_load'));
+            }
+        }
+    }, [dispatch, satellitesT, socket]);
+
+    const handleCloseSatelliteInfo = useCallback(() => {
+        latestInfoRequestRef.current += 1;
+        setInfoSatellite(null);
+    }, []);
 
     const copyTextToClipboard = useCallback(async (text) => {
         if (navigator?.clipboard?.writeText) {
@@ -381,6 +423,7 @@ const EarthViewMapContainer = ({handleSetTrackingOnBackend}) => {
             >
                 <Renderer
                     handleSetTrackingOnBackend={handleSetTrackingOnBackend}
+                    onOpenSatelliteInfo={handleOpenSatelliteInfo}
                     onMapError={mapLoadFailure.reportError}
                     onMapLoaded={mapLoadFailure.reportLoaded}
                     onSatelliteMarkerContextMenu={handleSatelliteMarkerContextMenu}
@@ -394,6 +437,20 @@ const EarthViewMapContainer = ({handleSetTrackingOnBackend}) => {
                 switchEngineLabel={normalizedMapEngine === 'maplibre'
                     ? commonT('map_load_error.switch_to_leaflet')
                     : commonT('map_load_error.switch_to_maplibre')}
+            />
+            <SatelliteInfoDialog
+                open={Boolean(infoSatellite)}
+                onClose={handleCloseSatelliteInfo}
+                satelliteData={infoSatellite}
+                targetGroupId={selectedSatGroupId}
+                livePosition={infoSatellite
+                    ? selectedSatellitePositions?.[infoSatellite.norad_id] || null
+                    : null}
+                onUpdated={(updatedSatellite) => {
+                    if (Number(selectedSatelliteId) === Number(updatedSatellite?.details?.norad_id)) {
+                        dispatch(setSatelliteData(updatedSatellite));
+                    }
+                }}
             />
             <RowContextMenu
                 open={Boolean(satelliteContextMenu)}
