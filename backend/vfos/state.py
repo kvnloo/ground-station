@@ -22,7 +22,7 @@ class VFOState:
     squelch: int = -150
     squelch_mode: str = "carrier"  # carrier, voice, hybrid
     vad_sensitivity: str = "medium"  # low, medium, high
-    vad_close_delay_ms: int = 300  # 50-500 ms hangover
+    vad_close_delay_ms: int = 300  # 50-1000 ms hangover
     transcription_enabled: bool = False  # Enable/disable transcription for this VFO
     transcription_provider: str = "gemini"  # Transcription provider (gemini, deepgram)
     transcription_language: str = "auto"  # Language code for transcription (auto-detect by default)
@@ -43,7 +43,7 @@ class VFOManager:
     SQUELCH_MODES = {"carrier", "voice", "hybrid"}
     VAD_SENSITIVITY_LEVELS = {"low", "medium", "high"}
     VAD_CLOSE_DELAY_MS_MIN = 50
-    VAD_CLOSE_DELAY_MS_MAX = 500
+    VAD_CLOSE_DELAY_MS_MAX = 1000
 
     def __new__(cls):
         if cls._instance is None:

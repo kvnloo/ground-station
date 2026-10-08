@@ -20,7 +20,6 @@ import queue
 import threading
 import time
 from collections import deque
-from math import ceil
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
@@ -89,14 +88,26 @@ class FMDemodulator(threading.Thread):
         # Carrier squelch state (RF-power/hysteresis gate)
         self.squelch_open = False
 
-        # Voice squelch state (post-demod audio VAD gate)
+        # Voice squelch combines discriminator hiss rejection with WebRTC VAD.
         self.voice_squelch_open = False
         self.current_squelch_mode = "carrier"
+        self.hiss_voice_filter = None
+        self.hiss_noise_filter = None
+        self.hiss_voice_state = None
+        self.hiss_noise_state = None
+        self.hiss_voice_bandwidth = 0.0
+        self.hiss_noise_bandwidth = 0.0
+        self.hiss_voice_power = None
+        self.hiss_noise_power = None
+        self.hiss_snr_db = None
+        self.hiss_gate_open = False
 
         # Processing state
-        self.last_sample = 0 + 0j
+        self.last_sample: Optional[complex] = 0 + 0j
+        self.translation_phase = 0.0
         self.sdr_sample_rate = None
         self.current_center_freq = None
+        self.current_sdr_center_freq = None
         self.current_bandwidth = None
 
         # Filters (will be initialized when we know sample rates)
@@ -116,29 +127,21 @@ class FMDemodulator(threading.Thread):
         self.vad_sample_rate = 16000
         self.vad_frame_ms = 20
         self.vad_frame_samples = int(self.vad_sample_rate * self.vad_frame_ms / 1000.0)
-        self.vad_freq_bins = np.fft.rfftfreq(self.vad_frame_samples, d=1.0 / self.vad_sample_rate)
-        self.vad_open_window_ms = 200
+        self.vad_open_window_ms = 100
         self.vad_open_window_frames = max(1, self.vad_open_window_ms // self.vad_frame_ms)
         self.vad_preroll_ms = 200
         self.vad_preroll_samples = int(self.audio_sample_rate * self.vad_preroll_ms / 1000.0)
         self.vad_frame_buffer = np.array([], dtype=np.float32)
         self.vad_recent_voiced: deque[bool] = deque(maxlen=self.vad_open_window_frames)
-        self.vad_recent_rms: deque[float] = deque(maxlen=50)  # ~1s at 20ms frames
         self.vad_hangover_frames_remaining = 0
         self.vad_preroll_buffer = np.array([], dtype=np.float32)
-        self.vad_noise_rms = 0.003
         self.vad_last_frame_voiced = False
-        self.vad_recent_voiced_ratio = 0.0
-        self.vad_modulation_index = 0.0
-        self.vad_last_stationary_noise = False
-        self.vad_low_modulation_frames = 0
-        self.vad_high_modulation_frames = 0
-        self.vad_last_frame_rms = 0.0
-        self.vad_last_frame_flatness = 1.0
-        self.vad_last_frame_band_ratio_db = 0.0
-        self.vad_last_frame_zcr = 0.0
         self.vad_last_webrtc_speech = False
         self.webrtc_vad = webrtcvad.Vad(2)
+        self.vad_highpass_filter = signal.butter(
+            2, 200.0, btype="highpass", fs=self.vad_sample_rate, output="sos"
+        )
+        self.vad_highpass_state = np.zeros((len(self.vad_highpass_filter), 2))
         self.last_squelch_debug_log_time = 0.0
         self.last_audio_overflow_warning_time = 0.0
         self.last_squelch_debug: Dict[str, Any] = {
@@ -274,28 +277,19 @@ class FMDemodulator(threading.Thread):
 
         return stages, total_decimation
 
-    def _design_audio_filter(self, intermediate_rate, vfo_bandwidth):
-        """Design audio low-pass filter based on VFO bandwidth.
-
-        For FM, the audio bandwidth is derived from the RF bandwidth:
-        - Narrow FM (< 25 kHz): ~3-5 kHz audio (voice)
-        - Medium FM (25-100 kHz): scaled proportionally
-        - Wide FM (> 100 kHz): ~15 kHz audio (broadcast/music)
-        """
-        # Calculate audio cutoff based on VFO bandwidth
-        # Use a reasonable fraction of the RF bandwidth for audio
+    def _audio_cutoff(self, vfo_bandwidth):
+        """Return the audio cutoff used by both playback and the hiss detector."""
         if vfo_bandwidth < 25e3:
-            # Narrowband FM: limit to voice bandwidth
             cutoff = min(3e3, vfo_bandwidth * 0.3)
         elif vfo_bandwidth < 100e3:
-            # Medium bandwidth: scale proportionally
             cutoff = vfo_bandwidth * 0.15
         else:
-            # Wideband FM: allow up to 15 kHz for music
             cutoff = min(15e3, vfo_bandwidth * 0.15)
+        return max(cutoff, 500)
 
-        # Ensure minimum cutoff frequency
-        cutoff = max(cutoff, 500)  # At least 500 Hz
+    def _design_audio_filter(self, intermediate_rate, vfo_bandwidth):
+        """Design the FM audio low-pass filter from the VFO bandwidth."""
+        cutoff = self._audio_cutoff(vfo_bandwidth)
 
         nyquist = intermediate_rate / 2.0
         normalized_cutoff = cutoff / nyquist
@@ -307,6 +301,76 @@ class FMDemodulator(threading.Thread):
         filter_taps = signal.firwin(numtaps, normalized_cutoff, window="hamming")
 
         return filter_taps
+
+    def _configure_hiss_filters(self, intermediate_rate, vfo_bandwidth) -> None:
+        """Measure hiss above the playback band, before its low-pass filter."""
+        self.hiss_voice_filter = None
+        self.hiss_noise_filter = None
+        self.hiss_voice_state = None
+        self.hiss_noise_state = None
+        self._reset_hiss_gate()
+
+        audio_cutoff = self._audio_cutoff(vfo_bandwidth)
+        voice_high = min(3000.0, audio_cutoff, intermediate_rate * 0.45)
+        hiss_low = max(1800.0, audio_cutoff * 1.15)
+        hiss_high = min(vfo_bandwidth * 0.45, hiss_low + 2500.0, intermediate_rate * 0.45)
+        if voice_high <= 400.0 or hiss_high - hiss_low < 500.0:
+            # Narrow channels have no separate hiss band; VAD still works there.
+            return
+
+        self.hiss_voice_filter = signal.butter(
+            3, [300.0, voice_high], btype="bandpass", fs=intermediate_rate, output="sos"
+        )
+        self.hiss_noise_filter = signal.butter(
+            3, [hiss_low, hiss_high], btype="bandpass", fs=intermediate_rate, output="sos"
+        )
+        self.hiss_voice_state = np.zeros((len(self.hiss_voice_filter), 2))
+        self.hiss_noise_state = np.zeros((len(self.hiss_noise_filter), 2))
+        self.hiss_voice_bandwidth = voice_high - 300.0
+        self.hiss_noise_bandwidth = hiss_high - hiss_low
+
+    def _reset_hiss_gate(self) -> None:
+        self.hiss_voice_power = None
+        self.hiss_noise_power = None
+        self.hiss_snr_db = None
+        self.hiss_gate_open = False
+        if self.hiss_voice_filter is not None:
+            self.hiss_voice_state = np.zeros((len(self.hiss_voice_filter), 2))
+        if self.hiss_noise_filter is not None:
+            self.hiss_noise_state = np.zeros((len(self.hiss_noise_filter), 2))
+
+    def _update_hiss_gate(self, discriminator_audio: np.ndarray, sample_rate: float) -> bool:
+        if self.hiss_voice_filter is None or self.hiss_noise_filter is None:
+            return True
+
+        voice, self.hiss_voice_state = signal.sosfilt(
+            self.hiss_voice_filter, discriminator_audio, zi=self.hiss_voice_state
+        )
+        hiss, self.hiss_noise_state = signal.sosfilt(
+            self.hiss_noise_filter, discriminator_audio, zi=self.hiss_noise_state
+        )
+        voice_power = float(np.mean(voice * voice)) / self.hiss_voice_bandwidth
+        hiss_power = float(np.mean(hiss * hiss)) / self.hiss_noise_bandwidth
+
+        # Smooth across IQ chunks so a single noisy chunk cannot toggle the gate.
+        keep = float(np.exp(-len(discriminator_audio) / (sample_rate * 0.04)))
+        if self.hiss_voice_power is None or self.hiss_noise_power is None:
+            self.hiss_voice_power = voice_power
+            self.hiss_noise_power = hiss_power
+        else:
+            self.hiss_voice_power = keep * self.hiss_voice_power + (1.0 - keep) * voice_power
+            self.hiss_noise_power = keep * self.hiss_noise_power + (1.0 - keep) * hiss_power
+
+        self.hiss_snr_db = float(
+            10.0 * np.log10((self.hiss_voice_power + 1e-12) / (self.hiss_noise_power + 1e-12))
+        )
+        # A voice-band spectral advantage rejects unmodulated FM discriminator hiss.
+        # Hysteresis lets the VAD hangover carry brief gaps between syllables.
+        if self.hiss_gate_open:
+            self.hiss_gate_open = self.hiss_snr_db > 1.5
+        else:
+            self.hiss_gate_open = self.hiss_snr_db >= 4.0
+        return self.hiss_gate_open
 
     def _design_deemphasis_filter(self, sample_rate):
         """Design de-emphasis filter for FM broadcast."""
@@ -320,11 +384,16 @@ class FMDemodulator(threading.Thread):
     def _frequency_translate(self, samples, offset_freq, sample_rate):
         """Translate frequency by offset (shift signal in frequency domain)."""
         if offset_freq == 0:
+            self.translation_phase = 0.0
             return samples
 
-        # Generate complex exponential for frequency shift
-        t = np.arange(len(samples)) / sample_rate
-        shift = np.exp(-2j * np.pi * offset_freq * t)
+        # Keep oscillator phase continuous across IQ chunks. A phase jump would
+        # create a discriminator impulse and falsely raise the hiss estimate.
+        phase_step = -2.0 * np.pi * offset_freq / sample_rate
+        shift = np.exp(1j * (self.translation_phase + phase_step * np.arange(len(samples))))
+        self.translation_phase = float(
+            (self.translation_phase + phase_step * len(samples)) % (2.0 * np.pi)
+        )
         return samples * shift
 
     def _fm_demodulate(self, samples):
@@ -388,50 +457,15 @@ class FMDemodulator(threading.Thread):
             parsed_close_delay = int(close_delay_ms)
         except (TypeError, ValueError):
             parsed_close_delay = 300
-        return max(50, min(500, parsed_close_delay))
+        return max(50, min(1000, parsed_close_delay))
 
-    def _get_vad_profile(self, sensitivity: str) -> Dict[str, float]:
-        # "high" means more sensitive voice opening from the user's perspective.
+    def _get_vad_profile(self, sensitivity: str) -> Dict[str, int]:
+        # WebRTC mode 0 is the most permissive; votes provide a second,
+        # predictable sensitivity control without imposing an audio-level test.
         profiles = {
-            "low": {
-                # Previous "medium" behavior.
-                "aggressiveness": 1,
-                "open_ratio": 0.45,
-                "close_ratio": 0.15,
-                "mod_open_min": 0.14,
-                "mod_keep_min": 0.08,
-                "mod_stationary_max": 0.09,
-                "rms_multiplier": 2.0,
-                "flatness_max": 0.70,
-                "band_ratio_db_min": 0.5,
-                "zcr_max": 0.35,
-            },
-            "medium": {
-                # Previous "high" behavior.
-                "aggressiveness": 0,
-                "open_ratio": 0.30,
-                "close_ratio": 0.10,
-                "mod_open_min": 0.12,
-                "mod_keep_min": 0.07,
-                "mod_stationary_max": 0.08,
-                "rms_multiplier": 1.7,
-                "flatness_max": 0.80,
-                "band_ratio_db_min": -1.0,
-                "zcr_max": 0.42,
-            },
-            "high": {
-                # New most-sensitive profile.
-                "aggressiveness": 0,
-                "open_ratio": 0.22,
-                "close_ratio": 0.08,
-                "mod_open_min": 0.10,
-                "mod_keep_min": 0.06,
-                "mod_stationary_max": 0.08,
-                "rms_multiplier": 1.5,
-                "flatness_max": 0.86,
-                "band_ratio_db_min": -2.0,
-                "zcr_max": 0.50,
-            },
+            "low": {"aggressiveness": 1, "open_frames": 4},
+            "medium": {"aggressiveness": 0, "open_frames": 3},
+            "high": {"aggressiveness": 0, "open_frames": 2},
         }
         return profiles.get(sensitivity, profiles["medium"])
 
@@ -450,138 +484,42 @@ class FMDemodulator(threading.Thread):
         self.vad_hangover_frames_remaining = 0
         self.vad_frame_buffer = np.array([], dtype=np.float32)
         self.vad_recent_voiced.clear()
-        self.vad_recent_rms.clear()
         self.vad_preroll_buffer = np.array([], dtype=np.float32)
         self.vad_last_frame_voiced = False
-        self.vad_recent_voiced_ratio = 0.0
-        self.vad_modulation_index = 0.0
-        self.vad_last_stationary_noise = False
-        self.vad_low_modulation_frames = 0
-        self.vad_high_modulation_frames = 0
-        self.vad_last_frame_rms = 0.0
-        self.vad_last_frame_flatness = 1.0
-        self.vad_last_frame_band_ratio_db = 0.0
-        self.vad_last_frame_zcr = 0.0
         self.vad_last_webrtc_speech = False
+        self.vad_highpass_state = np.zeros((len(self.vad_highpass_filter), 2))
+        self.webrtc_vad = webrtcvad.Vad(2)
+        self._reset_hiss_gate()
 
-    def _update_vad_noise_floor(self, frame_rms: float, frame_voiced: bool) -> None:
-        if frame_voiced:
-            return
-        alpha = 0.95
-        self.vad_noise_rms = (alpha * self.vad_noise_rms) + ((1.0 - alpha) * frame_rms)
-        self.vad_noise_rms = max(1e-4, min(0.2, self.vad_noise_rms))
-
-    def _compute_vad_frame_features(self, frame: np.ndarray) -> Dict[str, float]:
-        frame_rms = float(np.sqrt(np.mean(frame * frame) + 1e-12))
-
-        windowed = frame * np.hanning(len(frame))
-        spectrum = np.abs(np.fft.rfft(windowed)) + 1e-12
-        power_spectrum = spectrum * spectrum
-        flatness = float(np.exp(np.mean(np.log(spectrum))) / np.mean(spectrum))
-
-        speech_mask = (self.vad_freq_bins >= 300.0) & (self.vad_freq_bins <= 3000.0)
-        high_mask = (self.vad_freq_bins > 3500.0) & (self.vad_freq_bins <= 7000.0)
-        speech_energy = float(np.sum(power_spectrum[speech_mask]) + 1e-12)
-        high_energy = float(np.sum(power_spectrum[high_mask]) + 1e-12)
-        band_ratio_db = 10.0 * np.log10(speech_energy / high_energy)
-
-        zero_crossings = np.count_nonzero(np.diff(np.signbit(frame)))
-        zcr = zero_crossings / max(1, len(frame) - 1)
-
-        return {
-            "rms": frame_rms,
-            "flatness": flatness,
-            "band_ratio_db": float(band_ratio_db),
-            "zcr": float(zcr),
-        }
-
-    def _detect_voice_frame(self, frame: np.ndarray, profile: Dict[str, float]) -> bool:
-        frame_features = self._compute_vad_frame_features(frame)
-        frame_rms = frame_features["rms"]
-        flatness = frame_features["flatness"]
-        band_ratio_db = frame_features["band_ratio_db"]
-        zcr = frame_features["zcr"]
-        self.vad_last_frame_rms = frame_rms
-        self.vad_last_frame_flatness = flatness
-        self.vad_last_frame_band_ratio_db = band_ratio_db
-        self.vad_last_frame_zcr = zcr
-
-        dynamic_rms_threshold = max(0.0035, self.vad_noise_rms * float(profile["rms_multiplier"]))
-
+    def _detect_voice_frame(self, frame: np.ndarray) -> bool:
         try:
-            pcm = np.clip(frame, -1.0, 1.0)
+            # Remove sub-audible tones/DC and bring quiet FM speech into the
+            # level range expected by WebRTC without unlimited noise gain.
+            speech, self.vad_highpass_state = signal.sosfilt(
+                self.vad_highpass_filter, frame, zi=self.vad_highpass_state
+            )
+            rms = float(np.sqrt(np.mean(speech * speech) + 1e-12))
+            gain = min(8.0, 0.08 / max(rms, 1e-3))
+            pcm = np.clip(speech * gain, -1.0, 1.0)
             pcm16 = (pcm * 32767.0).astype(np.int16)
-            webrtc_is_speech = bool(
+            self.vad_last_webrtc_speech = bool(
                 self.webrtc_vad.is_speech(pcm16.tobytes(), self.vad_sample_rate)
             )
-            self.vad_last_webrtc_speech = webrtc_is_speech
-
-            # Noise-rejection guard for repeater hiss:
-            # broadband noise often gets occasional false positives from WebRTC VAD.
-            looks_like_broadband_noise = flatness > 0.80 and band_ratio_db < 0.0 and zcr > 0.30
-            is_loud_enough = frame_rms > dynamic_rms_threshold
-            final_voiced = webrtc_is_speech and is_loud_enough and not looks_like_broadband_noise
-
-            self._update_vad_noise_floor(frame_rms, final_voiced)
-            return final_voiced
+            return self.vad_last_webrtc_speech
         except Exception:
-            # Keep decoder resilient to occasional VAD-frame runtime issues.
             self.vad_last_webrtc_speech = False
-            self._update_vad_noise_floor(frame_rms, False)
             return False
 
     def _update_voice_squelch_state(
-        self, audio_44k: np.ndarray, vad_sensitivity: str, vad_close_delay_ms: int
+        self,
+        audio_44k: np.ndarray,
+        vad_sensitivity: str,
+        vad_close_delay_ms: int,
+        hiss_gate_open: bool,
     ) -> bool:
         profile = self._get_vad_profile(vad_sensitivity)
-        self.webrtc_vad.set_mode(int(profile["aggressiveness"]))
-
-        hangover_frames = max(1, ceil(vad_close_delay_ms / self.vad_frame_ms))
-        open_modulation_frames_required_by_sensitivity = {
-            "low": max(3, ceil(self.vad_open_window_frames * 0.50)),
-            "medium": max(3, ceil(self.vad_open_window_frames * 0.35)),
-            "high": max(2, ceil(self.vad_open_window_frames * 0.25)),
-        }
-        close_low_modulation_ratio_by_sensitivity = {
-            "low": 0.45,
-            "medium": 0.35,
-            "high": 0.30,
-        }
-        force_close_voiced_ratio_max_by_sensitivity = {
-            "low": 0.28,
-            "medium": 0.25,
-            "high": 0.20,
-        }
-        open_modulation_frames_required = open_modulation_frames_required_by_sensitivity.get(
-            vad_sensitivity, open_modulation_frames_required_by_sensitivity["medium"]
-        )
-        close_low_modulation_frames_required = max(
-            3,
-            ceil(
-                hangover_frames
-                * close_low_modulation_ratio_by_sensitivity.get(
-                    vad_sensitivity, close_low_modulation_ratio_by_sensitivity["medium"]
-                )
-            ),
-        )
-        force_close_voiced_ratio_max = force_close_voiced_ratio_max_by_sensitivity.get(
-            vad_sensitivity, force_close_voiced_ratio_max_by_sensitivity["medium"]
-        )
-        # Use a shorter modulation-history window for low close-delay settings so
-        # noise closure reacts quickly after speech ends.
-        if vad_close_delay_ms <= 100:
-            modulation_window_frames = 8  # ~160 ms
-            modulation_min_frames = 6
-        elif vad_close_delay_ms <= 250:
-            modulation_window_frames = 12  # ~240 ms
-            modulation_min_frames = 8
-        else:
-            modulation_window_frames = 16  # ~320 ms
-            modulation_min_frames = 10
-        # For very short close delays, prioritize fast closure on stationary/noise-like
-        # audio over voiced-ratio smoothing so the control feels responsive.
-        enforce_force_close_voiced_ratio = vad_close_delay_ms >= 200
-        stationary_frames_required = max(3, ceil(self.vad_open_window_frames * 0.30))
+        self.webrtc_vad.set_mode(profile["aggressiveness"])
+        hangover_frames = max(1, (vad_close_delay_ms + self.vad_frame_ms - 1) // self.vad_frame_ms)
 
         audio_16k = signal.resample_poly(audio_44k, up=160, down=441).astype(np.float32)
         self.vad_frame_buffer = np.concatenate([self.vad_frame_buffer, audio_16k])
@@ -590,90 +528,22 @@ class FMDemodulator(threading.Thread):
             frame = self.vad_frame_buffer[: self.vad_frame_samples]
             self.vad_frame_buffer = self.vad_frame_buffer[self.vad_frame_samples :]
 
-            frame_voiced = self._detect_voice_frame(frame, profile)
-            frame_rms = self.vad_last_frame_rms
-            self.vad_recent_rms.append(frame_rms)
-            if len(self.vad_recent_rms) >= modulation_min_frames:
-                recent_rms_tail = list(self.vad_recent_rms)[-modulation_window_frames:]
-                recent_rms_arr = np.array(recent_rms_tail, dtype=np.float32)
-                rms_mean = float(np.mean(recent_rms_arr) + 1e-12)
-                rms_std = float(np.std(recent_rms_arr))
-                self.vad_modulation_index = rms_std / rms_mean
-            else:
-                self.vad_modulation_index = 0.0
-
-            modulation_ready = len(self.vad_recent_rms) >= modulation_min_frames
-            stationary_modulation_max = float(profile["mod_stationary_max"])
-            stationary_modulation = (
-                modulation_ready and self.vad_modulation_index <= stationary_modulation_max
-            )
-            low_modulation = modulation_ready and self.vad_modulation_index <= float(
-                profile["mod_keep_min"]
-            )
-            high_modulation = modulation_ready and self.vad_modulation_index >= float(
-                profile["mod_open_min"]
-            )
-            # Track sustained stationary/low modulation for close decisions.
-            if stationary_modulation:
-                self.vad_low_modulation_frames += 1
-            else:
-                self.vad_low_modulation_frames = 0
-
-            if high_modulation and frame_voiced:
-                self.vad_high_modulation_frames += 1
-            else:
-                self.vad_high_modulation_frames = 0
-
-            # Reject persistent stationary "always voiced" noise.
-            tentative_voiced_ratio = (
-                sum(self.vad_recent_voiced) + (1 if frame_voiced else 0)
-            ) / max(1, len(self.vad_recent_voiced) + 1)
-            stationary_noise = (
-                modulation_ready
-                and tentative_voiced_ratio >= 0.45
-                and self.vad_low_modulation_frames >= stationary_frames_required
-                and stationary_modulation
-            )
-            self.vad_last_stationary_noise = bool(stationary_noise)
-            if stationary_noise or stationary_modulation or low_modulation:
-                frame_voiced = False
-
+            # Hiss qualifies WebRTC decisions; the hangover keeps short pauses
+            # open without allowing a hiss burst to start a transmission.
+            frame_voiced = self._detect_voice_frame(frame) and hiss_gate_open
             self.vad_last_frame_voiced = frame_voiced
             self.vad_recent_voiced.append(frame_voiced)
-            voiced_ratio = sum(self.vad_recent_voiced) / len(self.vad_recent_voiced)
-            self.vad_recent_voiced_ratio = voiced_ratio
-
             if frame_voiced:
                 self.vad_hangover_frames_remaining = hangover_frames
             elif self.vad_hangover_frames_remaining > 0:
                 self.vad_hangover_frames_remaining -= 1
 
             if not self.voice_squelch_open:
-                if (
-                    len(self.vad_recent_voiced) >= self.vad_open_window_frames
-                    and modulation_ready
-                    and voiced_ratio >= float(profile["open_ratio"])
-                    and self.vad_high_modulation_frames >= open_modulation_frames_required
-                ):
+                if sum(self.vad_recent_voiced) >= profile["open_frames"]:
                     self.voice_squelch_open = True
-                    self.vad_hangover_frames_remaining = hangover_frames
-            else:
-                force_low_modulation_close = (
-                    modulation_ready
-                    and self.vad_low_modulation_frames >= close_low_modulation_frames_required
-                )
-                if enforce_force_close_voiced_ratio:
-                    force_low_modulation_close = (
-                        force_low_modulation_close and voiced_ratio <= force_close_voiced_ratio_max
-                    )
-                natural_close = (
-                    self.vad_hangover_frames_remaining == 0
-                    and voiced_ratio <= float(profile["close_ratio"])
-                    and self.vad_modulation_index < float(profile["mod_open_min"])
-                )
-                if force_low_modulation_close or natural_close:
-                    self.voice_squelch_open = False
-                    self.vad_hangover_frames_remaining = 0
+            elif self.vad_hangover_frames_remaining == 0:
+                self.voice_squelch_open = False
+                self.vad_recent_voiced.clear()
 
         return self.voice_squelch_open
 
@@ -685,10 +555,16 @@ class FMDemodulator(threading.Thread):
             self.vad_preroll_buffer = self.vad_preroll_buffer[-self.vad_preroll_samples :]
 
     def _apply_voice_squelch(
-        self, audio: np.ndarray, vad_sensitivity: str, vad_close_delay_ms: int
+        self,
+        audio: np.ndarray,
+        vad_sensitivity: str,
+        vad_close_delay_ms: int,
+        hiss_gate_open: bool,
     ) -> np.ndarray:
         was_open = self.voice_squelch_open
-        is_open = self._update_voice_squelch_state(audio, vad_sensitivity, vad_close_delay_ms)
+        is_open = self._update_voice_squelch_state(
+            audio, vad_sensitivity, vad_close_delay_ms, hiss_gate_open
+        )
 
         if is_open:
             if not was_open and len(self.vad_preroll_buffer) > 0:
@@ -713,6 +589,13 @@ class FMDemodulator(threading.Thread):
             "gate_open": bool(gate_open),
             "carrier_open": bool(carrier_open),
             "voice_open": bool(voice_open),
+            "hiss_gate_open": (
+                bool(self.hiss_gate_open)
+                if squelch_mode != "carrier" and self.hiss_noise_filter is not None
+                else None
+            ),
+            "hiss_snr_db": self.hiss_snr_db,
+            "webrtc_speech": bool(self.vad_last_webrtc_speech),
         }
 
     def run(self):
@@ -816,6 +699,10 @@ class FMDemodulator(threading.Thread):
                     intermediate_rate = sdr_sample_rate / total_decimation
                     self.audio_filter = self._design_audio_filter(intermediate_rate, vfo_bandwidth)
                     self.deemphasis_filter = self._design_deemphasis_filter(intermediate_rate)
+                    self._configure_hiss_filters(intermediate_rate, vfo_bandwidth)
+                    self._reset_voice_squelch_state()
+                    self.translation_phase = 0.0
+                    self.last_sample = None
 
                     # Initialize filter states for each stage
                     initial_value = samples[0] if len(samples) > 0 else 0
@@ -842,6 +729,16 @@ class FMDemodulator(threading.Thread):
                 if vfo_center_freq == 0:
                     logger.debug("VFO frequency not set, skipping frame")
                     continue
+
+                if (
+                    self.current_center_freq != vfo_center_freq
+                    or self.current_sdr_center_freq != sdr_center_freq
+                ):
+                    # A retune invalidates discriminator and VAD history.
+                    self.current_center_freq = vfo_center_freq
+                    self.current_sdr_center_freq = sdr_center_freq
+                    self.last_sample = None
+                    self._reset_voice_squelch_state()
 
                 # Validate VFO center is within SDR bandwidth (with edge margin)
                 is_in_band, vfo_offset, margin = self._is_vfo_in_sdr_bandwidth(
@@ -991,8 +888,11 @@ class FMDemodulator(threading.Thread):
 
                     carrier_open = self._apply_carrier_squelch(rf_power_db, squelch_threshold_db)
                     voice_open = self.voice_squelch_open
-
                     squelch_started = self.timing.start()
+                    hiss_gate_open = True
+                    if squelch_mode in {"voice", "hybrid"}:
+                        hiss_gate_open = self._update_hiss_gate(demodulated, intermediate_rate)
+
                     if squelch_mode == "carrier":
                         voice_open = False
                         if not carrier_open:
@@ -1003,6 +903,7 @@ class FMDemodulator(threading.Thread):
                             audio,
                             vad_sensitivity=vad_sensitivity,
                             vad_close_delay_ms=vad_close_delay_ms,
+                            hiss_gate_open=hiss_gate_open,
                         )
                         voice_open = self.voice_squelch_open
                         gate_open = voice_open
@@ -1011,6 +912,7 @@ class FMDemodulator(threading.Thread):
                             audio,
                             vad_sensitivity=vad_sensitivity,
                             vad_close_delay_ms=vad_close_delay_ms,
+                            hiss_gate_open=hiss_gate_open,
                         )
                         voice_open = self.voice_squelch_open
                         if not carrier_open:
@@ -1037,13 +939,15 @@ class FMDemodulator(threading.Thread):
                     ):
                         self.last_squelch_debug_log_time = current_time
                         logger.debug(
-                            "Squelch[%s:%s] mode=%s gate=%s carrier=%s voice=%s rf=%.1fdB thr=%.1fdB",
+                            "Squelch[%s:%s] mode=%s gate=%s carrier=%s voice=%s hiss=%s snr=%s rf=%.1fdB thr=%.1fdB",
                             self.session_id,
                             self.vfo_number,
                             squelch_mode,
                             gate_open,
                             carrier_open,
                             voice_open,
+                            hiss_gate_open if squelch_mode != "carrier" else None,
+                            round(self.hiss_snr_db, 1) if self.hiss_snr_db is not None else None,
                             rf_power_db,
                             squelch_threshold_db,
                         )

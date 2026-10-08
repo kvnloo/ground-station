@@ -12,11 +12,11 @@ import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import { SquelchIconCentered } from '../../common/dataurl-icons.jsx';
 import { useAudio } from '../../dashboard/audio-provider.jsx';
 
-const VAD_CLOSE_DELAY_MARKS = Array.from({ length: 10 }, (_, index) => {
-    const value = (index + 1) * 50;
+const VAD_CLOSE_DELAY_MARKS = Array.from({ length: 5 }, (_, index) => {
+    const value = (index + 1) * 200;
     return {
         value,
-        label: value % 100 === 0 ? `${value}` : '',
+        label: `${value}`,
     };
 });
 
@@ -206,7 +206,7 @@ export const SquelchSlider = ({
                 <Slider
                     value={vadCloseDelayMs}
                     min={50}
-                    max={500}
+                    max={1000}
                     step={50}
                     marks={VAD_CLOSE_DELAY_MARKS}
                     valueLabelDisplay="auto"

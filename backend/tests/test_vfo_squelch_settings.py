@@ -47,7 +47,17 @@ def test_vfo_voice_squelch_fields_are_normalized_and_clamped():
         assert vfo_state is not None
         assert vfo_state.squelch_mode == "hybrid"
         assert vfo_state.vad_sensitivity == "high"
-        assert vfo_state.vad_close_delay_ms == 500
+        assert vfo_state.vad_close_delay_ms == 900
+
+        manager.update_vfo_state(
+            session_id=session_id,
+            vfo_id=1,
+            vad_close_delay_ms=1500,
+        )
+
+        vfo_state = manager.get_vfo_state(session_id, 1)
+        assert vfo_state is not None
+        assert vfo_state.vad_close_delay_ms == 1000
 
         manager.update_vfo_state(
             session_id=session_id,
