@@ -244,10 +244,7 @@ function ToolbarActions() {
             <HardwareSettingsPopover />
             <VfoAudioPopover />
             <BackgroundTasksPopover />
-            {/* Keep this battery-focused control on phone and tablet-sized layouts. */}
-            <Box sx={{ display: { xs: 'inline-flex', lg: 'none' } }}>
-                <WakeLockStatus />
-            </Box>
+            <WakeLockStatus />
             <TimeDisplay />
             <ThemeSwitcher />
         </Stack>
