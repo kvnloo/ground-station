@@ -1,11 +1,17 @@
 import React from 'react';
 import { Tooltip, IconButton } from '@mui/material';
+import { UAParser } from 'ua-parser-js';
 import { useWakeLockContext } from './wake-lock-provider.jsx';
-import LockIcon from '@mui/icons-material/Lock';
-import LockOpenIcon from '@mui/icons-material/LockOpen';
-import WarningIcon from '@mui/icons-material/Warning';
 import ScreenLockPortraitIcon from '@mui/icons-material/ScreenLockPortrait';
 import StayPrimaryPortraitIcon from '@mui/icons-material/StayPrimaryPortrait';
+
+const isMobileOrTablet = () => {
+    const deviceType = new UAParser(navigator.userAgent).getDevice().type;
+
+    // iPadOS can identify itself as a Mac when requesting desktop websites.
+    return deviceType === 'mobile' || deviceType === 'tablet' ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+};
 
 const WakeLockStatus = ({ size = 'medium' }) => {
     const {
@@ -16,6 +22,10 @@ const WakeLockStatus = ({ size = 'medium' }) => {
         forceRelease,
         requestManualWakeLock,
     } = useWakeLockContext();
+
+    if (!isSupported || !isMobileOrTablet()) {
+        return null;
+    }
 
     const handleClick = async () => {
         if (isActive) {
@@ -28,10 +38,6 @@ const WakeLockStatus = ({ size = 'medium' }) => {
     };
 
     const getTooltipText = () => {
-        if (!isSupported) {
-            return 'Wake lock not supported on this device';
-        }
-
         if (hasManualRequest && activeRequests > 0) {
             return `Manual + ${activeRequests} component wake lock${activeRequests !== 1 ? 's' : ''} active. Click to release all.`;
         } else if (hasManualRequest) {
@@ -43,21 +49,13 @@ const WakeLockStatus = ({ size = 'medium' }) => {
         }
     };
 
-    const getIcon = () => {
-        if (!isSupported) {
-            return <WarningIcon color="warning" />;
-        }
-        return isActive ? <ScreenLockPortraitIcon color="primary" /> : <StayPrimaryPortraitIcon color="action" />;
-    };
-
     return (
         <Tooltip title={getTooltipText()}>
             <IconButton
-                onClick={isSupported ? handleClick : undefined}
+                onClick={handleClick}
                 size={size}
-                disabled={!isSupported}
             >
-                {getIcon()}
+                {isActive ? <ScreenLockPortraitIcon color="primary" /> : <StayPrimaryPortraitIcon color="action" />}
             </IconButton>
         </Tooltip>
     );
