@@ -134,6 +134,8 @@
   "satellite_selector": {
     "title": "Select group of satellites",
     "group_label": "Group",
+    "recent_groups": "Recent",
+    "group_too_large": "Groups with more than {{count}} satellites cannot be selected",
     "user_groups": "User defined satellite groups",
     "tle_groups": "Orbital source satellite groups",
     "failed_load_groups": "Failed to load satellite groups",

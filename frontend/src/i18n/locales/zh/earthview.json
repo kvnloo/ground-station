@@ -138,6 +138,8 @@
   "satellite_selector": {
     "title": "选择卫星分组",
     "group_label": "分组",
+    "recent_groups": "最近使用",
+    "group_too_large": "无法选择超过 {{count}} 颗卫星的分组",
     "user_groups": "用户定义的卫星分组",
     "tle_groups": "轨道数据源卫星分组",
     "failed_load_groups": "加载卫星分组失败",

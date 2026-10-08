@@ -55,6 +55,8 @@
   "satellite_selector": {
     "title": "Seleziona gruppo di satelliti",
     "group_label": "Gruppo",
+    "recent_groups": "Recenti",
+    "group_too_large": "Non è possibile selezionare gruppi con più di {{count}} satelliti",
     "user_groups": "Gruppi satelliti definiti dall'utente",
     "tle_groups": "Gruppi satelliti da fonti orbitali",
     "failed_load_groups": "Impossibile caricare i gruppi satelliti",

@@ -116,6 +116,8 @@
   "satellite_selector": {
     "title": "Satellitengruppe auswählen",
     "group_label": "Gruppe",
+    "recent_groups": "Zuletzt verwendet",
+    "group_too_large": "Gruppen mit mehr als {{count}} Satelliten können nicht ausgewählt werden",
     "user_groups": "Benutzerdefinierte Satellitengruppen",
     "tle_groups": "Satellitengruppen aus Orbitquellen",
     "failed_load_groups": "Fehler beim Laden der Satellitengruppen",

@@ -116,6 +116,8 @@
   "satellite_selector": {
     "title": "Selecteer groep satellieten",
     "group_label": "Groep",
+    "recent_groups": "Recent",
+    "group_too_large": "Groepen met meer dan {{count}} satellieten kunnen niet worden geselecteerd",
     "user_groups": "Gebruiker gedefinieerde satelliet groepen",
     "tle_groups": "Satellietgroepen uit baanbronnen",
     "failed_load_groups": "Laden van satelliet groepen mislukt",
