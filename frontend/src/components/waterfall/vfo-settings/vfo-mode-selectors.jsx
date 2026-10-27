@@ -308,7 +308,8 @@ export const DataDecoderSelector = ({
                 const updates = { decoder: newValue, mode: 'none' };
 
                 // Set bandwidth based on decoder type
-                if (newValue === 'sstv') updates.bandwidth = 3300;
+                // The decoder receives RF IQ; its FM channel must include the audio sidebands.
+                if (newValue === 'sstv') updates.bandwidth = 12500;
                 else if (newValue === 'geoscanimage') updates.bandwidth = 20000;
                 else if (newValue === 'apt') updates.bandwidth = 40000;
                 else if (newValue === 'lora') updates.bandwidth = 500000;
