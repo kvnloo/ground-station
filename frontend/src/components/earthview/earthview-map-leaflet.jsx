@@ -30,9 +30,7 @@ import {
     useMapEvents,
 } from 'react-leaflet';
 import L from 'leaflet';
-import {Box, Fab, useTheme, Typography} from '@mui/material';
-import ZoomInIcon from '@mui/icons-material/ZoomIn';
-import ZoomOutIcon from '@mui/icons-material/ZoomOut';
+import {Box, useTheme, Typography} from '@mui/material';
 import {useDispatch, useSelector} from 'react-redux';
 import { useTranslation } from 'react-i18next';
 import {
@@ -55,6 +53,7 @@ import {
 } from '../common/common.jsx';
 import MapSettingsIslandDialog from './map-settings-dialog.jsx';
 import MapTitleControls from './map-title-controls.jsx';
+import MapToolbar from './map-toolbar.jsx';
 import useMapIslandFullscreen from './use-map-island-fullscreen.js';
 import CoordinateGrid from '../common/mercator-grid.jsx';
 import SatelliteTrackSuggestion from './map-target-button.jsx';
@@ -109,36 +108,6 @@ const earthViewVisibleSatelliteIcon = L.divIcon({
     iconSize: satelliteIcon2.options.iconSize,
     iconAnchor: [10, 10],
     popupAnchor: satelliteIcon2.options.popupAnchor,
-});
-
-const ZoomInButton = React.memo(function ZoomInButton() {
-    const { t } = useTranslation('earthview');
-
-    const handleClick = () => {
-        if (!MapObject) return;
-        MapObject.zoomIn(0.25);
-    };
-
-    return (
-        <Fab size="small" color="primary" aria-label={t('map_controls.zoom_in', {defaultValue: 'Zoom in'})} onClick={handleClick}>
-            <ZoomInIcon/>
-        </Fab>
-    );
-});
-
-const ZoomOutButton = React.memo(function ZoomOutButton() {
-    const { t } = useTranslation('earthview');
-
-    const handleClick = () => {
-        if (!MapObject) return;
-        MapObject.zoomOut(0.25);
-    };
-
-    return (
-        <Fab size="small" color="primary" aria-label={t('map_controls.zoom_out', {defaultValue: 'Zoom out'})} onClick={handleClick}>
-            <ZoomOutIcon/>
-        </Fab>
-    );
 });
 
 const EarthViewAttributionBar = React.memo(function EarthViewAttributionBar({ htmlString }) {
@@ -201,6 +170,12 @@ const LeafletEarthViewMapRenderer = ({
         (state) => state.earthViewTrack.selectedSatellites,
         areSatellitesEquivalent
     );
+    const selectedPosition = useSelector((state) =>
+        state.earthViewTrack.selectedSatellitePositions?.[state.earthViewTrack.selectedSatelliteId]);
+    const [following, setFollowing] = useState(false);
+    const selectedLatitude = selectedPosition?.lat;
+    const selectedLongitude = selectedPosition?.lon;
+    const hasSelectedPosition = Number.isFinite(selectedLatitude) && Number.isFinite(selectedLongitude);
     const normalizedMapEngine = useMemo(
         () => normalizeMapEngine(mapEngine),
         [mapEngine]
@@ -286,7 +261,6 @@ const LeafletEarthViewMapRenderer = ({
     });
     const {location} = useSelector((state) => state.location);
     const updateTimeRef = useRef(null);
-    const zoomControlsRef = useRef(null);
     const arrowControlsRef = useRef(null);
     const elevationHistoryRef = useRef({}); // Store elevation history for each satellite
     const timeToMaxElevationRef = useRef(new Map());
@@ -305,14 +279,32 @@ const LeafletEarthViewMapRenderer = ({
     }, [dispatch]);
 
     const handleCenterHome = useCallback(() => {
+        setFollowing(false);
         if (!MapObject || location?.lat == null || location?.lon == null) return;
         MapObject.setView([location.lat, location.lon], MapObject.getZoom());
     }, [location]);
 
     const handleCenterMap = useCallback(() => {
+        setFollowing(false);
         if (!MapObject) return;
         MapObject.setView([0, 0], MapObject.getZoom());
     }, []);
+
+    const handleFitEarth = useCallback(() => {
+        setFollowing(false);
+        MapObject?.fitBounds([[-85, -180], [85, 180]], {padding: [12, 12]});
+    }, []);
+
+    useEffect(() => {
+        if (!selectedSatelliteId) setFollowing(false);
+    }, [selectedSatelliteId]);
+
+    useEffect(() => {
+        if (following && hasSelectedPosition && MapObject) {
+            // Follow live propagation without restarting the map's zoom animation.
+            MapObject.setView([selectedLatitude, selectedLongitude], MapObject.getZoom(), {animate: false});
+        }
+    }, [following, hasSelectedPosition, selectedLatitude, selectedLongitude]);
 
     const resizeMap = useCallback(() => {
         if (MapObject?._container && document.contains(MapObject._container)) {
@@ -324,6 +316,7 @@ const LeafletEarthViewMapRenderer = ({
     // Subscribe to map events
     function MapEventComponent({handleSetMapZoomLevel}) {
         const mapEvents = useMapEvents({
+            dragstart: () => setFollowing(false),
             zoomend: () => {
                 const mapZoom = mapEvents.getZoom();
                 handleSetMapZoomLevel(mapZoom);
@@ -331,7 +324,6 @@ const LeafletEarthViewMapRenderer = ({
             click: (e) => {
                 const target = e.originalEvent?.target;
                 if (
-                    (zoomControlsRef.current && target && zoomControlsRef.current.contains(target)) ||
                     (arrowControlsRef.current && target && arrowControlsRef.current.contains(target))
                 ) {
                     return;
@@ -339,6 +331,15 @@ const LeafletEarthViewMapRenderer = ({
                 dispatch(setSelectedSatelliteId(null));
             },
         });
+        useEffect(() => {
+            // Keep the current center and zoom when quick interaction toggles change.
+            const setInteraction = (handler, enabled) => handler?.[enabled ? 'enable' : 'disable']();
+            setInteraction(mapEvents.dragging, enableMapDragging);
+            setInteraction(mapEvents.scrollWheelZoom, enableMapZooming);
+            setInteraction(mapEvents.doubleClickZoom, enableMapZooming);
+            setInteraction(mapEvents.touchZoom, enableMapZooming);
+            setInteraction(mapEvents.boxZoom, enableMapZooming);
+        }, [mapEvents, enableMapDragging, enableMapZooming]);
         return null;
     }
 
@@ -466,6 +467,8 @@ const LeafletEarthViewMapRenderer = ({
 
                 // Accumulate the selected satellite position with enriched data
                 selectedSatPos[noradId] = {
+                    lat,
+                    lon,
                     az,
                     el,
                     range,
@@ -878,16 +881,25 @@ const LeafletEarthViewMapRenderer = ({
                         </Typography>
                     </Box>
                     <MapTitleControls
-                        homeDisabled={location?.lat == null || location?.lon == null}
-                        isFullscreen={isFullscreen}
-                        onHome={handleCenterHome}
-                        onCenter={handleCenterMap}
-                        onFullscreen={toggleFullscreen}
                         onSettings={handleOpenSettings}
                         tooltipContainer={isFullscreen ? islandRef.current : undefined}
                     />
                 </Box>
             </TitleBar>
+            <MapToolbar
+                homeDisabled={location?.lat == null || location?.lon == null}
+                followDisabled={!hasSelectedPosition}
+                following={following}
+                onHome={handleCenterHome}
+                onCenter={handleCenterMap}
+                onFitEarth={handleFitEarth}
+                onToggleFollow={() => setFollowing((value) => !value)}
+                onZoomIn={() => MapObject?.zoomIn(0.25)}
+                onZoomOut={() => MapObject?.zoomOut(0.25)}
+                onFullscreen={toggleFullscreen}
+                isFullscreen={isFullscreen}
+                tooltipContainer={isFullscreen ? islandRef.current : undefined}
+            />
             <Box sx={{ position: 'relative', width: '100%', flex: 1, minHeight: 0 }}>
                 <Backdrop
                     open={loadingSatellites && selectedSatGroupId}
@@ -901,7 +913,7 @@ const LeafletEarthViewMapRenderer = ({
                 </Backdrop>
                 {/* Leaflet CRS is immutable after map init, so remount when projection changes. */}
                 <MapContainer
-                    key={`earth-view-map-${normalizedMapEngine}-${selectedTileLayer.id}-${selectedTileLayer.projection || 'EPSG3857'}-${enableMapDragging}-${enableMapZooming}`}
+                    key={`earth-view-map-${normalizedMapEngine}-${selectedTileLayer.id}-${selectedTileLayer.projection || 'EPSG3857'}`}
                     className="earth-view-map"
                     center={[0, 0]}
                     crs={mapCrs}
@@ -932,17 +944,6 @@ const LeafletEarthViewMapRenderer = ({
                 ) : (
                     <TileLayer url={selectedTileLayer.url} eventHandlers={tileEventHandlers}/>
                 )}
-
-                {!enableMapZooming ? (
-                    <Box
-                        ref={zoomControlsRef}
-                        sx={{'& > :not(style)': {m: 1}, display: 'flex', flexDirection: 'column'}}
-                        style={{left: 5, top: 5, position: 'absolute'}}
-                    >
-                        <ZoomInButton/>
-                        <ZoomOutButton/>
-                    </Box>
-                ) : null}
 
                 <MapSettingsIslandDialog
                     container={isFullscreen ? islandRef.current : undefined}
@@ -996,7 +997,7 @@ const LeafletEarthViewMapRenderer = ({
                 {mapLayers.currentCrosshairs}
 
                 {!enableMapDragging ? (
-                    <div ref={arrowControlsRef}>
+                    <div ref={arrowControlsRef} onClick={() => setFollowing(false)}>
                         <MapArrowControls mapObject={MapObject} verticalOffset={25}/>
                     </div>
                 ) : null}

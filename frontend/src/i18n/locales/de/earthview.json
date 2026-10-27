@@ -175,7 +175,18 @@
     "exit_fullscreen": "Vollbildmodus beenden",
     "map_settings": "Karteneinstellungen",
     "zoom_in": "Vergrößern",
-    "zoom_out": "Verkleinern"
+    "zoom_out": "Verkleinern",
+    "toolbar": "Erdkarten-Steuerung",
+    "scroll_left": "Kartensteuerung nach links scrollen",
+    "scroll_right": "Kartensteuerung nach rechts scrollen",
+    "fit_earth": "Erde vollständig anzeigen",
+    "follow_selected": "Ausgewähltem Satelliten folgen",
+    "enable_panning": "Kartenverschiebung aktivieren",
+    "enable_gesture_zoom": "Zoomgesten aktivieren",
+    "show_past_path": "Vergangene Umlaufbahnen anzeigen",
+    "show_future_path": "Zukünftige Umlaufbahnen anzeigen",
+    "show_coverage": "Satellitenabdeckung anzeigen",
+    "show_grid": "Koordinatengitter anzeigen"
   },
   "weather_errors": {
     "fetch_failed": "Wetterdaten konnten nicht abgerufen werden",

@@ -20,9 +20,7 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import Map, {Marker, Popup, Source, Layer} from 'react-map-gl/maplibre';
 import { maplibregl } from '../common/maplibre.js';
-import {Box, Fab, useTheme, Typography, IconButton, Button} from '@mui/material';
-import ZoomInIcon from '@mui/icons-material/ZoomIn';
-import ZoomOutIcon from '@mui/icons-material/ZoomOut';
+import {Box, useTheme, Typography, IconButton, Button} from '@mui/material';
 import TrackChangesIcon from '@mui/icons-material/TrackChanges';
 import InfoIcon from '@mui/icons-material/Info';
 import {useDispatch, useSelector} from 'react-redux';
@@ -51,6 +49,7 @@ import {
 } from '../common/common.jsx';
 import MapSettingsIslandDialog from './map-settings-dialog.jsx';
 import MapTitleControls from './map-title-controls.jsx';
+import MapToolbar from './map-toolbar.jsx';
 import useMapIslandFullscreen from './use-map-island-fullscreen.js';
 import {
     getSatelliteCoverageCircle,
@@ -365,6 +364,12 @@ const MapLibreEarthViewMapRenderer = ({
         (state) => state.earthViewTrack.selectedSatellites,
         areSatellitesEquivalent
     );
+    const selectedPosition = useSelector((state) =>
+        state.earthViewTrack.selectedSatellitePositions?.[state.earthViewTrack.selectedSatelliteId]);
+    const [following, setFollowing] = useState(false);
+    const selectedLatitude = selectedPosition?.lat;
+    const selectedLongitude = selectedPosition?.lon;
+    const hasSelectedPosition = Number.isFinite(selectedLatitude) && Number.isFinite(selectedLongitude);
 
     const {location} = useSelector((state) => state.location);
     const trackerInstances = useSelector((state) => state.trackerInstances?.instances || []);
@@ -547,6 +552,8 @@ const MapLibreEarthViewMapRenderer = ({
                 }
 
                 selectedSatPos[noradId] = {
+                    lat,
+                    lon,
                     az,
                     el,
                     range,
@@ -768,14 +775,32 @@ const MapLibreEarthViewMapRenderer = ({
     const liveMap = mapRef.current?.getMap();
 
     const handleCenterHome = () => {
+        setFollowing(false);
         if (!liveMap || !location) return;
         liveMap.flyTo({center: [location.lon, location.lat], zoom: liveMap.getZoom()});
     };
 
     const handleCenterMap = () => {
+        setFollowing(false);
         if (!liveMap) return;
         liveMap.flyTo({center: [0, 0], zoom: liveMap.getZoom()});
     };
+
+    const handleFitEarth = () => {
+        setFollowing(false);
+        liveMap?.fitBounds([[-180, -85], [180, 85]], {padding: 12});
+    };
+
+    useEffect(() => {
+        if (!selectedSatelliteId) setFollowing(false);
+    }, [selectedSatelliteId]);
+
+    useEffect(() => {
+        if (following && hasSelectedPosition) {
+            // Keep the map centered on each live position without changing its zoom.
+            mapRef.current?.getMap()?.jumpTo({center: [selectedLongitude, selectedLatitude]});
+        }
+    }, [following, hasSelectedPosition, selectedLatitude, selectedLongitude]);
 
     const resizeMap = useCallback(() => mapRef.current?.getMap()?.resize(), []);
     const {islandRef, isFullscreen, toggleFullscreen} = useMapIslandFullscreen(resizeMap);
@@ -819,16 +844,26 @@ const MapLibreEarthViewMapRenderer = ({
                         </Typography>
                     </Box>
                     <MapTitleControls
-                        homeDisabled={location?.lat == null || location?.lon == null}
-                        isFullscreen={isFullscreen}
-                        onHome={handleCenterHome}
-                        onCenter={handleCenterMap}
-                        onFullscreen={toggleFullscreen}
                         onSettings={handleOpenSettings}
                         tooltipContainer={isFullscreen ? islandRef.current : undefined}
                     />
                 </Box>
             </TitleBar>
+
+            <MapToolbar
+                homeDisabled={location?.lat == null || location?.lon == null}
+                followDisabled={!hasSelectedPosition}
+                following={following}
+                onHome={handleCenterHome}
+                onCenter={handleCenterMap}
+                onFitEarth={handleFitEarth}
+                onToggleFollow={() => setFollowing((value) => !value)}
+                onZoomIn={handleZoomIn}
+                onZoomOut={handleZoomOut}
+                onFullscreen={toggleFullscreen}
+                isFullscreen={isFullscreen}
+                tooltipContainer={isFullscreen ? islandRef.current : undefined}
+            />
 
             <Box
                 sx={{
@@ -913,6 +948,7 @@ const MapLibreEarthViewMapRenderer = ({
                     maxZoom={10}
                     onError={onMapError}
                     onIdle={onMapLoaded}
+                    onDragStart={() => setFollowing(false)}
                     onZoomEnd={(event) => handleSetMapZoomLevel(event?.viewState?.zoom ?? mapZoomLevel)}
                     onClick={(event) => {
                         const target = event.originalEvent?.target;
@@ -1259,20 +1295,6 @@ const MapLibreEarthViewMapRenderer = ({
                     })}
                 </Map>
 
-                {!enableMapZooming ? (
-                    <Box
-                        sx={{'& > :not(style)': {m: 1}, display: 'flex', flexDirection: 'column'}}
-                        style={{left: 5, top: 5, position: 'absolute'}}
-                    >
-                        <Fab size="small" color="primary" aria-label={t('map_controls.zoom_in', {defaultValue: 'Zoom in'})} onClick={handleZoomIn}>
-                            <ZoomInIcon/>
-                        </Fab>
-                        <Fab size="small" color="primary" aria-label={t('map_controls.zoom_out', {defaultValue: 'Zoom out'})} onClick={handleZoomOut}>
-                            <ZoomOutIcon/>
-                        </Fab>
-                    </Box>
-                ) : null}
-
                 <MapSettingsIslandDialog
                     container={isFullscreen ? islandRef.current : undefined}
                     updateBackend={() => {
@@ -1282,7 +1304,7 @@ const MapLibreEarthViewMapRenderer = ({
                 />
 
                 {!enableMapDragging ? (
-                    <div ref={arrowControlsRef}>
+                    <div ref={arrowControlsRef} onClick={() => setFollowing(false)}>
                         {liveMap ? <MapArrowControls mapObject={liveMap} verticalOffset={25}/> : null}
                     </div>
                 ) : null}

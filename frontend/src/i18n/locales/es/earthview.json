@@ -175,7 +175,18 @@
     "exit_fullscreen": "Salir de pantalla completa",
     "map_settings": "Configuración del mapa",
     "zoom_in": "Zoom en",
-    "zoom_out": "Fuera."
+    "zoom_out": "Fuera.",
+    "toolbar": "Controles del mapa terrestre",
+    "scroll_left": "Desplazar controles a la izquierda",
+    "scroll_right": "Desplazar controles a la derecha",
+    "fit_earth": "Mostrar toda la Tierra",
+    "follow_selected": "Seguir el satélite seleccionado",
+    "enable_panning": "Activar desplazamiento del mapa",
+    "enable_gesture_zoom": "Activar zoom con gestos",
+    "show_past_path": "Mostrar trayectorias orbitales pasadas",
+    "show_future_path": "Mostrar trayectorias orbitales futuras",
+    "show_coverage": "Mostrar cobertura de satélites",
+    "show_grid": "Mostrar cuadrícula de coordenadas"
   },
   "weather_errors": {
     "fetch_failed": "No se pudieron obtener los datos meteorológicos",

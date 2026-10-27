@@ -1,9 +1,16 @@
 import React from 'react';
-import {act, fireEvent, render, screen} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {configureStore} from '@reduxjs/toolkit';
+import {Provider} from 'react-redux';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import '../../i18n/config.js';
 import MapTitleControls from './map-title-controls.jsx';
+import MapToolbar from './map-toolbar.jsx';
+import earthViewReducer from './earthview-slice.jsx';
 import useMapIslandFullscreen from './use-map-island-fullscreen.js';
+
+const socket = vi.hoisted(() => ({emit: vi.fn()}));
+vi.mock('../common/socket.jsx', () => ({useSocket: () => ({socket})}));
 
 function MapIslandHarness({onResize}) {
     const {islandRef, isFullscreen, toggleFullscreen} = useMapIslandFullscreen(onResize);
@@ -11,15 +18,12 @@ function MapIslandHarness({onResize}) {
     return (
         <div ref={islandRef} data-testid="map-island">
             <header>
-                <MapTitleControls
-                    homeDisabled={false}
-                    isFullscreen={isFullscreen}
-                    onHome={() => {}}
-                    onCenter={() => {}}
-                    onFullscreen={toggleFullscreen}
-                    onSettings={() => {}}
-                />
+                <MapTitleControls onSettings={() => {}} />
             </header>
+            <MapToolbar homeDisabled={false} followDisabled={true} following={false}
+                        onHome={() => {}} onCenter={() => {}} onFitEarth={() => {}}
+                        onToggleFollow={() => {}} onZoomIn={() => {}} onZoomOut={() => {}}
+                        onFullscreen={toggleFullscreen} isFullscreen={isFullscreen} />
             <div data-testid="map-viewport" />
         </div>
     );
@@ -29,9 +33,16 @@ describe('Earth View map island controls', () => {
     afterEach(() => {
         vi.unstubAllGlobals();
         vi.restoreAllMocks();
+        socket.emit.mockReset();
     });
 
-    it('fullscreens the island and keeps its title controls available after an Escape exit', () => {
+    const renderIsland = (onResize = vi.fn()) => {
+        const store = configureStore({reducer: {earthViewTrack: earthViewReducer}});
+        render(<Provider store={store}><MapIslandHarness onResize={onResize} /></Provider>);
+        return store;
+    };
+
+    it('fullscreens the island from the toolbar and keeps the controls available after Escape', () => {
         let fullscreenElement = null;
         const requestFullscreen = vi.fn(function requestFullscreen() {
             fullscreenElement = this;
@@ -64,11 +75,12 @@ describe('Earth View map island controls', () => {
 
         const onResize = vi.fn();
         try {
-            render(<MapIslandHarness onResize={onResize} />);
+            renderIsland(onResize);
             const island = screen.getByTestId('map-island');
-            const controls = screen.getByRole('group');
+            const controls = screen.getByRole('toolbar', {name: 'Earth map controls'});
             expect(island).toContainElement(controls);
             expect(island).toContainElement(screen.getByTestId('map-viewport'));
+            expect(screen.getByRole('button', {name: 'Map Settings'})).toBeInTheDocument();
 
             fireEvent.click(screen.getByRole('button', {name: 'Go fullscreen'}));
             expect(requestFullscreen.mock.instances[0]).toBe(island);
@@ -102,5 +114,20 @@ describe('Earth View map island controls', () => {
                 delete HTMLElement.prototype.requestFullscreen;
             }
         }
+    });
+
+    it('updates and saves a quick display toggle', async () => {
+        socket.emit.mockImplementation((_event, _request, acknowledge) => acknowledge({success: true, data: {}}));
+        const store = renderIsland();
+        expect(screen.getByRole('button', {name: 'Show coordinate grid'})).toHaveAttribute('aria-pressed', 'true');
+
+        fireEvent.click(screen.getByRole('button', {name: 'Show coordinate grid'}));
+
+        expect(store.getState().earthViewTrack.showGrid).toBe(false);
+        expect(screen.getByRole('button', {name: 'Show coordinate grid'})).toHaveAttribute('aria-pressed', 'false');
+        await waitFor(() => expect(socket.emit).toHaveBeenCalledWith('api.call', expect.objectContaining({
+            cmd: 'set-map-settings',
+            data: expect.objectContaining({value: expect.objectContaining({showGrid: false})}),
+        }), expect.any(Function)));
     });
 });

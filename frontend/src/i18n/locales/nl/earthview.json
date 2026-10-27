@@ -175,7 +175,18 @@
     "exit_fullscreen": "Volledig scherm afsluiten",
     "map_settings": "Kaart instellingen",
     "zoom_in": "Inzoomen",
-    "zoom_out": "Uitzoomen"
+    "zoom_out": "Uitzoomen",
+    "toolbar": "Bediening van de aardkaart",
+    "scroll_left": "Kaartbediening naar links schuiven",
+    "scroll_right": "Kaartbediening naar rechts schuiven",
+    "fit_earth": "Hele aarde tonen",
+    "follow_selected": "Geselecteerde satelliet volgen",
+    "enable_panning": "Kaart slepen inschakelen",
+    "enable_gesture_zoom": "Zoomen met gebaren inschakelen",
+    "show_past_path": "Eerdere banen tonen",
+    "show_future_path": "Toekomstige banen tonen",
+    "show_coverage": "Satellietdekking tonen",
+    "show_grid": "Coördinatenraster tonen"
   },
   "weather_errors": {
     "fetch_failed": "Weer gegevens konden niet worden opgehaald",

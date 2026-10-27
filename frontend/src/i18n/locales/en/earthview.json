@@ -191,7 +191,20 @@
     "go_to_center": "Go to center of map",
     "go_fullscreen": "Go fullscreen",
     "exit_fullscreen": "Exit fullscreen",
-    "map_settings": "Map settings"
+    "map_settings": "Map settings",
+    "toolbar": "Earth map controls",
+    "scroll_left": "Scroll map controls left",
+    "scroll_right": "Scroll map controls right",
+    "fit_earth": "Fit Earth in view",
+    "follow_selected": "Follow selected satellite",
+    "enable_panning": "Enable map panning",
+    "enable_gesture_zoom": "Enable gesture zoom",
+    "zoom_in": "Zoom in",
+    "zoom_out": "Zoom out",
+    "show_past_path": "Show past orbit paths",
+    "show_future_path": "Show future orbit paths",
+    "show_coverage": "Show satellite coverage",
+    "show_grid": "Show coordinate grid"
   },
   "weather_errors": {
     "fetch_failed": "Weather data could not be fetched",

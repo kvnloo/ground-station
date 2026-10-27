@@ -16,77 +16,19 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-import {Box, IconButton, Tooltip} from '@mui/material';
-import FilterCenterFocusIcon from '@mui/icons-material/FilterCenterFocus';
-import FullscreenIcon from '@mui/icons-material/Fullscreen';
-import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
-import HomeIcon from '@mui/icons-material/Home';
+import {IconButton, Tooltip} from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
 import {useTranslation} from 'react-i18next';
 
-// Match the compact outlined icon group in the tracking map title bar.
-const actionButtonSx = {
-    width: 24,
-    height: 24,
-    p: 0.25,
-    border: '1px solid',
-    borderColor: 'primary.main',
-    borderRadius: 1,
-    color: 'primary.main',
-    bgcolor: 'transparent',
-    '&:hover': {bgcolor: 'action.hover'},
-};
-
-export default function MapTitleControls({homeDisabled, isFullscreen, onHome, onCenter, onFullscreen, onSettings, tooltipContainer}) {
+export default function MapTitleControls({onSettings, tooltipContainer}) {
     const {t} = useTranslation('earthview');
-    const homeLabel = t('map_controls.go_home');
-    const centerLabel = t('map_controls.go_to_center');
-    const fullscreenLabel = isFullscreen ? t('map_controls.exit_fullscreen') : t('map_controls.go_fullscreen');
-    const tooltipSlotProps = {popper: {container: tooltipContainer}};
+    const label = t('map_settings.title');
 
     return (
-        <Box
-            sx={{display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0}}
-            onMouseDown={(event) => event.stopPropagation()}
-            onTouchStart={(event) => event.stopPropagation()}
-        >
-            <Box role="group" aria-label={t('title')} sx={{display: 'flex', alignItems: 'center', gap: 0.5}}>
-                <Tooltip title={homeLabel} slotProps={tooltipSlotProps}>
-                    <span style={{display: 'inline-flex'}}>
-                        <IconButton size="small" sx={actionButtonSx} aria-label={homeLabel} onClick={onHome} disabled={homeDisabled}>
-                            <HomeIcon sx={{fontSize: 16}} />
-                        </IconButton>
-                    </span>
-                </Tooltip>
-                <Tooltip title={centerLabel} slotProps={tooltipSlotProps}>
-                    <IconButton size="small" sx={actionButtonSx} aria-label={centerLabel} onClick={onCenter}>
-                        <FilterCenterFocusIcon sx={{fontSize: 16}} />
-                    </IconButton>
-                </Tooltip>
-                <Tooltip title={fullscreenLabel} slotProps={tooltipSlotProps}>
-                    <IconButton
-                        size="small"
-                        aria-label={fullscreenLabel}
-                        aria-pressed={isFullscreen}
-                        onClick={onFullscreen}
-                        sx={{
-                            ...actionButtonSx,
-                            ...(isFullscreen && {
-                                color: 'primary.contrastText',
-                                bgcolor: 'primary.main',
-                                '&:hover': {bgcolor: 'primary.dark'},
-                            }),
-                        }}
-                    >
-                        {isFullscreen ? <FullscreenExitIcon sx={{fontSize: 16}} /> : <FullscreenIcon sx={{fontSize: 16}} />}
-                    </IconButton>
-                </Tooltip>
-            </Box>
-            <Tooltip title={t('map_settings.title')} slotProps={tooltipSlotProps}>
-                <IconButton size="small" sx={{p: '2px'}} aria-label={t('map_settings.title')} onClick={onSettings}>
-                    <SettingsIcon fontSize="small" />
-                </IconButton>
-            </Tooltip>
-        </Box>
+        <Tooltip title={label} slotProps={{popper: {container: tooltipContainer}}}>
+            <IconButton size="small" sx={{p: '2px'}} aria-label={label} onClick={onSettings} onMouseDown={(event) => event.stopPropagation()} onTouchStart={(event) => event.stopPropagation()}>
+                <SettingsIcon fontSize="small" />
+            </IconButton>
+        </Tooltip>
     );
 }

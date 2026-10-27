@@ -212,7 +212,18 @@
     "exit_fullscreen": "退出全屏",
     "map_settings": "地图设置",
     "zoom_in": "放大",
-    "zoom_out": "缩小"
+    "zoom_out": "缩小",
+    "toolbar": "地球地图控件",
+    "scroll_left": "向左滚动地图控件",
+    "scroll_right": "向右滚动地图控件",
+    "fit_earth": "显示整个地球",
+    "follow_selected": "跟随选中的卫星",
+    "enable_panning": "启用地图平移",
+    "enable_gesture_zoom": "启用手势缩放",
+    "show_past_path": "显示过去的轨道",
+    "show_future_path": "显示未来的轨道",
+    "show_coverage": "显示卫星覆盖范围",
+    "show_grid": "显示坐标网格"
   },
   "weather_errors": {
     "fetch_failed": "无法获取天气数据",
