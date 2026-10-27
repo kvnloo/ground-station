@@ -64,7 +64,6 @@ vi.mock('@mui/x-data-grid', async () => {
                 )),
             );
         }),
-        GridPagination: () => null,
         gridClasses: { cell: 'MuiDataGrid-cell', columnHeader: 'MuiDataGrid-columnHeader' },
         gridPageCountSelector: () => 1,
         gridPageSelector: () => 0,
@@ -259,7 +258,7 @@ describe('Celestial passes context menu', () => {
         );
         const view = render(renderTable(passes));
 
-        act(() => latestDataGridProps.current.slotProps.pagination.onPageChange(1));
+        act(() => latestDataGridProps.current.slotProps.basePagination.onPageChange(null, 1));
         await waitFor(() => expect(latestDataGridProps.current.paginationModel.page).toBe(1));
 
         view.rerender(renderTable(passes.map((pass) => ({ ...pass }))));

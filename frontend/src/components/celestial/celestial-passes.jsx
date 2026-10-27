@@ -24,13 +24,7 @@ import {
 import { alpha, darken, lighten, styled } from '@mui/material/styles';
 import {
     DataGrid,
-    GridPagination,
     gridClasses,
-    gridPageCountSelector,
-    gridPageSelector,
-    gridRowSelectionCountSelector,
-    useGridApiContext,
-    useGridSelector,
 } from '@mui/x-data-grid';
 import AccessTimeFilledIcon from '@mui/icons-material/AccessTimeFilled';
 import ArrowUpwardRoundedIcon from '@mui/icons-material/ArrowUpwardRounded';
@@ -63,6 +57,7 @@ import { useUserTimeSettings } from '../../hooks/useUserTimeSettings.jsx';
 import { toRowSelectionModel, toSelectedIds } from '../../utils/datagrid-selection.js';
 import ProgressFormatter from '../earthview/progressbar-widget.jsx';
 import TargetNumberIcon from '../common/target-number-icon.jsx';
+import GridPaginationActions from '../common/grid-pagination-actions.jsx';
 import CelestialContextMenu from '../target/celestialcontextmenu.jsx';
 import { useSocket } from '../common/socket.jsx';
 import { useTargetRotatorSelectionDialog } from '../target/use-target-rotator-selection-dialog.jsx';
@@ -190,107 +185,6 @@ const FOOTER_ACTION_ROW_SX = {
         flexShrink: 0,
         whiteSpace: 'nowrap',
     },
-};
-
-const CustomPagination = ({ onPageChange }) => {
-    const apiRef = useGridApiContext();
-    const page = useGridSelector(apiRef, gridPageSelector);
-    const pageCount = useGridSelector(apiRef, gridPageCountSelector);
-    const selectedRowCount = useGridSelector(apiRef, gridRowSelectionCountSelector);
-    const theme = useTheme();
-    const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-    const isTablet = useMediaQuery(theme.breakpoints.down('md'));
-    const isMedium = useMediaQuery(theme.breakpoints.down('lg'));
-
-    const handlePageChange = (newPage) => {
-        if (onPageChange) {
-            onPageChange(newPage);
-            return;
-        }
-        apiRef.current.setPage(newPage);
-    };
-
-    const getPageNumbers = () => {
-        const maxButtons = isMobile ? 5 : isTablet ? 8 : 12;
-        const pages = [];
-
-        if (pageCount <= maxButtons) {
-            for (let index = 0; index < pageCount; index += 1) {
-                pages.push(index);
-            }
-            return pages;
-        }
-
-        const halfWindow = Math.floor(maxButtons / 2);
-        let start = Math.max(0, page - halfWindow);
-        let end = Math.min(pageCount - 1, start + maxButtons - 1);
-        if (end - start < maxButtons - 1) {
-            start = Math.max(0, end - maxButtons + 1);
-        }
-        for (let index = start; index <= end; index += 1) {
-            pages.push(index);
-        }
-        return pages;
-    };
-
-    const pageNumbers = getPageNumbers();
-
-    return (
-        <Box sx={{
-            display: 'flex',
-            alignItems: 'center',
-            width: '100%',
-            p: 1,
-            gap: 2,
-            height: '52px',
-            minHeight: '52px',
-            maxHeight: '52px',
-            position: 'relative',
-            overflow: 'hidden',
-        }}>
-            <Box sx={{ flex: '1 1 0', display: 'flex', justifyContent: 'flex-start', minWidth: 0, alignItems: 'center', height: '100%' }}>
-                {selectedRowCount > 0 && (
-                    <Typography variant="body2" sx={{ whiteSpace: 'nowrap', lineHeight: 1 }}>
-                        {selectedRowCount} pass{selectedRowCount !== 1 ? 'es' : ''} selected
-                    </Typography>
-                )}
-            </Box>
-            <Box sx={{
-                position: 'absolute',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                display: 'flex',
-                gap: 0.5,
-                flexWrap: 'nowrap',
-                justifyContent: 'center',
-                overflow: 'hidden',
-                alignItems: 'center',
-                height: '100%',
-            }}>
-                {pageNumbers.map((pageNum) => (
-                    <Button
-                        key={pageNum}
-                        size="small"
-                        variant={page === pageNum ? 'contained' : 'outlined'}
-                        onClick={() => handlePageChange(pageNum)}
-                        sx={{
-                            minWidth: isMobile ? '32px' : '40px',
-                            px: isMobile ? 0.5 : 1,
-                            py: 0.5,
-                            height: '32px',
-                        }}
-                    >
-                        {pageNum + 1}
-                    </Button>
-                ))}
-            </Box>
-            <Box sx={{ flex: '1 1 0', display: isMedium ? 'none' : 'flex', justifyContent: 'flex-end', minWidth: 0, alignItems: 'center', height: '100%', overflow: 'hidden' }}>
-                <Box sx={{ transform: 'scale(0.9)', transformOrigin: 'right center' }}>
-                    <GridPagination />
-                </Box>
-            </Box>
-        </Box>
-    );
 };
 
 export const getCelestialPassStatus = (row, now) => {
@@ -1474,10 +1368,9 @@ const CelestialPasses = ({
                         row: {
                             onContextMenu: handleRowContextMenu,
                         },
-                        pagination: {
-                            onPageChange: handlePageChange,
-                        },
                         basePagination: {
+                            ActionsComponent: GridPaginationActions,
+                            // Live row replacements should only clamp the page when it no longer exists.
                             onPageChange: (_event, nextPage) => handlePageChange(nextPage),
                             onRowsPerPageChange: handlePageSizeChange,
                         },
@@ -1501,9 +1394,6 @@ const CelestialPasses = ({
                     columnVisibilityModel={columnVisibility}
                     onColumnVisibilityModelChange={(model) => dispatch(setCelestialPassesTableColumnVisibility(model))}
                     getRowClassName={getRowClassName}
-                    slots={{
-                        pagination: CustomPagination,
-                    }}
                     density="compact"
                     sx={{
                         border: 0,
@@ -1518,10 +1408,6 @@ const CelestialPasses = ({
                             fontSize: '0.875rem',
                             fontStyle: 'italic',
                             color: 'text.secondary',
-                        },
-                        '& .MuiDataGrid-selectedRowCount': {
-                            visibility: 'hidden',
-                            position: 'absolute',
                         },
                     }}
                 />
