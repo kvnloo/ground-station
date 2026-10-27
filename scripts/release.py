@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Safely promote a Ground Station release through Drone, GHCR, and GitHub."""
+"""Safely promote a Ground Station release through Drone, GHCR, and GitHub.
+
+Prerequisites (all verified by preflight before anything is written):
+- git, python3, docker, and gh installed; `gh auth login` completed.
+- Git author identity (user.name/user.email) configured.
+- A clean worktree on the release branch, with local HEAD, the build remote
+  branch, and the publish remote branch all identical (for a new release).
+- Push credentials work for BOTH remotes (probed with `git push --dry-run`).
+- GitHub Tests passed for HEAD (unless --skip-ci-check).
+"""
 
 from __future__ import annotations
 
@@ -79,6 +88,26 @@ def require_commands(commands: Sequence[str]) -> None:
     missing = [command for command in commands if shutil.which(command) is None]
     if missing:
         raise ReleaseError(f"Required commands are missing: {', '.join(missing)}")
+
+
+def ensure_git_identity() -> None:
+    """Fail before writing release files if commits would be impossible or anonymous."""
+    for key in ("user.name", "user.email"):
+        configured = run(("git", "config", "--get", key), check=False, capture=True)
+        if configured.returncode != 0 or not configured.stdout.strip():
+            raise ReleaseError(
+                f"Git {key} is not configured; release commits need an author identity. "
+                f"Fix with: git config --global {key} \"...\""
+            )
+
+
+def ensure_github_auth() -> None:
+    result = run(("gh", "auth", "status"), check=False, capture=True)
+    if result.returncode != 0:
+        raise ReleaseError(
+            "The GitHub CLI is not authenticated; run `gh auth login` first. "
+            f"{(result.stderr or '').strip()}"
+        )
 
 
 def normalize_version(raw_version: str) -> tuple[str, tuple[int, int, int]]:
@@ -513,6 +542,28 @@ def wait_for_github_release(repo: str, tag: str, timeout: int, poll_interval: in
         time.sleep(poll_interval)
 
 
+def probe_push_access(remote: str, branch: str, commit: str) -> None:
+    """Dry-run push so credential problems surface before the release commit exists."""
+    result = run(
+        (
+            "git",
+            "push",
+            "--dry-run",
+            "--no-follow-tags",
+            remote,
+            f"{commit}:refs/heads/{branch}",
+        ),
+        check=False,
+        capture=True,
+    )
+    if result.returncode != 0:
+        details = "\n".join(value.strip() for value in (result.stdout, result.stderr) if value.strip())
+        raise ReleaseError(
+            f"Push access to {remote!r} (branch {branch!r}) was refused during the preflight "
+            f"dry-run; fix authentication/permissions and rerun:\n{details}"
+        )
+
+
 def push_branch(remote: str, branch: str, expected_commit: str) -> None:
     remote_commit = remote_branch_commit(remote, branch)
     if remote_commit == expected_commit:
@@ -598,35 +649,54 @@ def create_release_commit_and_tag(
     release_date: str,
     notes: str,
 ) -> str:
-    readme = README_PATH.read_text(encoding="utf-8")
-    updated_readme, removed_entries = render_changelog(readme, version, release_date, notes)
-    write_version_file(version)
-    atomic_write(README_PATH, updated_readme)
-    if read_version_file() != version:
-        raise ReleaseError("Version file verification failed after writing")
-    validate_changelog(version)
-    run(("git", "diff", "--check"))
-    release_files = sorted(
-        (str(README_PATH.relative_to(ROOT)), str(VERSION_PATH.relative_to(ROOT)))
-    )
-    run(("git", "add", "--", *release_files))
-    changed = git("diff", "--cached", "--name-only").splitlines()
-    if changed != release_files:
-        raise ReleaseError(f"Unexpected staged files: {', '.join(changed) or '(none)'}")
-    run(("git", "commit", "-m", f"chore(version): bump to {tag}"))
-    release_commit = git("rev-parse", "HEAD")
-    committed_files = git(
-        "diff-tree", "--no-commit-id", "--name-only", "-r", release_commit
-    ).splitlines()
-    if committed_files != release_files:
-        raise ReleaseError(
-            f"Release commit contains unexpected files: {', '.join(committed_files) or '(none)'}"
+    readme_original = README_PATH.read_text(encoding="utf-8")
+    version_original = VERSION_PATH.read_text(encoding="utf-8")
+    commit_created = False
+    try:
+        updated_readme, removed_entries = render_changelog(
+            readme_original, version, release_date, notes
         )
-    ensure_clean_worktree()
-    run(("git", "tag", "-a", tag, "-m", f"Release {tag}", release_commit))
-    if version_at_ref(tag) != version:
-        raise ReleaseError(f"{tag} does not contain version {version}")
-    validate_changelog_at_ref(tag, version)
+        write_version_file(version)
+        atomic_write(README_PATH, updated_readme)
+        if read_version_file() != version:
+            raise ReleaseError("Version file verification failed after writing")
+        validate_changelog(version)
+        run(("git", "diff", "--check"))
+        release_files = sorted(
+            (str(README_PATH.relative_to(ROOT)), str(VERSION_PATH.relative_to(ROOT)))
+        )
+        run(("git", "add", "--", *release_files))
+        changed = git("diff", "--cached", "--name-only").splitlines()
+        if changed != release_files:
+            raise ReleaseError(f"Unexpected staged files: {', '.join(changed) or '(none)'}")
+        run(("git", "commit", "-m", f"chore(version): bump to {tag}"))
+        commit_created = True
+        release_commit = git("rev-parse", "HEAD")
+        committed_files = git(
+            "diff-tree", "--no-commit-id", "--name-only", "-r", release_commit
+        ).splitlines()
+        if committed_files != release_files:
+            raise ReleaseError(
+                f"Release commit contains unexpected files: {', '.join(committed_files) or '(none)'}"
+            )
+        ensure_clean_worktree()
+        run(("git", "tag", "-a", tag, "-m", f"Release {tag}", release_commit))
+        if version_at_ref(tag) != version:
+            raise ReleaseError(f"{tag} does not contain version {version}")
+        validate_changelog_at_ref(tag, version)
+    except BaseException:
+        # Undo every partial effect so the "fix and rerun" contract holds even
+        # when a mid-stage failure (identity, signing, hooks) leaves a mess.
+        run(("git", "tag", "-d", tag), check=False, capture=True)
+        if commit_created:
+            # Hard reset to the release commit's parent restores both index and
+            # worktree; the worktree was verified clean before the commit.
+            run(("git", "reset", "--quiet", "--hard", "HEAD^"), check=False)
+        else:
+            atomic_write(README_PATH, readme_original)
+            atomic_write(VERSION_PATH, version_original)
+            run(("git", "reset", "--quiet"), check=False)
+        raise
     for removed_entry in removed_entries:
         log(f"Removed old changelog entry: {removed_entry.split(':', maxsplit=1)[0]}")
     log(f"Created release commit {release_commit[:8]} and annotated tag {tag}")
@@ -665,7 +735,7 @@ def parse_arguments() -> argparse.Namespace:
     )
     notes_group.add_argument(
         "--notes-file",
-        help="read the curated README release summary from this file",
+        help="read the curated README release summary from this file (- reads stdin)",
     )
     parser.add_argument(
         "--release-date",
@@ -711,8 +781,15 @@ def parse_arguments() -> argparse.Namespace:
 def main() -> int:
     args = parse_arguments()
     try:
-        notes_file = Path(args.notes_file).expanduser().resolve() if args.notes_file else None
+        read_notes_from_stdin = args.notes_file == "-"
+        notes_file = (
+            Path(args.notes_file).expanduser().resolve()
+            if args.notes_file and not read_notes_from_stdin
+            else None
+        )
         require_commands(("git", "python3", "docker", "gh"))
+        ensure_git_identity()
+        ensure_github_auth()
         version, target_parts = normalize_version(args.version)
         tag = f"v{version}"
         release_date = normalize_release_date(args.release_date)
@@ -753,9 +830,11 @@ def main() -> int:
         release = github_release(args.github_repo, tag)
         is_new = target_parts > current_parts
         if is_new:
-            if args.notes is None and notes_file is None:
+            if args.notes is None and notes_file is None and not read_notes_from_stdin:
                 raise ReleaseError("A new release requires --notes or --notes-file")
-            if notes_file is not None:
+            if read_notes_from_stdin:
+                release_notes = normalize_release_notes(sys.stdin.read())
+            elif notes_file is not None:
                 try:
                     release_notes = normalize_release_notes(notes_file.read_text(encoding="utf-8"))
                 except OSError as exc:
@@ -788,6 +867,12 @@ def main() -> int:
         else:
             release_notes = ""
             log(f"Version file already contains {version}; checking resumable release state")
+            resume_commit = validate_resume_state(version, tag, release)
+
+        # Catch credential/permission problems while they are still free to fix.
+        probe_commit = head if is_new else (resume_commit or head)
+        for remote in (args.build_remote, args.publish_remote):
+            probe_push_access(remote, args.branch, probe_commit)
 
         log(f"Current version: {current_version}; target: {version}; tag: {tag}")
         if not args.execute:
@@ -799,8 +884,6 @@ def main() -> int:
                 log(f"README entry: v{version} ({release_date}): {release_notes}")
                 for removed_entry in removed_entries:
                     log(f"README will remove: {removed_entry.split(':', maxsplit=1)[0]}")
-            else:
-                validate_resume_state(version, tag, release)
             log("Dry run passed. No commit, tag, image, release, or remote ref was changed.")
             log("Rerun the same command with --execute to perform the release.")
             return 0
@@ -810,7 +893,6 @@ def main() -> int:
                 version, tag, release_date, release_notes
             )
         else:
-            resume_commit = validate_resume_state(version, tag, release)
             if resume_commit is None:
                 release_commit = git("rev-parse", "HEAD")
                 run(("git", "tag", "-a", tag, "-m", f"Release {tag}", release_commit))
