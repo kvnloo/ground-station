@@ -2624,7 +2624,7 @@ const SolarSystemCanvas = ({
         }
     };
 
-    const handleWheel = (event) => {
+    const handleWheel = useCallback((event) => {
         if (!isZoomInteractionEnabled) {
             return;
         }
@@ -2645,7 +2645,18 @@ const SolarSystemCanvas = ({
         wheelCommitTimeoutRef.current = window.setTimeout(() => {
             commitViewport(viewportRef.current);
         }, WHEEL_COMMIT_DELAY_MS);
-    };
+    }, [isZoomInteractionEnabled, applyZoomAtScreenPoint, commitViewport]);
+
+    useEffect(() => {
+        if (!isZoomInteractionEnabled) return undefined;
+        const container = containerRef.current;
+        if (!container) return undefined;
+
+        // React delegates wheel events through a passive listener, so the map
+        // needs its own non-passive listener to stop the page from scrolling.
+        container.addEventListener('wheel', handleWheel, { passive: false });
+        return () => container.removeEventListener('wheel', handleWheel);
+    }, [isZoomInteractionEnabled, handleWheel]);
 
     const timestampText = useMemo(() => {
         if (!scene?.timestamp_utc) return t('canvas.solar.no_epoch');
@@ -2719,7 +2730,6 @@ const SolarSystemCanvas = ({
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
                 onPointerCancel={handlePointerUp}
-                onWheel={handleWheel}
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
