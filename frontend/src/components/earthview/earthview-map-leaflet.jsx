@@ -845,6 +845,9 @@ const LeafletEarthViewMapRenderer = ({
     const handleWhenReady = (map) => {
         // map is ready
         MapObject = map.target;
+        if (following && hasSelectedPosition) {
+            MapObject.setView([selectedLatitude, selectedLongitude], MapObject.getZoom(), {animate: false});
+        }
 
         // Grid/layout can settle shortly after initial render; force non-panning size sync.
         initialInvalidateTimeoutsRef.current.forEach(clearTimeout);
