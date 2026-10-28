@@ -844,7 +844,7 @@ export default function MonitoredSatelliteDialog({ onExited }) {
     const getTaskSummaryOptionLabel = (options, value, fallback = value) => {
         const option = options.find((item) => item.value === value);
         if (!option) return fallback;
-        return t(`scheduler_dialogs.shared.${option.labelKey}`);
+        return option.label || t(`scheduler_dialogs.shared.${option.labelKey}`);
     };
 
     const getTranscriptionLanguageSummary = (sourceLanguage, targetLanguage) => {
