@@ -86,6 +86,7 @@ function selectOption(label, option) {
 }
 
 describe('monitored satellite dialog', () => {
+    // This full-form creation and retry flow needs extra time with coverage on CI runners.
     it('saves before generating, stays busy until acknowledgement, and retries without duplicating a new definition', async () => {
         const store = renderDialog(false);
         expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
@@ -124,7 +125,7 @@ describe('monitored satellite dialog', () => {
         await acknowledge(requests[3]);
         expect(store.getState().scheduler.monitoredSatelliteDialogOpen).toBe(false);
         expect(store.getState().scheduler.monitoredSatellites).toHaveLength(1);
-    });
+    }, 15000);
 
     it('generates only the edited satellite after saving its updated criteria', async () => {
         const store = renderDialog();
