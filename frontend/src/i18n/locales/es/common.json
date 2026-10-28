@@ -255,6 +255,10 @@
       "cancel_multiple_warning": "Esto cancelará inmediatamente todas las observaciones seleccionadas y eliminará sus trabajos programados."
     },
     "monitored": {
+      "save_and_generate": "Guardar y generar",
+      "generating": "Generando programación...",
+      "generation_failed": "Error al generar la programación",
+      "saved_generation_failed": "El satélite monitorizado se guardó, pero no se pudo generar la programación: {{error}}",
       "title": "Satélites monitoreados",
       "auto_generation_title": "Generación automática de observaciones",
       "auto_generation_body": "Los satélites de esta lista generarán automáticamente observaciones programadas para todos los próximos pases que cumplan los criterios especificados (elevación mínima, ventana de anticipación).",

@@ -54,12 +54,15 @@ import {
     Switch,
     Tooltip,
 } from '@mui/material';
-import { Add as AddIcon, Close as CloseIcon, Delete as DeleteIcon, ExpandMore as ExpandMoreIcon, ErrorOutline as ErrorOutlineIcon, Memory as MemoryIcon, RadioButtonUnchecked as RadioButtonUncheckedIcon } from '@mui/icons-material';
+import { Add as AddIcon, Close as CloseIcon, Delete as DeleteIcon, ExpandMore as ExpandMoreIcon, ErrorOutline as ErrorOutlineIcon, Memory as MemoryIcon, RadioButtonUnchecked as RadioButtonUncheckedIcon, CheckCircle as EnableIcon, Cancel as DisableIcon } from '@mui/icons-material';
 import { FaSatelliteDish } from 'react-icons/fa6';
 import {
     setMonitoredSatelliteDialogOpen,
     createMonitoredSatellite,
     updateMonitoredSatelliteAsync,
+    deleteMonitoredSatellitesAsync,
+    toggleMonitoredSatelliteEnabledAsync,
+    setSelectedMonitoredSatellite,
     setSatelliteId,
     setGroupId,
     setGroupOfSats,
@@ -256,6 +259,11 @@ export default function MonitoredSatelliteDialog({ onExited }) {
     const sdrParametersError = useSelector((state) => state.scheduler?.sdrParametersError || {});
     const isSaving = useSelector((state) => state.scheduler?.isSavingMonitoredSatellite || false);
     const saveError = useSelector((state) => state.scheduler?.monitoredSatelliteError);
+    const [pendingAction, setPendingAction] = useState(null);
+    const [actionError, setActionError] = useState(null);
+    const [openDeleteConfirm, setOpenDeleteConfirm] = useState(false);
+    const [deleteObservations, setDeleteObservations] = useState(false);
+    const isBusy = isSaving || Boolean(pendingAction);
 
     const [activeSessionIndex, setActiveSessionIndex] = useState(0);
     const trackerInfoByRotatorId = useMemo(() => {
@@ -532,8 +540,46 @@ export default function MonitoredSatelliteDialog({ onExited }) {
     }, [open, dispatch]);
 
     const handleClose = () => {
+        if (isBusy) return;
         setTransmittersLoading(false);
         dispatch(setMonitoredSatelliteDialogOpen(false));
+    };
+
+    const handleDeleteConfirm = async () => {
+        if (!socket || !isEditingMonitoredSatellite || isBusy) return;
+        setPendingAction('delete');
+        setActionError(null);
+        try {
+            await dispatch(deleteMonitoredSatellitesAsync({
+                socket,
+                ids: [selectedMonitoredSatellite.id],
+                deleteObservations,
+            })).unwrap();
+            setOpenDeleteConfirm(false);
+            dispatch(setMonitoredSatelliteDialogOpen(false));
+        } catch (error) {
+            setActionError(error.message || String(error));
+            setOpenDeleteConfirm(false);
+        } finally {
+            setPendingAction(null);
+        }
+    };
+
+    const handleToggleEnabled = async (enabled) => {
+        if (!socket || !isEditingMonitoredSatellite || isBusy) return;
+        setPendingAction('toggle');
+        setActionError(null);
+        try {
+            await dispatch(toggleMonitoredSatelliteEnabledAsync({
+                socket, id: selectedMonitoredSatellite.id, enabled,
+            })).unwrap();
+            // Preserve unsaved edits and reflect the change only after it is persisted.
+            setFormData((prev) => ({ ...prev, enabled }));
+        } catch (error) {
+            setActionError(error.message || String(error));
+        } finally {
+            setPendingAction(null);
+        }
     };
 
     const handleSatelliteSelect = (satellite) => {
@@ -985,36 +1031,48 @@ export default function MonitoredSatelliteDialog({ onExited }) {
         );
     };
 
-    const handleSubmit = () => {
-        if (!isFormValid()) return;
+    const handleSubmit = async () => {
+        if (!socket || !isFormValid() || isBusy) return;
         const sessions = Array.isArray(formData.sessions) && formData.sessions.length
             ? formData.sessions
             : [{ sdr: formData.sdr, tasks: formData.tasks }];
 
-        if (isEditingMonitoredSatellite) {
-            // Update existing monitored satellite
-            dispatch(updateMonitoredSatelliteAsync({
-                socket,
-                id: selectedMonitoredSatellite.id,
-                satellite: {
-                    ...formData,
-                    sessions,
-                },
-            }));
-        } else {
-            // Add new monitored satellite
-            const newSatellite = {
-                ...formData,
-                sessions,
-                id: `monitored-${Date.now()}`,
-            };
-            dispatch(createMonitoredSatellite({
-                socket,
-                satellite: newSatellite,
-            }));
+        setPendingAction('save');
+        setActionError(null);
+        let definitionSaved = false;
+        try {
+            const satellite = { ...formData, sessions };
+            const savedSatellite = await dispatch(isEditingMonitoredSatellite
+                ? updateMonitoredSatelliteAsync({
+                    socket, id: selectedMonitoredSatellite.id, satellite, keepDialogOpen: true,
+                })
+                : createMonitoredSatellite({
+                    socket,
+                    satellite: { ...satellite, id: `monitored-${Date.now()}` },
+                    keepDialogOpen: true,
+                })).unwrap();
+            definitionSaved = true;
+            // Retain the saved ID so a generation failure can be retried without creating a duplicate.
+            dispatch(setSelectedMonitoredSatellite(savedSatellite));
+            setPendingAction('generate');
+            await new Promise((resolve, reject) => {
+                socket.emit('api.call', {
+                    cmd: 'regenerate-observations',
+                    data: { monitored_satellite_id: savedSatellite.id, dry_run: false },
+                }, (response) => {
+                    if (response.success) resolve(response.data);
+                    else reject(new Error(response.error || t('scheduler_dialogs.monitored.generation_failed')));
+                });
+            });
+            dispatch(setMonitoredSatelliteDialogOpen(false));
+        } catch (error) {
+            const message = error.message || String(error);
+            setActionError(definitionSaved
+                ? t('scheduler_dialogs.monitored.saved_generation_failed', { error: message })
+                : message);
+        } finally {
+            setPendingAction(null);
         }
-
-        // Dialog will be closed automatically by the fulfilled reducer
     };
 
     return (
@@ -1064,6 +1122,7 @@ export default function MonitoredSatelliteDialog({ onExited }) {
 
             <DialogContent
                 dividers
+                inert={isBusy ? true : undefined}
                 sx={{
                     bgcolor: (theme) => (
                         theme.palette.mode === 'dark'
@@ -1076,8 +1135,9 @@ export default function MonitoredSatelliteDialog({ onExited }) {
             >
                 <Stack spacing={3}>
                     {/* Error Alert */}
-                    {saveError && (
+                    {(actionError || saveError) && (
                         <Box
+                            role="alert"
                             sx={{
                                 p: 2,
                                 borderRadius: 1,
@@ -1090,7 +1150,7 @@ export default function MonitoredSatelliteDialog({ onExited }) {
                         >
                             <ErrorOutlineIcon />
                             <Typography variant="body2">
-                                {saveError}
+                                {actionError || saveError}
                             </Typography>
                         </Box>
                     )}
@@ -2805,38 +2865,125 @@ export default function MonitoredSatelliteDialog({ onExited }) {
                     px: 3,
                     py: 2.5,
                     gap: 2,
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
                 }}
             >
-                <Button
-                    onClick={handleClose}
-                    variant="outlined"
-                    sx={{
-                        borderColor: (theme) => theme.palette.mode === 'dark' ? 'grey.700' : 'grey.400',
-                        '&:hover': {
-                            borderColor: (theme) => theme.palette.mode === 'dark' ? 'grey.600' : 'grey.500',
-                            bgcolor: (theme) => theme.palette.mode === 'dark' ? 'grey.800' : 'grey.200',
-                        },
-                    }}
-                >
-                    {t('cancel')}
-                </Button>
-                <Button
-                    variant="contained"
-                    onClick={handleSubmit}
-                    disabled={!isFormValid() || isSaving}
-                    startIcon={isSaving && <CircularProgress size={20} color="inherit" />}
-                    sx={{
-                        '&.Mui-disabled': {
-                            bgcolor: (theme) => theme.palette.mode === 'dark' ? 'grey.800' : 'grey.400',
-                            color: (theme) => theme.palette.mode === 'dark' ? 'grey.600' : 'grey.600',
-                        },
-                    }}
-                >
-                    {isSaving
-                        ? t('scheduler_dialogs.shared.saving')
-                        : (isEditingMonitoredSatellite ? t('scheduler_dialogs.shared.update_button') : t('save'))}
-                </Button>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                    {isEditingMonitoredSatellite && (
+                        <>
+                            <Button
+                                onClick={() => setOpenDeleteConfirm(true)}
+                                variant="contained"
+                                color="error"
+                                startIcon={<DeleteIcon />}
+                                size="small"
+                                disabled={!socket || isBusy}
+                            >
+                                {t('delete')}
+                            </Button>
+                            <Button
+                                onClick={() => handleToggleEnabled(true)}
+                                variant="contained"
+                                color="success"
+                                startIcon={pendingAction === 'toggle' && !formData.enabled
+                                    ? <CircularProgress size={16} color="inherit" /> : <EnableIcon />}
+                                size="small"
+                                disabled={!socket || isBusy || formData.enabled}
+                            >
+                                {t('scheduler_tables.shared.enable')}
+                            </Button>
+                            <Button
+                                onClick={() => handleToggleEnabled(false)}
+                                variant="contained"
+                                color="warning"
+                                startIcon={pendingAction === 'toggle' && formData.enabled
+                                    ? <CircularProgress size={16} color="inherit" /> : <DisableIcon />}
+                                size="small"
+                                disabled={!socket || isBusy || !formData.enabled}
+                            >
+                                {t('scheduler_tables.shared.disable')}
+                            </Button>
+                        </>
+                    )}
+                </Box>
+                <Box sx={{ display: 'flex', gap: 2, ml: 'auto' }}>
+                    <Button
+                        onClick={handleClose}
+                        variant="outlined"
+                        disabled={isBusy}
+                        sx={{
+                            borderColor: (theme) => theme.palette.mode === 'dark' ? 'grey.700' : 'grey.400',
+                            '&:hover': {
+                                borderColor: (theme) => theme.palette.mode === 'dark' ? 'grey.600' : 'grey.500',
+                                bgcolor: (theme) => theme.palette.mode === 'dark' ? 'grey.800' : 'grey.200',
+                            },
+                        }}
+                    >
+                        {t('cancel')}
+                    </Button>
+                    <Button
+                        variant="contained"
+                        onClick={handleSubmit}
+                        disabled={!socket || !isFormValid() || isBusy}
+                        startIcon={(isSaving || pendingAction === 'save' || pendingAction === 'generate')
+                            && <CircularProgress size={20} color="inherit" />}
+                        sx={{
+                            '&.Mui-disabled': {
+                                bgcolor: (theme) => theme.palette.mode === 'dark' ? 'grey.800' : 'grey.400',
+                                color: (theme) => theme.palette.mode === 'dark' ? 'grey.600' : 'grey.600',
+                            },
+                        }}
+                    >
+                        {pendingAction === 'generate'
+                            ? t('scheduler_dialogs.monitored.generating')
+                            : (isSaving || pendingAction === 'save'
+                                ? t('scheduler_dialogs.shared.saving')
+                                : t('scheduler_dialogs.monitored.save_and_generate'))}
+                    </Button>
+                </Box>
             </DialogActions>
+
+            {/* Match the table's deletion choice so existing observations can be retained. */}
+            <Dialog
+                open={openDeleteConfirm}
+                onClose={() => { if (!isBusy) setOpenDeleteConfirm(false); }}
+                maxWidth="sm"
+                fullWidth
+            >
+                <DialogTitle>{t('scheduler_tables.shared.confirm_deletion')}</DialogTitle>
+                <DialogContent>
+                    <Typography sx={{ mb: 2 }}>
+                        {t('scheduler_tables.monitored.delete_confirm_message', { count: 1 })}
+                        {' '}{selectedMonitoredSatellite?.satellite?.name}
+                    </Typography>
+                    <FormControlLabel
+                        control={
+                            <Checkbox
+                                checked={deleteObservations}
+                                onChange={(event) => setDeleteObservations(event.target.checked)}
+                                disabled={isBusy}
+                                color="error"
+                            />
+                        }
+                        label={t('scheduler_tables.monitored.delete_observations_checkbox')}
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setOpenDeleteConfirm(false)} variant="outlined" disabled={isBusy}>
+                        {t('cancel')}
+                    </Button>
+                    <Button
+                        onClick={handleDeleteConfirm}
+                        variant="contained"
+                        color="error"
+                        disabled={isBusy}
+                        startIcon={pendingAction === 'delete' && <CircularProgress size={20} color="inherit" />}
+                    >
+                        {t('delete')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
 
             {/* Remove Session Confirmation Dialog */}
             <Dialog open={openRemoveSessionConfirm} onClose={() => setOpenRemoveSessionConfirm(false)}>

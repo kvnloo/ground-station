@@ -255,6 +255,10 @@
       "cancel_multiple_warning": "Dit annuleert direct alle geselecteerde observaties en verwijdert hun geplande taken."
     },
     "monitored": {
+      "save_and_generate": "Opslaan en genereren",
+      "generating": "Planning genereren...",
+      "generation_failed": "Genereren van de planning mislukt",
+      "saved_generation_failed": "De gevolgde satelliet is opgeslagen, maar het genereren van de planning is mislukt: {{error}}",
       "title": "Gemonitorde satellieten",
       "auto_generation_title": "Automatische observatiegeneratie",
       "auto_generation_body": "Satellieten in deze lijst genereren automatisch geplande observaties voor alle aankomende passages die aan de opgegeven criteria voldoen (minimale elevatie, vooruitblikvenster).",

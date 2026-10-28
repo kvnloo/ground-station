@@ -186,6 +186,10 @@
       "cancel_multiple_warning": "Questo annullerà immediatamente tutte le osservazioni selezionate e rimuoverà le loro attività pianificate."
     },
     "monitored": {
+      "save_and_generate": "Salva e genera",
+      "generating": "Generazione della pianificazione...",
+      "generation_failed": "Generazione della pianificazione non riuscita",
+      "saved_generation_failed": "Il satellite monitorato è stato salvato, ma la generazione della pianificazione non è riuscita: {{error}}",
       "title": "Satelliti monitorati",
       "auto_generation_title": "Generazione automatica osservazioni",
       "auto_generation_body": "I satelliti in questo elenco genereranno automaticamente osservazioni pianificate per tutti i prossimi passaggi che soddisfano i criteri specificati (elevazione minima, finestra di anteprima).",

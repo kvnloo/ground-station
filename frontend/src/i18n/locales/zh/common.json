@@ -343,6 +343,10 @@
       "cancel_observation_button": "取消观测"
     },
     "monitored": {
+      "save_and_generate": "保存并生成",
+      "generating": "正在生成计划...",
+      "generation_failed": "计划生成失败",
+      "saved_generation_failed": "已保存监测卫星，但计划生成失败：{{error}}",
       "new_title": "添加监控卫星",
       "edit_title": "编辑监控卫星",
       "new_subtitle": "纳入监控后，调度器将为所有符合这些条件的未来过境自动创建新观测。",

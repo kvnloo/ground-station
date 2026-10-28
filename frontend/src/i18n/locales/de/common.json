@@ -255,6 +255,10 @@
       "cancel_multiple_warning": "Dadurch werden alle ausgewählten Beobachtungen sofort abgebrochen und ihre geplanten Aufgaben entfernt."
     },
     "monitored": {
+      "save_and_generate": "Speichern und generieren",
+      "generating": "Zeitplan wird erstellt...",
+      "generation_failed": "Zeitplanerstellung fehlgeschlagen",
+      "saved_generation_failed": "Der überwachte Satellit wurde gespeichert, aber die Zeitplanerstellung ist fehlgeschlagen: {{error}}",
       "title": "Überwachte Satelliten",
       "auto_generation_title": "Automatische Beobachtungserzeugung",
       "auto_generation_body": "Satelliten in dieser Liste erzeugen automatisch geplante Beobachtungen für alle bevorstehenden Überflüge, die die festgelegten Kriterien erfüllen (Mindest-Elevation, Vorschaufenster).",

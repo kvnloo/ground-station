@@ -255,6 +255,10 @@
       "cancel_multiple_warning": "Cela annulera immédiatement toutes les observations sélectionnées et supprimera leurs tâches planifiées."
     },
     "monitored": {
+      "save_and_generate": "Enregistrer et générer",
+      "generating": "Génération du planning...",
+      "generation_failed": "La génération du planning a échoué",
+      "saved_generation_failed": "Le satellite surveillé a été enregistré, mais la génération du planning a échoué : {{error}}",
       "title": "Satellites surveillés",
       "auto_generation_title": "Génération automatique d'observations",
       "auto_generation_body": "Les satellites de cette liste généreront automatiquement des observations planifiées pour tous les prochains passages qui respectent les critères définis (élévation minimale, fenêtre d'anticipation).",

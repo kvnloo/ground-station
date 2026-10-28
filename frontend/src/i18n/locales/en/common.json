@@ -340,6 +340,10 @@
       "cancel_observation_button": "Cancel Observation"
     },
     "monitored": {
+      "save_and_generate": "Save and Generate",
+      "generating": "Generating schedule...",
+      "generation_failed": "Schedule generation failed",
+      "saved_generation_failed": "The monitored satellite was saved, but schedule generation failed: {{error}}",
       "new_title": "Add Monitored Satellite",
       "edit_title": "Edit Monitored Satellite",
       "new_subtitle": "Once monitored, the scheduler will automatically create new observations for upcoming passes that match these criteria.",

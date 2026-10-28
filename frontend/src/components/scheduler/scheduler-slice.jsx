@@ -814,7 +814,8 @@ const schedulerSlice = createSlice({
             })
             .addCase(createMonitoredSatellite.fulfilled, (state, action) => {
                 state.monitoredSatellites.push(action.payload);
-                state.monitoredSatelliteDialogOpen = false;
+                // Save and Generate keeps the form open until generation also finishes.
+                if (!action.meta.arg?.keepDialogOpen) state.monitoredSatelliteDialogOpen = false;
                 state.isSavingMonitoredSatellite = false;
                 state.monitoredSatelliteError = null;
             })
@@ -832,7 +833,7 @@ const schedulerSlice = createSlice({
                 if (index !== -1) {
                     state.monitoredSatellites[index] = action.payload;
                 }
-                state.monitoredSatelliteDialogOpen = false;
+                if (!action.meta.arg?.keepDialogOpen) state.monitoredSatelliteDialogOpen = false;
                 state.isSavingMonitoredSatellite = false;
                 state.monitoredSatelliteError = null;
             })
