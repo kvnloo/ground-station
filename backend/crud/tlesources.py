@@ -31,6 +31,7 @@ from db.models import (
     Groups,
     OrbitalSources,
     OrbitalSourceSyncState,
+    SatelliteGroupType,
     SatelliteOrbits,
     Satellites,
     Transmitters,
@@ -42,6 +43,7 @@ from tlesync.celestrak import (
     validate_celestrak_source,
 )
 from tlesync.sourcestate import clear_source_suspension
+from tlesync.utils import normalize_satellite_ids
 
 SUPPORTED_AUTH_TYPES = {"none", "basic", "token"}
 SUPPORTED_QUERY_MODES = {"url"}
@@ -434,26 +436,42 @@ async def delete_satellite_tle_sources(
 ) -> dict:
     """
     Deletes multiple satellite TLE source records using their IDs.
-    Before deleting each TLE source, it finds the corresponding satellite group,
-    deletes its member satellites with their transmitters and orbits, then deletes the group.
+    Removes the selected sources and their system groups. Member satellites,
+    transmitters, and orbits are deleted only if no remaining source lists them.
     """
     try:
         assert isinstance(satellite_tle_source_ids, list), "TLE source list must be a list"
 
-        satellite_tle_source_ids = convert_strings_to_uuids(satellite_tle_source_ids)
+        source_ids = convert_strings_to_uuids(satellite_tle_source_ids)
 
         # Fetch sources that match the provided IDs
         result = await session.execute(
-            select(OrbitalSources).filter(OrbitalSources.id.in_(satellite_tle_source_ids))
+            select(OrbitalSources).filter(OrbitalSources.id.in_(source_ids))
         )
         sources = result.scalars().all()
 
         # Determine which IDs were found
         found_ids = [source.id for source in sources]
-        not_found_ids = [sat_id for sat_id in satellite_tle_source_ids if sat_id not in found_ids]
+        not_found_ids = [source_id for source_id in source_ids if source_id not in found_ids]
 
         if not sources:
             return {"success": False, "error": "None of the Satellite TLE sources were found."}
+
+        # Exclude the entire selection up front: sources being deleted together
+        # must not preserve each other's members. Disabled sources still own data.
+        remaining_groups_result = await session.execute(
+            select(Groups)
+            .join(OrbitalSources, Groups.identifier == OrbitalSources.identifier)
+            .where(
+                Groups.type == SatelliteGroupType.SYSTEM,
+                OrbitalSources.id.not_in(found_ids),
+            )
+        )
+        retained_satellite_ids = {
+            norad_id
+            for group in remaining_groups_result.scalars().all()
+            for norad_id in normalize_satellite_ids(group.satellite_ids)
+        }
 
         deletion_summary = []
 
@@ -461,9 +479,13 @@ async def delete_satellite_tle_sources(
             source_identifier = source.identifier
             source_name = source.name
 
-            # Find the corresponding satellite group by identifier
+            # User groups can reuse an identifier; only the system group belongs
+            # to this source and should be removed with it.
             group_result = await session.execute(
-                select(Groups).filter(Groups.identifier == source_identifier)
+                select(Groups).filter(
+                    Groups.identifier == source_identifier,
+                    Groups.type == SatelliteGroupType.SYSTEM,
+                )
             )
             satellite_group = group_result.scalar_one_or_none()
 
@@ -472,8 +494,12 @@ async def delete_satellite_tle_sources(
             group_deleted = False
 
             if satellite_group:
-                # Get the list of satellite NORAD IDs from the group
-                satellite_norad_ids = satellite_group.satellite_ids or []
+                # Normalize legacy JSON/string IDs before comparing memberships.
+                satellite_norad_ids = [
+                    norad_id
+                    for norad_id in normalize_satellite_ids(satellite_group.satellite_ids)
+                    if norad_id not in retained_satellite_ids
+                ]
 
                 if satellite_norad_ids:
                     # First, delete all transmitters associated with these satellites
@@ -507,17 +533,25 @@ async def delete_satellite_tle_sources(
                         await session.delete(satellite)
                         satellites_deleted += 1
 
-                # Delete the satellite group
-                await session.delete(satellite_group)
-                group_deleted = True
-
-            # Finally, delete the TLE source record
+            # Retained orbits keep their data even if this source supplied it.
+            # Only detach their provenance before removing the source record.
             await session.execute(
                 update(SatelliteOrbits)
                 .where(SatelliteOrbits.source_id == source.id)
                 .values(source_id=None)
             )
+            # Explicit cleanup also works when SQLite cascades are disabled.
+            await session.execute(
+                delete(OrbitalSourceSyncState).where(OrbitalSourceSyncState.source_id == source.id)
+            )
             await session.delete(source)
+            # Delete the source before its group because group_id can reference it.
+            # Flush stays inside this transaction, so any later failure rolls back all sources.
+            await session.flush()
+
+            if satellite_group:
+                await session.delete(satellite_group)
+                group_deleted = True
 
             deletion_summary.append(
                 {

@@ -95,7 +95,7 @@
     "confirm_deletion": "Verwijdering Bevestigen",
     "confirm_delete_intro": "Weet u zeker dat u de geselecteerde baanbronnen wilt verwijderen? Deze actie zal permanent verwijderen:",
     "delete_item_1": "De baanbron(nen)",
-    "delete_item_2": "Alle satellieten afkomstig van de geselecteerde baanbron(nen)",
+    "delete_item_2": "Satellieten die alleen in de geselecteerde bronnen staan, inclusief hun zenders en banen. Satellieten uit een overblijvende bron worden behouden.",
     "delete_item_3": "De bijbehorende satellietgroep",
     "cannot_undo": "Deze actie kan niet ongedaan worden gemaakt.",
     "performance_notice": "Prestatiewaarschuwing",

@@ -221,7 +221,7 @@
     "confirm_deletion": "Confirm Deletion",
     "confirm_delete_intro": "Are you sure you want to delete the selected orbital sources? This action will permanently delete:",
     "delete_item_1": "The orbital source(s)",
-    "delete_item_2": "All satellites sourced from the selected orbital source(s)",
+    "delete_item_2": "Satellites listed only by the selected sources, with their transmitters and orbits. Satellites listed by a remaining source are kept.",
     "delete_item_3": "The corresponding satellite group",
     "cannot_undo": "This action cannot be undone.",
     "performance_notice": "Performance Notice",

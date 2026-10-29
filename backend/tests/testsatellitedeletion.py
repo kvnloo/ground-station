@@ -13,6 +13,7 @@ from crud.tlesources import delete_satellite_tle_sources
 from db.models import (
     Groups,
     OrbitalSources,
+    OrbitalSourceSyncState,
     SatelliteGroupType,
     SatelliteOrbits,
     Satellites,
@@ -171,6 +172,7 @@ async def source_catalog(satellite_catalog):
             name="Amateur",
             identifier="amateur",
             url="https://example.com/amateur.csv",
+            group_id=group.id,
         )
     )
     await session.flush()
@@ -197,6 +199,166 @@ async def test_source_deletion_removes_member_orbits_and_detaches_retained_orbit
     }
     assert (await session.scalars(select(OrbitalSources.id))).all() == []
     assert (await session.scalars(select(SatelliteOrbits.source_id))).all() == [None]
+
+
+async def _add_source(session, identifier, satellite_ids, *, enabled=True):
+    group = Groups(
+        name=identifier,
+        identifier=identifier,
+        type=SatelliteGroupType.SYSTEM,
+        satellite_ids=satellite_ids,
+    )
+    session.add(group)
+    await session.flush()
+    source = OrbitalSources(
+        name=identifier,
+        identifier=identifier,
+        url=f"https://example.com/{identifier}.csv",
+        group_id=group.id,
+        enabled=enabled,
+    )
+    session.add(source)
+    await session.flush()
+    return source.id
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("remaining_enabled", [False, True])
+async def test_source_deletion_preserves_shared_satellites_and_user_groups(
+    source_catalog, remaining_enabled
+):
+    session, source_id = source_catalog
+    other_source_id = await _add_source(
+        session, "active", f'["{TARGET_ID}", {OTHER_ID}]', enabled=remaining_enabled
+    )
+    # A user group with the same identifier must not be mistaken for the source's group.
+    session.add(
+        Groups(
+            name="Favorites",
+            identifier="amateur",
+            type=SatelliteGroupType.USER,
+            satellite_ids=[TARGET_ID],
+        )
+    )
+    session.add(OrbitalSourceSyncState(source_id=source_id))
+    await session.commit()
+    before = await _catalog_snapshot(session)
+    orbit_data = (
+        await session.execute(
+            select(
+                SatelliteOrbits.tle1, SatelliteOrbits.tle2, SatelliteOrbits.omm_payload
+            ).order_by(SatelliteOrbits.satellite_norad_id, SatelliteOrbits.central_body)
+        )
+    ).all()
+
+    result = await delete_satellite_tle_sources(session, [str(source_id)])
+
+    assert result["success"] is True
+    assert result["deletion_summary"][0]["satellites_deleted"] == 0
+    assert result["deletion_summary"][0]["transmitters_deleted"] == 0
+    after = await _catalog_snapshot(session)
+    assert {key: value for key, value in after.items() if key != "groups"} == {
+        key: value for key, value in before.items() if key != "groups"
+    }
+    assert after["groups"] == [("active", [str(TARGET_ID), OTHER_ID]), ("amateur", [TARGET_ID])]
+    assert (await session.scalars(select(OrbitalSources.id))).all() == [other_source_id]
+    assert (await session.scalars(select(OrbitalSourceSyncState.source_id))).all() == []
+    assert (await session.scalars(select(SatelliteOrbits.source_id))).all() == [None] * 4
+    assert (
+        await session.execute(
+            select(
+                SatelliteOrbits.tle1, SatelliteOrbits.tle2, SatelliteOrbits.omm_payload
+            ).order_by(SatelliteOrbits.satellite_norad_id, SatelliteOrbits.central_body)
+        )
+    ).all() == orbit_data
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("keep_third_source", [False, True])
+@pytest.mark.parametrize("reverse_selection", [False, True])
+async def test_batch_source_deletion_only_protects_members_of_sources_that_remain(
+    source_catalog, keep_third_source, reverse_selection
+):
+    session, first_source_id = source_catalog
+    group = await session.scalar(select(Groups).where(Groups.identifier == "amateur"))
+    group.satellite_ids = f'["{TARGET_ID}", "{OTHER_ID}"]'
+    second_source_id = await _add_source(session, "active", [TARGET_ID, OTHER_ID])
+    if keep_third_source:
+        await _add_source(session, "stations", [OTHER_ID])
+    # A stale system group without a source cannot keep satellites alive.
+    session.add(
+        Groups(
+            name="Removed source",
+            identifier="removed-source",
+            type=SatelliteGroupType.SYSTEM,
+            satellite_ids=[TARGET_ID],
+        )
+    )
+    await session.commit()
+    selected_ids = [str(first_source_id), str(second_source_id)]
+
+    result = await delete_satellite_tle_sources(
+        session, selected_ids[::-1] if reverse_selection else selected_ids
+    )
+
+    assert result["success"] is True
+    deleted_count = 1 if keep_third_source else 2
+    assert sum(item["satellites_deleted"] for item in result["deletion_summary"]) == deleted_count
+    assert sum(item["transmitters_deleted"] for item in result["deletion_summary"]) == deleted_count
+    assert all(item["group_deleted"] for item in result["deletion_summary"])
+    expected_groups = [("removed-source", [TARGET_ID])]
+    if keep_third_source:
+        expected_groups.append(("stations", [OTHER_ID]))
+    assert await _catalog_snapshot(session) == {
+        "satellites": [OTHER_ID] if keep_third_source else [],
+        "orbits": [(OTHER_ID, "earth")] if keep_third_source else [],
+        "transmitters": ["other-transmitter"] if keep_third_source else [],
+        "groups": expected_groups,
+    }
+
+
+@pytest.mark.unit
+async def test_batch_source_deletion_rolls_back_all_selected_sources_on_failure(
+    source_catalog, monkeypatch
+):
+    session, first_source_id = source_catalog
+    second_source_id = await _add_source(session, "active", [TARGET_ID, OTHER_ID])
+    session.add_all(
+        [
+            OrbitalSourceSyncState(source_id=first_source_id),
+            OrbitalSourceSyncState(source_id=second_source_id),
+        ]
+    )
+    await session.commit()
+    before = await _catalog_snapshot(session)
+    delete = session.delete
+    deleted_sources = 0
+
+    async def fail_second_source(instance):
+        nonlocal deleted_sources
+        if isinstance(instance, OrbitalSources):
+            deleted_sources += 1
+            if deleted_sources == 2:
+                raise RuntimeError("Second source deletion failed")
+        await delete(instance)
+
+    monkeypatch.setattr(session, "delete", fail_second_source)
+
+    result = await delete_satellite_tle_sources(
+        session, [str(first_source_id), str(second_source_id)]
+    )
+
+    assert result["success"] is False
+    assert result["error"] == "Second source deletion failed"
+    assert await _catalog_snapshot(session) == before
+    assert set((await session.scalars(select(OrbitalSources.id))).all()) == {
+        first_source_id,
+        second_source_id,
+    }
+    assert set((await session.scalars(select(OrbitalSourceSyncState.source_id))).all()) == {
+        first_source_id,
+        second_source_id,
+    }
 
 
 @pytest.mark.unit

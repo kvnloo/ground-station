@@ -95,7 +95,7 @@
     "confirm_deletion": "Löschung Bestätigen",
     "confirm_delete_intro": "Sind Sie sicher, dass Sie die ausgewählten Orbitquellen löschen möchten? Diese Aktion wird dauerhaft löschen:",
     "delete_item_1": "Die Orbitquelle(n)",
-    "delete_item_2": "Alle Satelliten, die aus der/den ausgewählten Orbitquelle(n) stammen",
+    "delete_item_2": "Satelliten, die nur in den ausgewählten Quellen aufgeführt sind, einschließlich ihrer Sender und Bahnen. Satelliten aus einer verbleibenden Quelle bleiben erhalten.",
     "delete_item_3": "Die entsprechende Satellitengruppe",
     "cannot_undo": "Diese Aktion kann nicht rückgängig gemacht werden.",
     "performance_notice": "Leistungshinweis",

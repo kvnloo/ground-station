@@ -95,7 +95,7 @@
     "confirm_deletion": "Confirmar eliminación",
     "confirm_delete_intro": "¿Estás seguro de que deseas eliminar las fuentes orbitales seleccionadas? Esta acción eliminará permanentemente:",
     "delete_item_1": "La(s) fuente(s) orbital(es)",
-    "delete_item_2": "Todos los satélites procedentes de la(s) fuente(s) orbital(es) seleccionada(s)",
+    "delete_item_2": "Los satélites incluidos solo en las fuentes seleccionadas, con sus transmisores y órbitas. Se conservan los satélites incluidos en alguna fuente restante.",
     "delete_item_3": "El grupo de satélites correspondiente",
     "cannot_undo": "Esta acción no se puede deshacer.",
     "performance_notice": "Aviso de rendimiento",

@@ -199,7 +199,7 @@
     "confirm_deletion": "确认删除",
     "confirm_delete_intro": "您确定要删除选中的轨道数据源吗？此操作将永久删除：",
     "delete_item_1": "轨道数据源",
-    "delete_item_2": "从所选轨道数据源获取的所有卫星",
+    "delete_item_2": "仅由所选数据源列出的卫星及其发射机和轨道。仍由其他保留数据源列出的卫星将被保留。",
     "delete_item_3": "对应的卫星分组",
     "cannot_undo": "此操作无法撤消。",
     "performance_notice": "性能提示",
