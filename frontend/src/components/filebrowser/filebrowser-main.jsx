@@ -112,7 +112,7 @@ import MeteorHrptFolderDialog from './meteor-hrpt-folder-dialog.jsx';
 import ObservationFolderDialog from './observation-folder-dialog.jsx';
 import ProcessingDialog from './processing-dialog.jsx';
 import PurgeDialog from './purge-dialog.jsx';
-import ZoomableImage from '../common/zoomable-image.jsx';
+import ImageViewerDialog from '../common/image-viewer-dialog.jsx';
 import DecodedFolderThumbnail from './decoded-folder-thumbnail.jsx';
 import { buildFileBrowserDisplayItem } from './filebrowser-display-item.js';
 import FileTypeFilter from './file-type-filter.jsx';
@@ -293,22 +293,6 @@ export default function FileBrowserMain() {
         const years = Math.floor(diffDays / 365);
         if (years === 1) return t('humanize.date.year_ago', { ns: 'common', count: years, defaultValue: '1 year ago' });
         return t('humanize.date.years_ago', { ns: 'common', count: years, defaultValue: `${years} years ago` });
-    };
-
-    const detailSectionSx = {
-        p: 2,
-        mb: 2,
-        border: '1px solid',
-        borderColor: 'divider',
-        borderRadius: 1.5,
-        bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'grey.900' : 'grey.50'),
-    };
-
-    const detailRowSx = {
-        display: 'grid',
-        gridTemplateColumns: { xs: '1fr', sm: '160px 1fr' },
-        gap: { xs: 0.5, sm: 2 },
-        py: 0.5,
     };
 
     const {
@@ -640,8 +624,7 @@ export default function FileBrowserMain() {
 
             // For SSTV images (.png), show simple preview with metadata
             if (item.url.endsWith('.png')) {
-                setSelectedItem(item);
-                setTelemetryMetadata(metadata);
+                setSelectedItem({ ...item, metadata });
                 setDetailsOpen(true);
             } else {
                 // For other decoded files, use telemetry viewer
@@ -778,7 +761,23 @@ export default function FileBrowserMain() {
         }
 
         if (['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'].includes(fileType)) {
-            setSelectedItem({ ...baseItem, type: 'snapshot' });
+            let metadata = artifact.metadata || null;
+            if (path.startsWith('decoded/')) {
+                // Decoded images can have a sidecar; missing metadata must not
+                // prevent viewing the image. Keep version query parameters.
+                const metadataUrl = artifact.url.replace(/\.(png|jpe?g|gif|bmp|webp)(?=\?|$)/i, '.json');
+                try {
+                    const response = await fetch(metadataUrl);
+                    if (response.ok) metadata = await response.json();
+                } catch (_) {
+                    // The image is still usable without decoder details.
+                }
+            }
+            // Hide the folder's modal while its image viewer is open, then
+            // restore it on close, just as we do for grouped recordings.
+            setObservationFolderDialogOpen(false);
+            setReturnToObservationFolder(true);
+            setSelectedItem({ ...baseItem, type: 'snapshot', metadata });
             setDetailsOpen(true);
             return;
         }
@@ -786,7 +785,7 @@ export default function FileBrowserMain() {
         window.open(artifact.url, '_blank', 'noopener,noreferrer');
     };
 
-    const handleCloseRecordingDetails = () => {
+    const handleCloseDetails = () => {
         setDetailsOpen(false);
         if (returnToObservationFolder) {
             setReturnToObservationFolder(false);
@@ -2188,331 +2187,31 @@ export default function FileBrowserMain() {
             {selectedItem?.type === 'recording' && (
                 <RecordingDialog
                     open={detailsOpen}
-                    onClose={handleCloseRecordingDetails}
+                    onClose={handleCloseDetails}
                     recording={selectedItem}
                     socket={socket}
                 />
             )}
 
-            {/* Snapshot Preview Dialog */}
-            {selectedItem?.type === 'snapshot' && (
-                <Dialog
+            {/* Observation images and standalone decoded images share one viewer. */}
+            {(selectedItem?.type === 'snapshot' || (selectedItem?.type === 'decoded' && selectedItem?.url?.endsWith('.png'))) && (
+                <ImageViewerDialog
                     open={detailsOpen}
-                    onClose={() => setDetailsOpen(false)}
-                    maxWidth={false}
-                    PaperProps={{
-                        sx: {
-                            bgcolor: 'background.paper',
-                            border: (theme) => `1px solid ${theme.palette.divider}`,
-                            borderRadius: 2,
-                            width: '1280px',
-                            maxWidth: '96vw',
-                        },
-                    }}
-                >
-                    <DialogTitle
-                        sx={{
-                            bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'grey.900' : 'grey.100'),
-                            borderBottom: (theme) => `1px solid ${theme.palette.divider}`,
-                            py: 2.5,
-                            px: 3,
-                        }}
-                    >
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <Typography variant="h6">{selectedItem?.name}</Typography>
-                            <Box>
-                                {selectedItem?.width && selectedItem?.height && (
-                                    <Chip
-                                        label={`${selectedItem.width}×${selectedItem.height}`}
-                                        size="small"
-                                        sx={{ mr: 1, height: '20px', fontSize: '0.65rem', '& .MuiChip-label': { px: 0.75 } }}
-                                    />
-                                )}
-                                <Chip label={formatBytes(selectedItem?.size || 0)} size="small" sx={{ height: '20px', fontSize: '0.65rem', '& .MuiChip-label': { px: 0.75 } }} />
-                            </Box>
-                        </Box>
-                    </DialogTitle>
-                    <DialogContent
-                        sx={{
-                            bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'rgba(0, 0, 0, 0.36)' : 'grey.100'),
-                            p: 3,
-                            '&.MuiDialogContent-root:first-of-type': {
-                                pt: 3,
-                            },
-                        }}
-                    >
-                        {selectedItem && (
-                            <Box>
-                                <Box
-                                    sx={{
-                                        mb: 2.5,
-                                    }}
-                                >
-                                    <ZoomableImage
-                                        src={selectedItem.url}
-                                        alt={selectedItem.name}
-                                        resetKey={`${detailsOpen}-${selectedItem.url}`}
-                                        containerSx={{
-                                            p: 2,
-                                            border: '1px solid',
-                                            borderColor: 'divider',
-                                            borderRadius: 1.5,
-                                            bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'grey.900' : 'grey.50'),
-                                        }}
-                                        imageSx={{
-                                            width: 'auto',
-                                            height: 'auto',
-                                            maxWidth: '100%',
-                                            maxHeight: '100%',
-                                        }}
-                                    />
-                                </Box>
-                                <Typography variant="subtitle2" gutterBottom>
-                                    {t('filebrowser_main.details', { defaultValue: 'Details' })}
-                                </Typography>
-                                <Box sx={detailSectionSx}>
-                                    <Box sx={detailRowSx}>
-                                        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                                            {t('filebrowser_main.created', { defaultValue: 'Created' })}
-                                        </Typography>
-                                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                                            {formatDate(selectedItem.created)}
-                                        </Typography>
-                                    </Box>
-                                    <Box sx={detailRowSx}>
-                                        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                                            {t('filebrowser_main.modified', { defaultValue: 'Modified' })}
-                                        </Typography>
-                                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                                            {formatDate(selectedItem.modified)}
-                                        </Typography>
-                                    </Box>
-                                </Box>
-                            </Box>
-                        )}
-                    </DialogContent>
-                    <DialogActions
-                        disableSpacing
-                        sx={{
-                            bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'grey.900' : 'grey.100'),
-                            borderTop: (theme) => `1px solid ${theme.palette.divider}`,
-                            px: 3,
-                            py: 2.5,
-                            gap: 1,
-                            flexDirection: { xs: 'column', sm: 'row' },
-                            alignItems: { xs: 'stretch', sm: 'center' },
-                            justifyContent: { xs: 'stretch', sm: 'flex-end' },
-                            '& .MuiButton-root': {
-                                width: { xs: '100%', sm: 'auto' },
-                            },
-                        }}
-                    >
-                        <Button onClick={() => handleDownload(selectedItem)} startIcon={<DownloadIcon />} variant="outlined">
-                            {t('filebrowser_main.download', { defaultValue: 'Download' })}
-                        </Button>
-                        <Button
-                            onClick={() => setDetailsOpen(false)}
-                            variant="outlined"
-                            sx={{
-                                borderColor: (theme) => (theme.palette.mode === 'dark' ? 'grey.700' : 'grey.400'),
-                                '&:hover': {
-                                    borderColor: (theme) => (theme.palette.mode === 'dark' ? 'grey.600' : 'grey.500'),
-                                    bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'grey.800' : 'grey.200'),
-                                },
-                            }}
-                        >
-                            {t('filebrowser_main.close', { defaultValue: 'Close' })}
-                        </Button>
-                    </DialogActions>
-                </Dialog>
-            )}
-
-            {/* Decoded Image Preview Dialog (SSTV with metadata) */}
-            {selectedItem?.type === 'decoded' && selectedItem?.url?.endsWith('.png') && (
-                <Dialog
-                    open={detailsOpen}
-                    onClose={() => setDetailsOpen(false)}
-                    maxWidth={false}
-                    PaperProps={{
-                        sx: {
-                            bgcolor: 'background.paper',
-                            border: (theme) => `1px solid ${theme.palette.divider}`,
-                            borderRadius: 2,
-                            width: '900px',
-                            maxWidth: '90vw',
-                            my: 1,
-                            height: 'calc(100dvh - 16px)',
-                            maxHeight: 'calc(100dvh - 16px)',
-                        },
-                    }}
-                >
-                    <DialogTitle
-                        sx={{
-                            bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'grey.900' : 'grey.100'),
-                            borderBottom: (theme) => `1px solid ${theme.palette.divider}`,
-                            py: 2.5,
-                            px: 3,
-                        }}
-                    >
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <Typography variant="h6">{selectedItem?.displayName || selectedItem?.filename}</Typography>
-                            <Box>
-                                {telemetryMetadata?.decoder?.mode && (
-                                    <Chip
-                                        label={telemetryMetadata.decoder.mode}
-                                        size="small"
-                                        color="success"
-                                        sx={{ mr: 1, height: '20px', fontSize: '0.65rem', '& .MuiChip-label': { px: 0.75 } }}
-                                    />
-                                )}
-                                {telemetryMetadata?.image?.width && telemetryMetadata?.image?.height && (
-                                    <Chip
-                                        label={`${telemetryMetadata.image.width}×${telemetryMetadata.image.height}`}
-                                        size="small"
-                                        sx={{ mr: 1, height: '20px', fontSize: '0.65rem', '& .MuiChip-label': { px: 0.75 } }}
-                                    />
-                                )}
-                                <Chip label={formatBytes(selectedItem?.size || 0)} size="small" sx={{ height: '20px', fontSize: '0.65rem', '& .MuiChip-label': { px: 0.75 } }} />
-                            </Box>
-                        </Box>
-                    </DialogTitle>
-                    <DialogContent
-                        sx={{
-                            bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'rgba(0, 0, 0, 0.36)' : 'grey.100'),
-                            px: 3,
-                            py: 3,
-                            '&.MuiDialogContent-root:first-of-type': {
-                                pt: 3,
-                            },
-                        }}
-                    >
-                        {selectedItem && (
-                            <Box>
-                                {/* Image */}
-                                <ZoomableImage
-                                    src={selectedItem.url}
-                                    alt={selectedItem.displayName || selectedItem.filename}
-                                    resetKey={`${detailsOpen}-${selectedItem.url}`}
-                                    containerSx={{
-                                        mb: 3,
-                                        p: 2,
-                                        minHeight: 420,
-                                    }}
-                                    imageSx={{
-                                        width: 'auto',
-                                        height: 'auto',
-                                        maxWidth: '100%',
-                                        maxHeight: '100%',
-                                    }}
-                                />
-
-                                {/* Metadata */}
-                                {telemetryMetadata && (
-                                    <Box sx={{ mt: 2 }}>
-                                        <Typography variant="subtitle2" color="text.primary" gutterBottom>
-                                            {t('filebrowser_main.metadata', { defaultValue: 'Metadata' })}
-                                        </Typography>
-                                        <Box sx={detailSectionSx}>
-                                            {telemetryMetadata.decoder?.type && (
-                                                <Box sx={detailRowSx}>
-                                                    <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                                                        {t('filebrowser_main.decoder_type', { defaultValue: 'Decoder Type' })}
-                                                    </Typography>
-                                                    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                                                        {telemetryMetadata.decoder.type.toUpperCase()}
-                                                    </Typography>
-                                                </Box>
-                                            )}
-                                            {telemetryMetadata.decoder?.mode && (
-                                                <Box sx={detailRowSx}>
-                                                    <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                                                        {t('filebrowser_main.sstv_mode', { defaultValue: 'SSTV Mode' })}
-                                                    </Typography>
-                                                    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                                                        {telemetryMetadata.decoder.mode}
-                                                    </Typography>
-                                                </Box>
-                                            )}
-                                            {telemetryMetadata.signal?.frequency_mhz && (
-                                                <Box sx={detailRowSx}>
-                                                    <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                                                        {t('filebrowser_main.frequency', { defaultValue: 'Frequency' })}
-                                                    </Typography>
-                                                    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                                                        {telemetryMetadata.signal.frequency_mhz.toFixed(6)} MHz
-                                                    </Typography>
-                                                </Box>
-                                            )}
-                                            {telemetryMetadata.signal?.sample_rate_hz && (
-                                                <Box sx={detailRowSx}>
-                                                    <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                                                        {t('filebrowser_main.sample_rate', { defaultValue: 'Sample Rate' })}
-                                                    </Typography>
-                                                    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                                                        {telemetryMetadata.signal.sample_rate_hz} Hz
-                                                    </Typography>
-                                                </Box>
-                                            )}
-                                            {telemetryMetadata.vfo?.bandwidth_khz && (
-                                                <Box sx={detailRowSx}>
-                                                    <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                                                        {t('filebrowser_main.vfo_bandwidth', { defaultValue: 'VFO Bandwidth' })}
-                                                    </Typography>
-                                                    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                                                        {telemetryMetadata.vfo.bandwidth_khz.toFixed(1)} kHz
-                                                    </Typography>
-                                                </Box>
-                                            )}
-                                            {telemetryMetadata.image?.timestamp_iso && (
-                                                <Box sx={detailRowSx}>
-                                                    <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                                                        {t('filebrowser_main.decoded', { defaultValue: 'Decoded' })}
-                                                    </Typography>
-                                                    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                                                        {telemetryMetadata.image.timestamp_iso}
-                                                    </Typography>
-                                                </Box>
-                                            )}
-                                        </Box>
-                                    </Box>
-                                )}
-                            </Box>
-                        )}
-                    </DialogContent>
-                    <DialogActions
-                        disableSpacing
-                        sx={{
-                            bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'grey.900' : 'grey.100'),
-                            borderTop: (theme) => `1px solid ${theme.palette.divider}`,
-                            px: 3,
-                            py: 2.5,
-                            gap: 1,
-                            flexDirection: { xs: 'column', sm: 'row' },
-                            alignItems: { xs: 'stretch', sm: 'center' },
-                            justifyContent: { xs: 'stretch', sm: 'flex-end' },
-                            '& .MuiButton-root': {
-                                width: { xs: '100%', sm: 'auto' },
-                            },
-                        }}
-                    >
-                        <Button onClick={() => handleDownload(selectedItem)} startIcon={<DownloadIcon />} variant="outlined">
-                            {t('filebrowser_main.download', { defaultValue: 'Download' })}
-                        </Button>
-                        <Button
-                            onClick={() => setDetailsOpen(false)}
-                            variant="outlined"
-                            sx={{
-                                borderColor: (theme) => (theme.palette.mode === 'dark' ? 'grey.700' : 'grey.400'),
-                                '&:hover': {
-                                    borderColor: (theme) => (theme.palette.mode === 'dark' ? 'grey.600' : 'grey.500'),
-                                    bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'grey.800' : 'grey.200'),
-                                },
-                            }}
-                        >
-                            {t('filebrowser_main.close', { defaultValue: 'Close' })}
-                        </Button>
-                    </DialogActions>
-                </Dialog>
+                    onClose={handleCloseDetails}
+                    src={selectedItem.url}
+                    title={selectedItem.displayName || selectedItem.name || selectedItem.filename}
+                    metadata={selectedItem.metadata}
+                    timezone={timezone}
+                    locale={locale}
+                    imageWidth={selectedItem.width}
+                    imageHeight={selectedItem.height}
+                    sizeLabel={formatBytes(selectedItem.size || 0)}
+                    details={selectedItem.type === 'snapshot' ? [
+                        { label: t('filebrowser_main.created', { defaultValue: 'Created' }), value: selectedItem.created ? formatDate(selectedItem.created) : null },
+                        { label: t('filebrowser_main.modified', { defaultValue: 'Modified' }), value: selectedItem.modified ? formatDate(selectedItem.modified) : null },
+                    ] : []}
+                    onDownload={() => handleDownload(selectedItem)}
+                />
             )}
 
             {/* Delete Confirmation Dialog */}

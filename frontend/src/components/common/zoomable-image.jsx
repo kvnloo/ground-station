@@ -18,7 +18,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Box } from '@mui/material';
+import { Box, Button, ButtonGroup } from '@mui/material';
 import ZoomInIcon from '@mui/icons-material/ZoomIn';
 import { useTranslation } from 'react-i18next';
 
@@ -36,11 +36,14 @@ export default function ZoomableImage({
     hintText = 'Scroll or pinch to zoom · Drag to pan',
     showZoomBadge = true,
     hintDurationMs = 2500,
+    initialFit = 'contain',
+    showFitControls = false,
     resetKey,
     getCursorInfo,
     renderOverlay,
 }) {
     const { t } = useTranslation('common');
+    const [fit, setFit] = useState(initialFit);
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
@@ -55,12 +58,13 @@ export default function ZoomableImage({
     const lastPointerTypeRef = useRef('mouse');
 
     useEffect(() => {
+        setFit(initialFit);
         setZoom(1);
         setPan({ x: 0, y: 0 });
         setIsPanning(false);
         setShowHintState(showHint);
         setCursorInfo(null);
-    }, [resetKey, src, showHint]);
+    }, [resetKey, src, showHint, initialFit]);
 
     useEffect(() => {
         if (!showHintState) return undefined;
@@ -83,7 +87,7 @@ export default function ZoomableImage({
         return () => {
             container.removeEventListener('wheel', handleWheel);
         };
-    }, [src, zoom, pan]);
+    }, [src, zoom, pan, fit, minZoom, maxZoom, constrainPan]);
 
     const getPanBounds = (zoomValue) => {
         const container = zoomContainerRef.current;
@@ -97,16 +101,21 @@ export default function ZoomableImage({
         if (!naturalWidth || !naturalHeight) {
             return { maxX: 0, maxY: 0 };
         }
-        const scaleToContain = Math.min(rect.width / naturalWidth, rect.height / naturalHeight);
-        const scaledWidth = naturalWidth * scaleToContain * zoomValue;
-        const scaledHeight = naturalHeight * scaleToContain * zoomValue;
+        // Original-size images use one CSS pixel per image pixel. Their pan
+        // bounds must not inherit the scale used by the fit-to-area view.
+        const baseScale = fit === 'original' ? 1 : Math.min(
+            (image.clientWidth || rect.width) / naturalWidth,
+            (image.clientHeight || rect.height) / naturalHeight,
+        );
+        const scaledWidth = naturalWidth * baseScale * zoomValue;
+        const scaledHeight = naturalHeight * baseScale * zoomValue;
         const maxX = Math.max(0, (scaledWidth - rect.width) / 2);
         const maxY = Math.max(0, (scaledHeight - rect.height) / 2);
         return { maxX, maxY };
     };
 
     const clampPan = (nextPan, zoomValue) => {
-        if (zoomValue <= 1) {
+        if (fit === 'contain' && zoomValue <= 1) {
             return { x: 0, y: 0 };
         }
         if (!constrainPan) {
@@ -293,15 +302,46 @@ export default function ZoomableImage({
                 ref={zoomImageRef}
                 draggable={false}
                 style={{
-                    width: '100%',
-                    height: '100%',
+                    width: fit === 'original' ? 'auto' : '100%',
+                    height: fit === 'original' ? 'auto' : '100%',
+                    maxWidth: 'none',
+                    maxHeight: 'none',
+                    flexShrink: 0,
                     objectFit: 'contain',
                     transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                     transformOrigin: 'center center',
-                    cursor: zoom > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default',
+                    cursor: fit === 'original' || zoom > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default',
                     ...imageSx,
                 }}
             />
+            {showFitControls && (
+                <ButtonGroup
+                    size="small"
+                    aria-label={t('zoomable_image.image_size', { defaultValue: 'Image size' })}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                    sx={{ position: 'absolute', top: 8, left: 8, bgcolor: 'background.paper' }}
+                >
+                    {[
+                        { value: 'original', label: t('zoomable_image.original_size', { defaultValue: 'Original size (100%)' }) },
+                        { value: 'contain', label: t('zoomable_image.fit_to_area', { defaultValue: 'Fit to area' }) },
+                    ].map(({ value, label }) => (
+                        <Button
+                            key={value}
+                            aria-pressed={fit === value && zoom === 1}
+                            variant={fit === value && zoom === 1 ? 'contained' : 'outlined'}
+                            onClick={() => {
+                                setFit(value);
+                                setZoom(1);
+                                setPan({ x: 0, y: 0 });
+                                setIsPanning(false);
+                            }}
+                        >
+                            {label}
+                        </Button>
+                    ))}
+                </ButtonGroup>
+            )}
             {showZoomBadge && (
                 <Box
                     sx={{

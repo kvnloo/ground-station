@@ -33,6 +33,7 @@ import { alpha, darken, lighten } from '@mui/material/styles';
 import { setPacketsDrawerOpen, setPacketsDrawerHeight } from './waterfall-slice';
 import { getDecoderDisplay, getModulationDisplay, ModulationType } from '../../constants/modulations';
 import TelemetryViewerDialog from '../filebrowser/telemetry-viewer-dialog.jsx';
+import ImageViewerDialog from '../common/image-viewer-dialog.jsx';
 import { deleteDecoded } from '../filebrowser/filebrowser-slice';
 import { deleteOutputByFilename } from '../decoders/decoders-slice';
 import { useSocket } from '../common/socket.jsx';
@@ -1062,109 +1063,16 @@ const DecodedPacketsDrawer = React.memo(function DecodedPacketsDrawer({ embedded
                 satelliteData={satelliteInfo}
             />
 
-            {/* SSTV Image Viewer Dialog */}
-            <Dialog
+            {/* Use the same image viewer as observation folders and the library. */}
+            <ImageViewerDialog
                 open={sstvDialogOpen}
                 onClose={() => setSstvDialogOpen(false)}
-                maxWidth="lg"
-                fullWidth
-                slotProps={{
-                    paper: {
-                        sx: {
-                            my: 1,
-                            height: 'calc(100dvh - 16px)',
-                            maxHeight: 'calc(100dvh - 16px)',
-                        },
-                    },
-                }}
-            >
-                <DialogTitle>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Typography variant="h6">{t('decoded_packets_drawer.decoded_image', { defaultValue: 'Decoded Image' })}</Typography>
-                        {sstvMetadata?.decoder?.mode && (
-                            <Chip
-                                label={sstvMetadata.decoder.mode}
-                                size="small"
-                                color="success"
-                                sx={{ height: '20px', fontSize: '0.65rem', '& .MuiChip-label': { px: 0.75 } }}
-                            />
-                        )}
-                    </Box>
-                    <Typography variant="caption" color="text.secondary">
-                        {sstvImage?.filename}
-                    </Typography>
-                </DialogTitle>
-                <DialogContent>
-                    {sstvImage && (
-                        <Box>
-                            {/* Image */}
-                            <Box sx={{ textAlign: 'center', mb: 3 }}>
-                                <img
-                                    src={`data:${sstvImage.format};base64,${sstvImage.imageData}`}
-                                    alt={sstvImage.filename}
-                                    style={{ maxWidth: '100%', height: 'auto' }}
-                                />
-                            </Box>
-
-                            {/* Metadata */}
-                            {sstvMetadata && (
-                                <Box sx={{ mt: 2 }}>
-                                    <Typography variant="subtitle2" color="text.primary" gutterBottom>
-                                        {t('decoded_packets_drawer.metadata', { defaultValue: 'Metadata' })}
-                                    </Typography>
-                                    <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, p: 2, backgroundColor: 'background.default', borderRadius: 1 }}>
-                                        {sstvMetadata.decoder?.type && (
-                                            <>
-                                                <Typography variant="body2" color="text.secondary">{t('decoded_packets_drawer.decoder_type', { defaultValue: 'Decoder Type:' })}</Typography>
-                                                <Typography variant="body2">{sstvMetadata.decoder.type.toUpperCase()}</Typography>
-                                            </>
-                                        )}
-                                        {sstvMetadata.decoder?.mode && (
-                                            <>
-                                                <Typography variant="body2" color="text.secondary">{t('decoded_packets_drawer.sstv_mode', { defaultValue: 'SSTV Mode:' })}</Typography>
-                                                <Typography variant="body2">{sstvMetadata.decoder.mode}</Typography>
-                                            </>
-                                        )}
-                                        {sstvMetadata.signal?.frequency_mhz && (
-                                            <>
-                                                <Typography variant="body2" color="text.secondary">{t('decoded_packets_drawer.frequency', { defaultValue: 'Frequency:' })}</Typography>
-                                                <Typography variant="body2">{sstvMetadata.signal.frequency_mhz.toFixed(6)} MHz</Typography>
-                                            </>
-                                        )}
-                                        {sstvMetadata.signal?.sample_rate_hz && (
-                                            <>
-                                                <Typography variant="body2" color="text.secondary">{t('decoded_packets_drawer.sample_rate', { defaultValue: 'Sample Rate:' })}</Typography>
-                                                <Typography variant="body2">{sstvMetadata.signal.sample_rate_hz} Hz</Typography>
-                                            </>
-                                        )}
-                                        {sstvMetadata.vfo?.bandwidth_khz && (
-                                            <>
-                                                <Typography variant="body2" color="text.secondary">{t('decoded_packets_drawer.vfo_bandwidth', { defaultValue: 'VFO Bandwidth:' })}</Typography>
-                                                <Typography variant="body2">{sstvMetadata.vfo.bandwidth_khz.toFixed(1)} kHz</Typography>
-                                            </>
-                                        )}
-                                        {sstvMetadata.image?.timestamp_iso && (
-                                            <>
-                                                <Typography variant="body2" color="text.secondary">{t('decoded_packets_drawer.decoded', { defaultValue: 'Decoded:' })}</Typography>
-                                                <Typography variant="body2">{sstvMetadata.image.timestamp_iso}</Typography>
-                                            </>
-                                        )}
-                                        {sstvMetadata.image?.width && sstvMetadata.image?.height && (
-                                            <>
-                                                <Typography variant="body2" color="text.secondary">{t('decoded_packets_drawer.dimensions', { defaultValue: 'Dimensions:' })}</Typography>
-                                                <Typography variant="body2">{sstvMetadata.image.width} × {sstvMetadata.image.height}</Typography>
-                                            </>
-                                        )}
-                                    </Box>
-                                </Box>
-                            )}
-                        </Box>
-                    )}
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setSstvDialogOpen(false)}>{t('decoded_packets_drawer.close', { defaultValue: 'Close' })}</Button>
-                </DialogActions>
-            </Dialog>
+                src={sstvImage ? `data:${sstvImage.format};base64,${sstvImage.imageData}` : undefined}
+                title={sstvImage?.filename}
+                metadata={sstvMetadata}
+                timezone={timezone}
+                locale={locale}
+            />
 
             {/* Delete Confirmation Dialog */}
             <Dialog
