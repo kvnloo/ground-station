@@ -1160,7 +1160,7 @@ async def edit_satellite(session: AsyncSession, satellite_id: uuid.UUID, **kwarg
 async def delete_satellite(session: AsyncSession, satellite_id: Union[int, str]) -> dict:
     """
     Delete a satellite record by its NORAD ID.
-    First deletes all associated transmitters due to foreign key constraint.
+    First deletes all associated transmitters and orbits in the same transaction.
     Also removes the NORAD ID from any satellite group memberships.
     """
     try:
@@ -1182,6 +1182,12 @@ async def delete_satellite(session: AsyncSession, satellite_id: Union[int, str])
         for group in groups:
             if group.satellite_ids and satellite_id in group.satellite_ids:
                 group.satellite_ids = [sid for sid in group.satellite_ids if sid != satellite_id]
+
+        # SQLite connections may not enforce ON DELETE CASCADE, so remove all
+        # orbit models and central bodies explicitly before deleting the parent.
+        await session.execute(
+            delete(SatelliteOrbits).where(SatelliteOrbits.satellite_norad_id == satellite_id)
+        )
 
         # Then delete the satellite
         satellite_stmt = (

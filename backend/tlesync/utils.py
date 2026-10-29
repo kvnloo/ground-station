@@ -1064,6 +1064,12 @@ async def detect_and_remove_satellites(
                         }
                     )
 
+                    # SQLite connections may not enforce ON DELETE CASCADE.
+                    # Keep all orbit cleanup in the caller's removal transaction.
+                    await session.execute(
+                        delete(SatelliteOrbits).filter_by(satellite_norad_id=norad_id)
+                    )
+
                     # Remove the satellite
                     satellite_delete_result = await session.execute(
                         delete(Satellites).filter_by(norad_id=norad_id)

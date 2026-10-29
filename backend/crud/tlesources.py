@@ -22,7 +22,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import parse_qs, urlparse
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.common import logger, serialize_object
@@ -435,7 +435,7 @@ async def delete_satellite_tle_sources(
     """
     Deletes multiple satellite TLE source records using their IDs.
     Before deleting each TLE source, it finds the corresponding satellite group,
-    deletes all transmitters and satellites that came from this TLE source, then deletes the group.
+    deletes its member satellites with their transmitters and orbits, then deletes the group.
     """
     try:
         assert isinstance(satellite_tle_source_ids, list), "TLE source list must be a list"
@@ -488,6 +488,14 @@ async def delete_satellite_tle_sources(
                     for transmitter in transmitters_to_delete:
                         await session.delete(transmitter)
                         transmitters_deleted += 1
+
+                    # Remove every orbit model and central body explicitly because
+                    # SQLite connections may not enforce ON DELETE CASCADE.
+                    await session.execute(
+                        delete(SatelliteOrbits).where(
+                            SatelliteOrbits.satellite_norad_id.in_(satellite_norad_ids)
+                        )
+                    )
 
                     # Now delete all satellites that came from this TLE source
                     satellites_result = await session.execute(
