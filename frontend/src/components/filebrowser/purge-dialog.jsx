@@ -72,7 +72,8 @@ const PurgeDialog = ({ open, onClose, socket }) => {
     // while the socket was still reconnecting fetches as soon as it is live.
     const [connectEpoch, setConnectEpoch] = useState(0);
     const debouncedPreview = useRef(null);
-    const notifiedDone = useRef(false);
+    // A result retained from a previous visit is history, not a new completion.
+    const lastDone = useRef(purge.done);
     const wasOpen = useRef(false);
     // Render the same slider footprint before a real library age range arrives.
     const fallbackDomain = useRef({
@@ -92,7 +93,6 @@ const PurgeDialog = ({ open, onClose, socket }) => {
     useEffect(() => {
         if (!open) return undefined;
         if (socket && !socket.connected) return undefined;
-        notifiedDone.current = false;
         setCutoff(null);
         setConfirmOpen(false);
         dispatch(clearPurgeState());
@@ -164,8 +164,9 @@ const PurgeDialog = ({ open, onClose, socket }) => {
     // One terminal toast per purge, including sweeps that finish while this
     // dialog sits closed or another client started the purge.
     useEffect(() => {
-        if (!done || notifiedDone.current) return;
-        notifiedDone.current = true;
+        if (done === lastDone.current) return;
+        lastDone.current = done;
+        if (!done) return;
         if (done.success) {
             if (done.deleted > 0) {
                 toast.success(t('purge_dialog.result_toast', {
@@ -178,10 +179,6 @@ const PurgeDialog = ({ open, onClose, socket }) => {
             toast.error(done.error || t('purge_dialog.failed', { defaultValue: 'Purge failed' }));
         }
     }, [done, t]);
-
-    useEffect(() => {
-        if (running) notifiedDone.current = false;
-    }, [running]);
 
     // A finished sweep changes the available date range. Start a fresh preview
     // so the same open dialog can select and purge the remaining files.
@@ -203,7 +200,6 @@ const PurgeDialog = ({ open, onClose, socket }) => {
 
     const startPurge = async () => {
         setConfirmOpen(false);
-        notifiedDone.current = false;
         try {
             await dispatch(startLibraryPurge({ socket, cutoff: cutoffIso })).unwrap();
         } catch (error) {

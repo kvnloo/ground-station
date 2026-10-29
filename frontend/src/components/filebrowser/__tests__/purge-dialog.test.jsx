@@ -1,11 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import '../../../i18n/config.js';
 import { configureStore } from '@reduxjs/toolkit';
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { toast } from 'react-toastify';
 import { renderWithProviders } from '../../../test/test-utils.jsx';
 import filebrowserReducer, { purgeFinished, purgeProgressUpdated } from '../filebrowser-slice.jsx';
 import PurgeDialog from '../purge-dialog.jsx';
+
+vi.mock('react-toastify', () => ({
+    toast: { success: vi.fn(), error: vi.fn() },
+}));
 
 const AGGREGATE = {
     items: 7,
@@ -44,6 +49,46 @@ function createStore() {
 }
 
 describe('PurgeDialog', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it.each([
+        {
+            result: { success: true, deleted: 62, files: 62, bytesFreed: 4_710_000_000, failed: [] },
+            method: 'success',
+            message: 'Purged 62 items, freed 4.39 GB',
+        },
+        {
+            result: { success: false, error: 'Could not purge files' },
+            method: 'error',
+            message: 'Could not purge files',
+        },
+    ])('does not replay a $method toast when returning to the file browser', async ({ result, method, message }) => {
+        const socket = mockSocket();
+        const store = createStore();
+        const dialog = <PurgeDialog open={false} onClose={vi.fn()} socket={socket} />;
+        const firstVisit = renderWithProviders(dialog, { store });
+
+        // Completions still notify while the dialog is closed.
+        act(() => store.dispatch(purgeFinished(result)));
+        expect(toast[method]).toHaveBeenCalledExactlyOnceWith(message);
+        firstVisit.unmount();
+
+        const nextVisit = renderWithProviders(dialog, { store });
+        expect(toast[method]).toHaveBeenCalledTimes(1);
+
+        // A subsequent sweep must still notify, even with identical totals.
+        act(() => store.dispatch(purgeProgressUpdated({ done: 0, total: 62 })));
+        act(() => store.dispatch(purgeFinished({ ...result })));
+        expect(toast[method]).toHaveBeenCalledTimes(2);
+        expect(toast[method]).toHaveBeenLastCalledWith(message);
+
+        nextVisit.rerender(<PurgeDialog open onClose={vi.fn()} socket={socket} />);
+        await waitFor(() => expect(store.getState().filebrowser.purge.preview).not.toBeNull());
+        expect(toast[method]).toHaveBeenCalledTimes(2);
+    });
+
     it('keeps one spinner visible across the opening preview requests', async () => {
         const requests = [];
         const socket = {
