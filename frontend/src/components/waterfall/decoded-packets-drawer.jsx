@@ -1068,6 +1068,11 @@ const DecodedPacketsDrawer = React.memo(function DecodedPacketsDrawer({ embedded
                 onClose={() => setSstvDialogOpen(false)}
                 maxWidth="lg"
                 fullWidth
+                slotProps={{
+                    paper: {
+                        sx: { height: '90vh' },
+                    },
+                }}
             >
                 <DialogTitle>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
