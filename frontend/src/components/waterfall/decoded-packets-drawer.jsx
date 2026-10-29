@@ -1070,7 +1070,11 @@ const DecodedPacketsDrawer = React.memo(function DecodedPacketsDrawer({ embedded
                 fullWidth
                 slotProps={{
                     paper: {
-                        sx: { height: '90vh' },
+                        sx: {
+                            my: 1,
+                            height: 'calc(100dvh - 16px)',
+                            maxHeight: 'calc(100dvh - 16px)',
+                        },
                     },
                 }}
             >

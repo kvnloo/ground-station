@@ -2340,7 +2340,9 @@ export default function FileBrowserMain() {
                             borderRadius: 2,
                             width: '900px',
                             maxWidth: '90vw',
-                            height: '90vh',
+                            my: 1,
+                            height: 'calc(100dvh - 16px)',
+                            maxHeight: 'calc(100dvh - 16px)',
                         },
                     }}
                 >
